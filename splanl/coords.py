@@ -5,18 +5,18 @@ def pos_to_hgvspos(
     vec_corange_cloned,
     vec_corange_exons,
     cdna_corange_exons ):
-    
+
     """
     Convert from vector position to HGVS cDNA location
-    
+
     Arguments:
-        lvecpos {[type]} -- [description]
-        vec_corange_cloned {[type]} -- [description]
-        vec_corange_exons {[type]} -- [description]
-        cdna_corange_exons {[type]} -- [description]
-    
+        lvecpos {pandas dataframe column} -- pandas dataframe column with the vector positions
+        vec_corange_cloned {tuple of ints} -- range of vector coordinates which contain the cloned insert
+        vec_corange_exons {list of tuples of ints} -- range of vector coordinates for each exon
+        cdna_corange_exons {list of tuples of ints} -- range of cdna coordinates for each exon
+
     Returns:
-        [type] -- [description]
+        list -- list of cdna coordinates
     """
 
 
@@ -36,11 +36,11 @@ def pos_to_hgvspos(
             if len( vec_corange_exons ) == 1:
                 # is the location before the exon, after, or inside?
                 if vecpos < vec_corange_exons[0][0]:
-                    coordstr = 'c.{:d}-{:d}'.format( 
+                    coordstr = 'c.{:d}-{:d}'.format(
                         cdna_corange_exons[0][0],
                         vec_corange_exons[0][0]-vecpos )
                 elif vecpos > vec_corange_exons[0][1]:
-                    coordstr = 'c.{:d}+{:d}'.format( 
+                    coordstr = 'c.{:d}+{:d}'.format(
                         cdna_corange_exons[0][1],
                         vecpos-vec_corange_exons[0][1] )
                 else:

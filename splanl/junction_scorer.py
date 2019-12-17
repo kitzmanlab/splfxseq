@@ -13,17 +13,17 @@ import pybedtools as pbt
 
 def make_junction_graph(exon_bed):
 
-    """Create a graph of all possible traversals of specified exons 
+    """Create a graph of all possible traversals of specified exons
 
     Args:
         exon_bed (PyBedTool): bed file with exon records.  The first record is assumed to be the constant first exon,
             and the last record is assumed to be the constant final exon
-        
+
     Returns:
-        dict (str -> tuple): dictionary of named path (ie isoform) traversing exons.  Keys are path names, 
-            values are tuple (series) of tuples corresponding to exons on that path.  The exon coordinates returned are 
+        dict (str -> tuple): dictionary of named path (ie isoform) traversing exons.  Keys are path names,
+            values are tuple (series) of tuples corresponding to exons on that path.  The exon coordinates returned are
             1-based, inclusive.
-        
+
     """
 
     gr = nx.DiGraph()
@@ -49,13 +49,13 @@ def make_junction_graph(exon_bed):
     gr.add_node( exon_bed[nex-1].start+1 )
     gr.add_node( exon_bed[nex-1].end )
 
-    lpaths = list( [path for path in 
+    lpaths = list( [path for path in
                       nx.all_simple_paths( gr, exon_bed[0].start+1, exon_bed[nex-1].end )] )
 
     # convert paths to series of (exonstart,exonend) for legibility
 
     lpaths = [ tuple( [ (path[i*2],path[i*2+1]) for i in range(int(len(path)/2)) ] )
-               for path in lpaths ] 
+               for path in lpaths ]
 
     lpathnames = ['iso{:02d}'.format( i ) for i in range(len(lpaths)) ]
 
@@ -66,18 +66,18 @@ def trunc_isoforms_by_readlayout_SE(
     pathdict,
     read_start,
     read_length ):
-    
-    """Create "compatibility" group of isoforms cropped by a given single end read of fixed length and 
+
+    """Create "compatibility" group of isoforms cropped by a given single end read of fixed length and
     fixed starting position
 
     Args:
         pathdict (dict<str> -> tuple): isoform name to path dictionary
         read_start (int): fixed starting position of a read; 1-based, inclusive
         read_length (int): fixed read length
-        
+
     Returns:
         - dict (str -> tuple): dictionary of isoform truncated by read position and length. Keys = compatbility group name, values = exon (or partial exon) starts and ends, in 1-based inclusive coordiantes
-        
+
         - dict (str -> list of str) - within each named compatbility group (keys) --> which named isoforms from pathdict are equivalent (values)
 
     """
@@ -95,7 +95,7 @@ def trunc_isoforms_by_readlayout_SE(
                 found_ex=True
                 break
 
-        if not found_ex: 
+        if not found_ex:
             # this read start position does not exist on this path.
             m_iso_vispath[ pathname ] = None
             continue
@@ -186,7 +186,7 @@ def compute_isoform_counts(
 
         n_umapped=0
         n_badstart=0
-        n_nomatch = 0 
+        n_nomatch = 0
         ln_matches=[0] * len( isogrpdict )
 
         for read in reads:
@@ -197,7 +197,7 @@ def compute_isoform_counts(
             else:
                 cur_matches = check_junctions2( read, isogrpdict, tol_first_last )
 
-                if sum(cur_matches)==0: 
+                if sum(cur_matches)==0:
                     n_nomatch+=1
                 else:
                     assert sum(cur_matches) <= 1, ( str(read),str(cur_matches) )
@@ -219,7 +219,7 @@ def compute_isoform_counts(
             print('processed {} bcs, {} reads'.format( ctr_bcs, ctr_reads ))
 
         rowList.append( [tag,total,n_umapped,n_badstart,n_nomatch]+ln_matches )
-    
+
     # from IPython.core.debugger import set_trace
     # set_trace()
 
@@ -258,7 +258,7 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
     """
 
     # get blocks of reference coverage from the read.
-    l_refcoord_blks = read.get_blocks()  
+    l_refcoord_blks = read.get_blocks()
 
     # coalesce any adjacent blocks; fix from [00) coordinate system to [11]
     l_refcoord_blks_joined = []
@@ -286,10 +286,15 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
             if isogrp == l_refcoord_blks_joined:
                 # yes, great, it's a match
                 match=True
-            else:
+            elif tol_first_last>0:
                 # no, but check for mismatch at the very first or last base within the specified tol.
+                match=all([c_read[0] in range(c_ref[0]-tol_first_last,c_ref[0]+tol_first_last)
+                           and c_read[1] in range(c_ref[1]-tol_first_last,c_ref[1]+tol_first_last)
+                           for c_ref,c_read in zip(isogrp,l_refcoord_blks_joined)])
 
-                if lblks>1:
+                #commented out by CS - wasn't working properly
+
+                """if lblks>1:
                     if (isogrp[1:-1] == l_refcoord_blks_joined[1:--1]) and \
                        l_refcoord_blks_joined[0][1]==isogrp[0][1] and \
                        l_refcoord_blks_joined[0][0]>=isogrp[0][0]-tol_first_last and \
@@ -304,7 +309,7 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
                        l_refcoord_blks_joined[0][0]<=isogrp[0][0]+tol_first_last and \
                        l_refcoord_blks_joined[-1][1]>=isogrp[1][1]-tol_first_last and \
                        l_refcoord_blks_joined[-1][1]<=isogrp[1][1]+tol_first_last :
-                        match=True
+                        match=True"""
 
         lmatches.append( match )
 
@@ -316,12 +321,12 @@ def filter_on_barc_len( jxnbybctbl, max_len=35 ):
     return subtbl
 
 
-def combine_isogrps( 
+def combine_isogrps(
     new_grpnames_to_old_grpnames,
     jxnbybctbl
  ):
-    """ combine barcode groups 
-    
+    """ combine barcode groups
+
     Arguments:
         new_grpnames_to_old_grpnames {[type]} -- [description]
     """
