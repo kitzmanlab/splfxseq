@@ -124,8 +124,9 @@ def summarize_byvar_singlevaronly(
      }
 
     #dictionary of position: reference to classify variants
-    seqDict = {int(singlevar.split(':')[1]) : singlevar.split(':')[2] for singlevar, subtbl in rna_isect.groupby( 'varlist' )
-                if len(singlevar.split(':')[2]) == 1}
+    seqDict = {int(singlevar.split(':')[1]) : singlevar.split(':')[2]
+                for singlevar, subtbl in rna_isect.groupby( 'varlist' )
+                if len( singlevar.split(':')[2] ) == 1 }
 
     #dictionary of first position of codon: amino acid to classify variants
     aminoDict={}
