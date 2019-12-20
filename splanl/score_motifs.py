@@ -64,14 +64,14 @@ def ScoreMotifs(fastafile,
 
     #score kmers for wt and mutant - assigns 0 if not in motifDict
     #numbering adjusts for 0-based and 1-based coordinates
-    wt={p:[motifDict[kmer] if kmer in motifDict else 0
+    wt={ p:[motifDict[kmer] if kmer in motifDict else 0
         for kmer in ExtractKmers(seq[p-6:p+5],k)]
-        for p in set(vardf.index.get_level_values('pos'))}
+        for p in vardf.index.unique(level='pos') }
 
     #same as above but substitute the mutated base
-    mut={(p,a):[motifDict[kmer] if kmer in motifDict else 0
-        for kmer in ExtractKmers(seq[ p-6:p-1 ]+a+seq[ p:p+5 ],k)]
-         for p,a in vardf.index}
+    mut={ (p,a):[ motifDict[kmer] if kmer in motifDict else 0
+        for kmer in ExtractKmers( seq[ p-6:p-1 ]+a+seq[ p:p+5 ],k ) ]
+         for p,a in vardf.index }
 
     #compute difference: mut-wt and take the mean
     change={(p,a):np.mean([i-j for i,j in zip(mut[(p,a)],wt[p])])
@@ -81,5 +81,7 @@ def ScoreMotifs(fastafile,
 
     vardf = pd.concat([vardf,changedf],axis=1)
     vardf = vardf.reset_index(level=['pos','alt'])
+    firstCol=['chrom','pos','ref','alt']
+    vardf=vardf[ firstCol + [c for c in vardf if c not in firstCol ] ]
 
     return (vardf)
