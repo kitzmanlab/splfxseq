@@ -198,7 +198,76 @@ def summarize_byvar_singlevaronly(
 
     return out_tbl
 
+def summarize_byvar_WT(
+    subasm_tbl,
+    rna_tbl,
+    min_usable_reads_per_bc,
+    isonames=None ):
 
+    """
+    Summarize per-variant effects across associated barcodes.
+    Considers only wild type clones; other barcodes are ignored.
+
+    Args:
+        subasm_tbl (pd.DataFrame): subassembly results, indexed by barcode seq
+        rna_tbl (pd.DataFrame):  RNAseq results (e.g., psi values), indexed by barcode seq
+        exon_coords (list of int tuples): coordinates of cloned exons
+        min_usable_reads_per_bc (int): min # reads associated with barcode to be considered
+        isonames (list of str): names of isoforms; for each entry 'x', a column 'x_psi' should exist in rna_tbl
+
+    Returns:
+        pd.DataFrame with per-variant summary values;  mean_x, wmean_x, and median_x are the
+        across barcodes mean, read-count-weighted mean, and median psi values for each
+        isoform x
+    """
+
+
+    sa_filt = subasm_tbl.query( 'status=="no_variants_input" & n_variants_passing==0' ).copy()
+
+    li_rna = rna_tbl.index.intersection( sa_filt.index )
+
+    rna_isect = rna_tbl.loc[ li_rna ].copy()
+
+    if isonames is None:
+        isonames = [ cn for cn in rna_isect.columns if cn.endswith('psi') ]
+        assert len(isonames)>0, 'cant infer the isoform name columns; please specify them in parameter isonames'
+    out_tbl = blanktbl(
+        ['n_bc','n_bc_passfilt',
+         'sum_reads',
+         'sum_usable_reads',
+         'sum_unmapped_reads',
+         'sum_badstart_reads',
+         'sum_otheriso'] +
+         [ 'mean_{}'.format(cn) for cn in isonames ] +
+         [ 'wmean_{}'.format(cn) for cn in isonames ] +
+         [ 'median_{}'.format(cn) for cn in isonames ] +
+         [ 'std_{}'.format(cn) for cn in isonames ]
+    )
+
+    rna_isect_filt = rna_isect.loc[ rna_isect.usable_reads >= min_usable_reads_per_bc ].copy()
+
+    out_tbl['n_bc'].append( rna_isect.shape[0] )
+    out_tbl['n_bc_passfilt'].append( rna_isect_filt.shape[0] )
+
+    out_tbl['sum_reads'].append( rna_isect_filt['num_reads'].sum() )
+    out_tbl['sum_usable_reads'].append( rna_isect_filt['usable_reads'].sum()  )
+    out_tbl['sum_unmapped_reads'].append( rna_isect_filt['unmapped_reads'].sum()  )
+    out_tbl['sum_badstart_reads'].append( rna_isect_filt['bad_starts'].sum()  )
+    out_tbl['sum_otheriso'].append( rna_isect_filt['other_isoform'].sum()  )
+
+    for iso in isonames:
+        # mean psi
+        out_tbl[ f'mean_{iso}' ].append( rna_isect_filt[ f'{iso}_psi' ].mean() )
+        # mean psi, weighted by #usable reads
+        out_tbl[ f'wmean_{iso}' ].append( ( rna_isect_filt[ f'{iso}_psi' ] * rna_isect_filt['usable_reads'] ).sum() / rna_isect_filt['usable_reads'].sum() )
+        # median psi
+        out_tbl[ f'median_{iso}' ].append( rna_isect_filt[ f'{iso}_psi' ].median() )
+        # standard deviation psi
+        out_tbl[ f'std_{iso}' ].append( rna_isect_filt[ f'{iso}_psi' ].std() )
+
+    out_tbl = pd.DataFrame( out_tbl )
+
+    return out_tbl
 
 
 ####################################
