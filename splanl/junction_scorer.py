@@ -5,11 +5,209 @@ import numpy as np
 import networkx as nx
 from collections import Counter
 import matplotlib.pyplot as plt
-
+import copy
 import itertools
-
 import pybedtools as pbt
 
+def clean_jns(jns,
+            cnst_exons):
+    """Joins any adjacent junctions and removes any within the constant exons
+    Args:
+        jns (list of tuples): list of tuples from a PySam read_blocks() function call
+        cnst_exons (list of tuples): coords of known constant exons
+
+    Returns:
+        jns_joined (list of tuples): same list of tuples as input with any adjacent
+        junctions combined and junctions within the constant exons removed
+    """
+    jns_joined=[]
+
+    for i in range(len(jns)):
+        if jns[i][0] >= cnst_exons[0][1] and jns[i][1] < cnst_exons[1][0]:
+            jns_joined.append(jns[i])
+            if len(jns_joined) >= 2:
+                if jns_joined[-1][0] == jns_joined[-2][1]+1:
+                    jns_joined[-2:]=[ (jns_joined[-2][0], jns_joined[-1][1]) ]
+
+    return(jns_joined)
+
+"""
+def get_all_junctions(pysam_align,
+                      cnst_exons):
+    Gets all junctions within a pysam alignment file
+
+    Args:
+        pysam_align (PySam AlignmentFile): a pysam alignment file with all of the reads for the sample
+        cnst_exons (list of tuples): coords of known constant exons
+
+    Returns:
+        jn_df (pandas dataframe):
+
+    #creates a counter object of all of the exon junctions
+    all_jns_cnt = Counter( [ jn for read in pysam_align
+                                for jn in join_adj_jns( read.get_blocks() ) ] )
+
+    cnst_min = min( min( cnst_exons ) )
+    cnst_max = max( max( cnst_exons ) )
+
+    #remove junctions within the constant exons so we don't go crazy looking for bad starts
+    for jn,count in all_jns_cnt.most_common():
+        for ex in cnst_exons:
+            if jn[0] in range(ex[0],ex[1]) or jn[1] in range(ex[0],ex[1]):
+                del all_jns_cnt[jn]
+            #if the junction starts before the start of the constant exon remove it
+            elif jn[0] <= cnst_min:
+                del all_jns_cnt[jn]
+            #if the junction ends after the end of the constant exon remove it
+            elif jn[1] >= cnst_max:
+                del all_jns_cnt[jn]
+
+    jn_df = pd.DataFrame(all_jns_cnt.most_common())
+    jn_df.rename(columns={0:'junction', 1:'read_count'}, inplace=True)
+
+    return(jn_df)"""
+
+def make_full_bed(jn_df,
+                    cnst_exons,
+                    chrom_name):
+
+    in_df = jn_df.copy()
+
+    in_df = in_df.set_index('junction').sort_index()
+
+    blnk_bed = { 'chrom': [chrom_name]*( in_df.shape[0]+2 ),
+                 'start': [cnst_exons[0][0]],
+                 'end': [cnst_exons[0][1]],
+                 'name': ['upstream_cnst']}
+
+    for i,jn in enumerate(in_df.index):
+        blnk_bed['start'].append(jn[0])
+        blnk_bed['end'].append(jn[1])
+        blnk_bed['name'].append('junction_'+str(i))
+
+    blnk_bed['start'].append(cnst_exons[1][0])
+    blnk_bed['end'].append(cnst_exons[1][1])
+    blnk_bed['name'].append('downstream_cnst')
+
+    bed_df = pd.DataFrame(blnk_bed)
+
+    return(bed_df)
+
+def remove_cnst_ex(blk,
+                    cnst_exons):
+
+    cnst_min = min( min( cnst_exons ) )
+    cnst_max = max( max( cnst_exons ) )
+
+    for jn in copy.deepcopy(blk):
+        #if the junction starts before the start of the constant exon remove it
+        if jn[0] <= cnst_min:
+            blk.remove(jn)
+            continue
+        #if the junction ends after the end of the constant exon remove it
+        if jn[1] >= cnst_max:
+            blk.remove(jn)
+            continue
+        for ex in cnst_exons:
+            if jn[0] in range(ex[0],ex[1]) or jn[1] in range(ex[0],ex[1]):
+                blk.remove(jn)
+                break
+
+    return(blk)
+
+
+def get_all_isoforms(pysam_align,
+                    cnst_exons):
+    """Gets all isoforms within a pysam alignment file
+
+    Args:
+        pysam_align (PySam AlignmentFile): a pysam alignment file with all of the reads for the sample
+
+    Returns:
+        iso_df (pandas dataframe): Dataframe containing all isoforms seen within the data along with the
+        number of reads associated with that isoform
+    """
+
+    #creates a counter object of all of the exon junctions
+    all_isos_cnt = Counter( [ tuple( clean_jns( read.get_blocks(), cnst_exons ) ) for read in pysam_align ] )
+
+    iso_df = pd.DataFrame(all_isos_cnt.most_common())
+    iso_df.rename(columns={0:'isoform', 1:'read_count'}, inplace=True)
+
+    return(iso_df)
+
+def summarize_isos_by_var_bc(pysam_align,
+                                satbl,
+                                iso_df,
+                                print_count):
+
+    out_tbl = iso_df.copy()
+
+    if 'isoform' in columns:
+        out_tbl = out_tbl.set_index('isoform')
+
+    iso_to_var_to_bcs = {}
+​
+    for read in pysam_align:
+
+        cur_read_bc = read.get_tag( 'RX' )
+​
+        # determine the isoform
+        iso = clean_jns( read.get_blocks() )
+​
+        # look up variant(s) of this barcode from bc->var table
+        var = satbl.loc[ cur_read_bc ].variant_list
+
+        if iso not in iso_to_var_to_bcs:
+            iso_to_var_to_bc[ iso ]={}
+
+        if var not in iso_to_var_to_bcs[ iso ]:
+            iso_to_var_to_bc[ iso ][ var ] = {}
+
+        if cur_read_bc not in iso_to_var_to_bc[ iso ][ var ]:
+            iso_to_var_to_bc[ iso ][ var ][ cur_read_bc ] = 1
+        else:
+            iso_to_var_to_bc[ iso ][ var ][ cur_read_bc ] += 1
+
+    iso_var_count = { iso: [ len( iso_to_var_to_bc[ iso ] ),
+                             sum( len( iso_to_var_to_bc[ iso ][ var ] ) )
+                            ( sum( iso_to_var_to_bc[ iso ][ var ][ bc ] ) - iso_to_var_to_bc[ iso ][ var ][ bc ] )**2 ]
+                            for iso in iso_to_var_to_bc
+                            for var in  iso_to_var_to_bc[var]
+                            for bc in iso_to_var_to_bc[var][bc]
+                    }
+
+
+    iso_cnts = pd.DataFrame.from_dict(iso_var_count, orient='index', columns=['num_vars','num_bcs','dist_from_tot'])
+
+    out_tbl = pd.merge(out_tbl, iso_cnts, left_index=True, right_index=True)
+​
+    for iso in iso_var_count:
+​
+        vars_and_count = { var: len( iso_var_count[ var ] ) for var in iso_var_count[iso] }
+
+        sorted_vars = {var: count for var, count in sorted(vars_and_count.items(), key=lambda item: -item[1])}
+
+        print( 'The isoform is:', iso )
+
+        print('The top',print_count,'variants are:')
+        print( take( print_count, sorted_vars.items() ) )
+
+    return(out_tbl)
+
+
+def filter_junctions(jn_df,
+                    thresh):
+    """Removes junctions with read counts lower than the threshold.
+
+    Args:
+        jn_df (Pandas data frame): Pandas data frame containing junctions and their read col_read_counts
+        thresh (int): Number of reads required to remain in the data frame
+
+    Returns:
+        jn_df_filt (Pandas data frame): Pandas data frame with only junctions that meet the read count threshold
+    """
+    return( jn_df[ jn_df[ 'read_count' ]>=thresh ] )
 
 def make_junction_graph(exon_bed):
 
@@ -256,7 +454,7 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
     Returns:
         list of bools indicating whether this alignment is consistent with each of the provided isoform compat. groups.
     """
-
+    #print(read)
     # get blocks of reference coverage from the read.
     l_refcoord_blks = read.get_blocks()
 
@@ -269,12 +467,13 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
                 l_refcoord_blks_joined[-2:]=[ (l_refcoord_blks_joined[-2][0], l_refcoord_blks_joined[-1][1]) ]
 
     l_refcoord_blks_joined=tuple(l_refcoord_blks_joined)
-
+    #print('data',l_refcoord_blks_joined)
     lmatches=[]
 
     # now compare to isogrps
     for isogrpname in isogrpdict:
         isogrp = isogrpdict[isogrpname]
+        #print(isogrpname,isogrp)
 
         match = False
         lblks = len( l_refcoord_blks_joined )
@@ -288,9 +487,12 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
                 match=True
             elif tol_first_last>0:
                 # no, but check for mismatch at the very first or last base within the specified tol.
-                match=all([c_read[0] in range(c_ref[0]-tol_first_last,c_ref[0]+tol_first_last)
-                           and c_read[1] in range(c_ref[1]-tol_first_last,c_ref[1]+tol_first_last)
-                           for c_ref,c_read in zip(isogrp,l_refcoord_blks_joined)])
+                match=all( [ ( c_read[0] in range( c_ref[0]-tol_first_last,c_ref[0]+tol_first_last )
+                           and c_read[1] in range( c_ref[1]-tol_first_last,c_ref[1]+tol_first_last ) )
+                           if ( c_ref==isogrp[0] or c_ref==isogrp[-1] )
+                           else ( c_read == c_ref )
+                           for c_ref,c_read in zip(isogrp,l_refcoord_blks_joined) ] )
+                #print(match)
 
                 #commented out by CS - wasn't working properly
 

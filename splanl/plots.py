@@ -1,6 +1,7 @@
 import altair as alt
 import pandas as pd
 import numpy as np
+from .coords import pos_to_hgvspos
 
 
 def altplot_bc_thresh_onesamp(
@@ -23,7 +24,7 @@ def altplot_bc_thresh_onesamp(
     bc_ranks[col_read_counts+'_log10']=np.log10(bc_ranks[col_read_counts]+.1)
     bc_ranks[col_read_counts+'_rank_log10']=np.log10(bc_ranks[col_read_counts+'_rank']+1)
     bc_ranks['cumulative_read_percentage'] = 100*bc_ranks[col_read_counts].cumsum()/bc_ranks[col_read_counts].sum()
-    bc_ranks['per_rank'] = bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts+'_rank_log10'][0]
+    bc_ranks['per_rank'] = bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts+'_rank_log10'].reset_index(drop=True)[0]
 
     base = alt.Chart( bc_ranks, title=title
                     ).encode(
@@ -35,7 +36,7 @@ def altplot_bc_thresh_onesamp(
                 ).encode(
                     y=alt.Y(col_read_counts+'_log10:Q',
                             axis=alt.Axis( title=y1_ax_title ) ),
-                    tooltip=['num_reads',col_read_counts,col_read_counts+'_rank','cumulative_read_percentage']+addl_cols_tooltip
+                    tooltip=[col_read_counts,col_read_counts+'_rank','cumulative_read_percentage']+addl_cols_tooltip
                 )
 
     pl2 = base.mark_circle(
@@ -44,7 +45,7 @@ def altplot_bc_thresh_onesamp(
                 ).encode(
                     y=alt.Y('cumulative_read_percentage:Q',
                             axis=alt.Axis( title=y2_ax_title ) ),
-                    tooltip=['num_reads',col_read_counts,col_read_counts+'_rank','cumulative_read_percentage']+addl_cols_tooltip
+                    tooltip=[col_read_counts,col_read_counts+'_rank','cumulative_read_percentage']+addl_cols_tooltip
                 )
 
     vline = base.mark_rule(
@@ -66,7 +67,7 @@ def altplot_bc_thresh_onesamp(
                 )
 
     print('The read count cut off at the '+str(percentile)+'th percentile is '
-            +str(bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts][0]))
+            +str(bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts].reset_index(drop=True)[0]))
 
     return comb
 
@@ -325,3 +326,67 @@ def altplot_violin_onesamp(
     gr = points
 
     return gr
+
+def PlotPSIByPos(vardf,
+                 col_y_isoform,
+                 vec_corange_cloned,
+                 vec_corange_exons,
+                 cdna_corange_exons,
+                 shade_exons,
+                 gene_name,
+                 zoom=None,
+                 tick_spacing=10,
+                 legend_loc='best',
+                 y_ax_title='PSI',
+                 legend_title='Nucleotide Substitution from WT',
+                 y_ax_lim=None
+                ):
+
+    tbv=vardf.copy()
+
+    tbv.sort_values(by=['pos'],inplace=True)
+    bcs_tbl=tbv.pivot(index='pos',columns='alt',values=col_y_isoform)
+    bcs_tbl['hgvs_pos'] = pos_to_hgvspos( bcs_tbl.index,
+                           vec_corange_cloned,
+                           vec_corange_exons,
+                           cdna_corange_exons
+                         )
+
+    if zoom:
+        bcs_tbl=bcs_tbl.loc[ zoom[0]:zoom[1] ]
+
+    bcs_tbl.loc[:,['A','C', 'G', 'T']].plot.bar(color=['#C00001', '#00AD4F', '#FFCF07', '#002966'],
+                                                align='center',
+                                                width=1,
+                                                figsize=(30,7))
+
+    plt.title(
+        col_y_isoform+' '+y_ax_title+' by Position for Single Nucleotide Variants in $\it{%s}$'%gene_name,
+        fontsize=24)
+
+    if y_ax_lim:
+        plt.ylim(0,y_ax_lim)
+
+    plt.ylabel(col_y_isoform+' '+y_ax_title,fontsize=22)
+    plt.yticks(fontsize=18)
+
+    plt.xlabel('cDNA Position',fontsize=22)
+    plt.xticks( [idx for idx,p in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
+                   [c for idx,c in enumerate(bcs_tbl.hgvs_pos) if idx%tick_spacing==0],
+                   fontsize=18,
+                   rotation='vertical' )
+
+    legend = plt.legend(title=legend_title,
+                        ncol=2,
+                        loc=legend_loc,
+                        fontsize=14)
+    plt.setp(legend.get_title(),fontsize=14)
+
+    for ex in shade_exons:
+        plt.axvspan(bcs_tbl.index.get_loc(ex[0])-.5,
+                    bcs_tbl.index.get_loc(ex[1])+.5,
+                    facecolor='gray',
+                    alpha=0.15)
+
+    plt.tight_layout()
+    plt.show()

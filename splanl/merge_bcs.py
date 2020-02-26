@@ -5,6 +5,7 @@ import numpy as np
 from collections import OrderedDict as odict  # default is for keys to come back out in order after I think python 3.7
 
 from .coords import pos_to_hgvspos
+from .coords import pos_to_gDNA
 
 
 # make (ordered) dict of lists
@@ -104,7 +105,7 @@ def summarize_byvar_singlevaronly(
          [ 'median_{}'.format(cn) for cn in isonames ]
      )
 
-    aminoCode = {
+    """aminoCode = {
      'TTT': 'F', 'TTC': 'F', 'TTA': 'L', 'TTG': 'L',
      'TCT': 'S', 'TCC': 'S', 'TCA': 'S', 'TCG': 'S',
      'TAT': 'Y', 'TAC': 'Y', 'TAA': 'X', 'TAG': 'X',
@@ -134,7 +135,7 @@ def summarize_byvar_singlevaronly(
     for c in exon_coords:
         for j in range(c[0],c[1]+1,3):
             aminoDict[j]=aminoCode[''.join(seqDict[k] for k in range(j,j+3))]
-            shift.update({j:0,j+1:1,j+2:2})
+            shift.update({j:0,j+1:1,j+2:2})"""
 
     for singlevar, subtbl in rna_isect.groupby( 'varlist' ):
 
@@ -146,6 +147,7 @@ def summarize_byvar_singlevaronly(
         out_tbl['ref'].append(singlevar.split(':')[2])
         out_tbl['alt'].append(singlevar.split(':')[3])
 
+        """
         #classifies variants as synonymous, nonsense, misssense, or intronic
         pos=int(singlevar.split(':')[1])
         #lets only deal with SNVs right now - later can be more precise
@@ -161,7 +163,8 @@ def summarize_byvar_singlevaronly(
             else:
                 out_tbl['var_type'].append('missense')
         else:
-            out_tbl['var_type'].append('intronic SNV')
+            out_tbl['var_type'].append('intronic SNV')"""
+        out_tbl['var_type'].append(None)
 
         out_tbl['n_bc'].append( subtbl.shape[0] )
         out_tbl['n_bc_passfilt'].append( subtbl_filt.shape[0] )
@@ -355,3 +358,18 @@ def combine_rep_pervartbls_long(
     tblout = tblout.reset_index()
 
     return tblout
+
+def filter_byvartbl_snvonly(
+    byvar_tbl
+):
+    """
+    Filter by variant table to only SNVs
+
+    Args:
+        byvar_tbl (pd.DataFrame): per-variant effect table
+    Returns:
+        Copy of per-variant effect table with only SNV lines included
+    """
+
+    byvar_snvonly = byvar_tbl.loc[ (byvar_tbl.ref.str.len() == 1) & (byvar_tbl.alt.str.len() == 1) ].copy()
+    return byvar_snvonly

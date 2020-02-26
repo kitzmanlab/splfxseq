@@ -52,3 +52,16 @@ def pos_to_hgvspos(
         loutpos.append(coordstr)
 
     return loutpos
+
+
+def pos_to_gDNA(
+                vec_pos,
+                gdna_exon_end,
+                vec_exon_match,
+                rev_transcribed=False
+                ):
+    if rev_transcribed:
+        out_pos = [ gdna_exon_end + ( vec_exon_match-pos ) for pos in vec_pos ]
+    else:
+        out_pos = [ gdna_exon_end - ( vec_exon_match-pos ) for pos in vec_pos ]
+    return(out_pos)
