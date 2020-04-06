@@ -1,7 +1,9 @@
 import altair as alt
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from .coords import pos_to_hgvspos
+import splanl.merge_bcs as mbcs
 
 
 def altplot_bc_thresh_onesamp(
@@ -20,7 +22,9 @@ def altplot_bc_thresh_onesamp(
 
     bc_ranks.sort_values(by=[col_read_counts],ascending=False,inplace=True)
 
-    bc_ranks[col_read_counts+'_rank'] =  np.argsort( np.argsort( np.array(-bc_ranks[col_read_counts])) )
+    #I was using the commented out code but it struggles with ties and the df is already sorted
+    #bc_ranks[col_read_counts+'_rank'] =  np.argsort( np.argsort( np.array(-bc_ranks[col_read_counts])) )
+    bc_ranks[col_read_counts+'_rank'] =  np.arange(bc_ranks.shape[0])
     bc_ranks[col_read_counts+'_log10']=np.log10(bc_ranks[col_read_counts]+.1)
     bc_ranks[col_read_counts+'_rank_log10']=np.log10(bc_ranks[col_read_counts+'_rank']+1)
     bc_ranks['cumulative_read_percentage'] = 100*bc_ranks[col_read_counts].cumsum()/bc_ranks[col_read_counts].sum()
@@ -255,15 +259,13 @@ def altplot_scatter_onesamp(
     tblbyvar,
     col_iso_y,
     col_x,
-    addl_cols_tooltip,
+    addl_cols_tooltip=[],
     fill_col='var_type',
     yscale=None,
     height=300,
     width=300,
     title=''
 ):
-    assert (tblbyvar.ref.str.len() == 1).all()
-    assert (tblbyvar.alt.str.len() == 1).all()
 
     tbv = tblbyvar.copy()
 
@@ -277,8 +279,38 @@ def altplot_scatter_onesamp(
     ).encode(
         x=alt.X(col_x+':Q', scale=alt.Scale(zero=False)),#, sort=list( pos_display_categ.categories )),
         y=y,
-        tooltip=['pos','ref','alt']+addl_cols_tooltip,
+        tooltip=addl_cols_tooltip,
         fill=alt.Color(fill_col+':N',scale=alt.Scale(scheme='category10'))
+    ).properties( height=height, width=width )
+
+    gr = points
+
+    return gr
+
+def altplot_scatter_nofill(
+    tblbyvar,
+    col_iso_y,
+    col_x,
+    addl_cols_tooltip=[],
+    yscale=None,
+    height=300,
+    width=300,
+    title=''
+):
+
+    tbv = tblbyvar.copy()
+
+    if yscale is None:
+        y = alt.Y('{}:Q'.format(col_iso_y))
+    else:
+        y = alt.Y('{}:Q'.format(col_iso_y), scale=yscale )
+
+    points = alt.Chart( tbv , title=title ).mark_circle(
+        size=20
+    ).encode(
+        x=alt.X(col_x+':Q', scale=alt.Scale(zero=False)),#, sort=list( pos_display_categ.categories )),
+        y=y,
+        tooltip=addl_cols_tooltip
     ).properties( height=height, width=width )
 
     gr = points
@@ -358,7 +390,7 @@ def PlotPSIByPos(vardf,
     bcs_tbl.loc[:,['A','C', 'G', 'T']].plot.bar(color=['#C00001', '#00AD4F', '#FFCF07', '#002966'],
                                                 align='center',
                                                 width=1,
-                                                figsize=(30,7))
+                                                figsize=(20,7))
 
     plt.title(
         col_y_isoform+' '+y_ax_title+' by Position for Single Nucleotide Variants in $\it{%s}$'%gene_name,
@@ -390,3 +422,56 @@ def PlotPSIByPos(vardf,
 
     plt.tight_layout()
     plt.show()
+
+def PlotBCsByPos(vardf,
+                 vec_corange_cloned,
+                 vec_corange_exons,
+                 cdna_corange_exons,
+                 shade_exons,
+                 gene_name):
+
+    tbv=vardf.copy()
+
+    tbv.sort_values(by=['pos'],inplace=True)
+    bcs_tbl=tbv.pivot(index='pos',columns='alt',values='n_bc')
+    bcs_tbl['hgvs_pos'] = mbcs.pos_to_hgvspos( bcs_tbl.index,
+                           vec_corange_cloned,
+                           vec_corange_exons,
+                           cdna_corange_exons
+                         )
+
+    bcs_tbl.loc[:,['A','C', 'G', 'T']].plot.bar(stacked=True,
+                                                color=['#C00001', '#00AD4F', '#FFCF07', '#002966'],
+                                                figsize=(20,7))
+
+    plt.title(
+        'Number of Distinct Barcodes Present by Position for Single Nucleotide Variants in $\it{%s}$'%gene_name,
+        fontsize=24)
+
+    plt.ylabel('Number of Distinct Barcodes',fontsize=22)
+    plt.yticks(fontsize=18)
+
+    plt.xlabel('cDNA Position',fontsize=22)
+    plt.xticks( [idx for idx,p in enumerate(bcs_tbl.index) if idx%10==0],
+               [c for idx,c in enumerate(bcs_tbl.hgvs_pos) if idx%10==0],
+               fontsize=18,
+               rotation='vertical' )
+
+    legend = plt.legend(title='Nucleotide Substitution from WT',
+                        ncol=2,
+                        loc='upper left',
+                        fontsize=14)
+    plt.setp(legend.get_title(),fontsize=14)
+
+    for ex in shade_exons:
+        plt.axvspan(bcs_tbl.index.get_loc(ex[0])-.5,
+                    bcs_tbl.index.get_loc(ex[1])+.5,
+                    facecolor='gray',
+                    alpha=0.15)
+
+    plt.tight_layout()
+    plt.show()
+    bcs_tbl['num_missing']=bcs_tbl.isnull().sum(axis=1)
+    present = sum( bcs_tbl.reset_index().isna().sum() ) - bcs_tbl.shape[0]
+    #subtraction accounts for missing values due to reference allele at each position
+    print( str( 100 * ( 1- ( present / (3*bcs_tbl.shape[0] ) ) ) ) +'% of all possible mutations present' )

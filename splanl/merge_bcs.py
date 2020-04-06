@@ -88,9 +88,9 @@ def summarize_byvar_singlevaronly(
     rna_isect = rna_tbl.loc[ li_rna ].copy()
 
     if isonames is None:
-        isonames = [ cn for cn in rna_isect.columns if cn.endswith('psi') ]
+        isonames = [ cn[ :cn.rindex('_') ] for cn in rna_isect.columns if cn.endswith('psi') ]
         assert len(isonames)>0, 'cant infer the isoform name columns; please specify them in parameter isonames'
-
+        
     rna_isect['varlist'] = sa_filt.loc[ li_rna, 'variant_list' ]
 
     out_tbl = blanktbl(
