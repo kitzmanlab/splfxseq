@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import copy
 import itertools
 import pybedtools as pbt
+from ast import literal_eval
 
 def adjust_junctions(pysam_align,
                     refseq,
@@ -115,10 +116,13 @@ def clean_jns(jns,
 
     prev_jn = None
 
-    for jn in jns:
-        if jn[0] >= cnst_exons[0][1] and jn[1] < cnst_exons[1][0]:
+    for _jn in jns:
+        #changes to 1-based inclusive numbering
+        jn = (_jn[0]+1, _jn[1])
+        if jn[0] >= cnst_exons[0][1] and jn[1] < ( cnst_exons[1][0]+1 ):
             jns_joined.append(jn)
             cur_jn = jn
+            #joins adjacent junctions
             if prev_jn:
                 if cur_jn[0] == prev_jn[1]+1:
                     jns_joined[-2:]=[ (prev_jn[0], cur_jn[1]) ]
@@ -131,82 +135,63 @@ def clean_jns(jns,
 
     return(jns_joined)
 
-def make_full_bed(jn_df,
-                    cnst_exons,
-                    chrom_name):
-
-    in_df = jn_df.copy()
-
-    in_df = in_df.set_index('junction').sort_index()
-
-    blnk_bed = { 'chrom': [chrom_name]*( in_df.shape[0]+2 ),
-                 'start': [cnst_exons[0][0]],
-                 'end': [cnst_exons[0][1]],
-                 'name': ['upstream_cnst']}
-
-    for i,jn in enumerate(in_df.index):
-        blnk_bed['start'].append(jn[0])
-        blnk_bed['end'].append(jn[1])
-        blnk_bed['name'].append('junction_'+str(i))
-
-    blnk_bed['start'].append(cnst_exons[1][0])
-    blnk_bed['end'].append(cnst_exons[1][1])
-    blnk_bed['name'].append('downstream_cnst')
-
-    bed_df = pd.DataFrame(blnk_bed)
-
-    return(bed_df)
-
-def remove_cnst_ex(blk,
-                    cnst_exons):
-
-    cnst_min = min( min( cnst_exons ) )
-    cnst_max = max( max( cnst_exons ) )
-
-    for jn in copy.deepcopy(blk):
-        #if the junction starts before the start of the constant exon remove it
-        if jn[0] <= cnst_min:
-            blk.remove(jn)
-            continue
-        #if the junction ends after the end of the constant exon remove it
-        if jn[1] >= cnst_max:
-            blk.remove(jn)
-            continue
-        for ex in cnst_exons:
-            if jn[0] in range(ex[0],ex[1]) or jn[1] in range(ex[0],ex[1]):
-                blk.remove(jn)
-                break
-
-    return(blk)
-
-
-def get_all_isoforms(pysam_align,
+def get_all_isoforms(align_by_samp_dict,
                     cnst_exons):
     """Gets all isoforms within a pysam alignment file
 
     Args:
-        pysam_align (PySam AlignmentFile): a pysam alignment file with all of the reads for the sample
+        align_dict (dictionary): dictionary with sample names as keys and pysam alignment files as values
 
     Returns:
-        iso_df (pandas dataframe): Dataframe containing all isoforms seen within the data along with the
-        number of reads associated with that isoform
+        out_tbls (dictionary): dictionary with sample names as keys and pandas dataframes with isoform tuples as the
+        index and number of reads representing each isoform as the only column
     """
+    out_tbls = {}
 
-    #creates a counter object of all of the exon junctions
-    all_isos_cnt = Counter( [ tuple( clean_jns( read.get_blocks(), cnst_exons ) ) for read in pysam_align ] )
+    for samp in align_by_samp_dict:
 
-    iso_df = pd.DataFrame.from_dict(all_isos_cnt, orient='index').reset_index()
-    iso_df = iso_df.rename(columns={'index':'isoform', 0:'read_count'}).sort_values(by='read_count', ascending=False)
+        print(samp)
 
-    return(iso_df)
+        #creates a counter object of all of the exon junctions
+        all_isos_cnt = Counter( [ tuple( clean_jns( read.get_blocks(), cnst_exons ) ) for read in align_by_samp_dict[ samp ] ] )
 
-def number_isoforms(iso_df):
+        iso_df = pd.DataFrame.from_dict( all_isos_cnt, orient='index' ).reset_index()
+        iso_df = iso_df.rename(columns={'index':'isoform', 0:'read_count'}).sort_values(by='read_count', ascending=False)
+        iso_df = iso_df.set_index('isoform')
 
-    out_tbl = iso_df.copy()
+        out_tbls[ samp ] = iso_df
 
-    out_tbl['iso_num'] = ['iso'+str(i).zfill(4) for i in range(iso_df.shape[0])]
+    return( out_tbls )
 
-    out_tbl = out_tbl.set_index('iso_num')
+def number_and_merge_isoforms(isodf_by_samp_dict):
+
+    out_tbl = { samp+'_read_count': [] for samp in isodf_by_samp_dict }
+
+    out_tbl[ 'isoform' ] = list( set ( [ iso for samp in isodf_by_samp_dict
+                                              for iso in isodf_by_samp_dict[ samp ].index ] ) )
+
+    #number all isoforms so they are of the form iso0001
+    out_tbl[ 'isonum' ] = [ 'iso'+str(i).zfill( len( str( len( out_tbl[ 'isoform' ] ) ) ) )
+                            for i in range( len( out_tbl[ 'isoform' ] ) ) ]
+
+    for samp in isodf_by_samp_dict:
+
+        print(samp)
+
+        #set all the read counts as zero
+        out_tbl[ samp+'_read_count' ] = [ 0 for i in range( len( out_tbl[ 'isoform' ] ) ) ]
+
+        for idx, iso in enumerate( isodf_by_samp_dict[ samp ].index ):
+
+            out_tbl[ samp+'_read_count' ][ out_tbl[ 'isoform' ].index( iso ) ] = isodf_by_samp_dict[ samp ].iloc[ idx ].read_count
+
+    out_tbl = pd.DataFrame( out_tbl )
+
+    #reorder columns so isoform is first column
+    ordered_col = ['isoform'] + [ col for col in out_tbl.columns if col != 'isoform' ]
+    out_tbl = out_tbl[ ordered_col ]
+
+    out_tbl = out_tbl.set_index('isonum')
 
     return out_tbl
 
@@ -259,11 +244,12 @@ def cluster_vars(var_bc_counts,
     return( False )
 
 
-def summarize_isos_by_var_bc(pysam_align,
+def summarize_isos_by_var_bc(align_by_samp_dict,
                              cnst_exons,
                                 satbl,
                                 iso_df,
                                 unique_jns,
+                                canonical_isos,
                                 print_count=5,
                                 min_maxbc_count=100,
                                 tol=10,
@@ -287,47 +273,52 @@ def summarize_isos_by_var_bc(pysam_align,
         iso_df (pandas dataframe): Original iso_df with the addition of number of variants per isoform and number
                                     of barcodes per isoform
     """
+
     out_tbl = iso_df.copy()
     satbl_c = satbl.copy()
 
     satbl_c = satbl_c.dropna(subset=['variant_list'])
 
-    isogrp_to_bc = {}
+    for samp in align_by_samp_dict:
 
-    bc_cnt, read_cnt = 0,0
+        print(samp)
 
-    for bc, _reads in itertools.groupby( pysam_align, lambda _r: _r.get_tag( 'RX' ) ):
+        isogrp_to_bc = {}
 
-        if bc not in satbl_c.index:
-            continue
+        bc_cnt, read_cnt = 0,0
 
-        for iso, reads in itertools.groupby( _reads, lambda _r: tuple( clean_jns( _r.get_blocks(), cnst_exons ))):
+        for bc, _reads in itertools.groupby( align_by_samp_dict[ samp ], lambda _r: _r.get_tag( 'RX' ) ):
 
-            r=list(reads)
+            if bc not in satbl_c.index:
+                continue
 
-            isogrp = out_tbl.loc[out_tbl['isoform']==iso].index
+            for iso, reads in itertools.groupby( _reads, lambda _r: tuple( clean_jns( _r.get_blocks(), cnst_exons ))):
 
-            assert len(isogrp)==1, 'Isoforms are not unique'
+                r=list(reads)
 
-            isogrp=isogrp[0]
+                isogrp = out_tbl.loc[out_tbl['isoform']==iso].index
 
-            if isogrp not in isogrp_to_bc:
-                isogrp_to_bc[ isogrp ]={}
+                assert len(isogrp)==1, 'The isoform matches '+str( len( isogrp ) )+' isogroups instead of the expected 1'
 
-            if bc not in isogrp_to_bc[ isogrp ]:
-                isogrp_to_bc[ isogrp ][ bc ] = len(r)
-            else:
-                isogrp_to_bc[ isogrp ][ bc ] += len(r)
+                isogrp=isogrp[0]
 
-            read_cnt+=len(r)
+                if isogrp not in isogrp_to_bc:
+                    isogrp_to_bc[ isogrp ]={}
 
-        bc_cnt+=1
+                if bc not in isogrp_to_bc[ isogrp ]:
+                    isogrp_to_bc[ isogrp ][ bc ] = len(r)
+                else:
+                    isogrp_to_bc[ isogrp ][ bc ] += len(r)
 
-        if bc_cnt%10000==0:
-            print('Barcodes processed:',bc_cnt,'Reads processed:',read_cnt)
+                read_cnt+=len(r)
+
+            bc_cnt+=1
+
+            if bc_cnt%10000==0:
+                print('Barcodes processed:',bc_cnt,'Reads processed:',read_cnt)
 
     #takes 16 minutes to get here
-    isogrp_var_count = { isogrp: [ len( isogrp_to_bc[ isogrp ] ),
+        isogrp_var_count = { isogrp: [ len( isogrp_to_bc[ isogrp ] ),
                                     #should count number of variants
                                     len( set( satbl_c.loc[ bc ].variant_list
                                     for bc in isogrp_to_bc[ isogrp ] ) ),
@@ -336,88 +327,110 @@ def summarize_isos_by_var_bc(pysam_align,
                         for isogrp in isogrp_to_bc
                         }
 
-    chucked_bcs, chucked_reads = 0,0
-    missed_bcs, missed_reads = 0,0
+        chucked_bcs, chucked_reads = 0,0
+        missed_bcs, missed_reads = 0,0
 
-    for isogrp in isogrp_to_bc:
+        for isogrp in isogrp_to_bc:
 
-        bcs = [ bc for bc in isogrp_to_bc[ isogrp ] ]
+            bcs = [ bc for bc in isogrp_to_bc[ isogrp ] ]
 
-        var_to_bc = {}
-        for bc in bcs:
-            var = satbl_c.loc[ bc ].variant_list
-            if var in var_to_bc:
-                var_to_bc[ var ].add(bc)
-            else:
-                var_to_bc[ var ] = { bc }
+            var_to_bc = {}
+            for bc in bcs:
+                var = satbl_c.loc[ bc ].variant_list
+                if var in var_to_bc:
+                    var_to_bc[ var ].add(bc)
+                else:
+                    var_to_bc[ var ] = { bc }
 
-        var_bc_counts = { var: len(var_to_bc[ var ]) for var in var_to_bc }
+            var_bc_counts = { var: len(var_to_bc[ var ]) for var in var_to_bc }
 
-        var_bc_counts_sort = { var: count for var, count in sorted(var_bc_counts.items(), key=lambda item: -item[1])}
+            var_bc_counts_sort = { var: count for var, count in sorted(var_bc_counts.items(), key=lambda item: -item[1])}
 
-        #get the variant with the highest number of barcodes
-        top_var = list( itertools.islice( var_bc_counts_sort.items(), 1 ) ) [0]
+            #get the variant with the highest number of barcodes
+            top_var = list( itertools.islice( var_bc_counts_sort.items(), 1 ) ) [0]
 
-        #get max bcs from one variant for each isogrp
-        isogrp_var_count[ isogrp ].append( top_var[1] )
+            #get max bcs from one variant for each isogrp
+            isogrp_var_count[ isogrp ].append( top_var[1] )
 
-        print( 'For isoform:', out_tbl.loc[ isogrp ].isoform )
-        print( 'The variants with the top', print_count, 'number of barcodes are:')
-        print( list(itertools.islice( var_bc_counts_sort.items(), print_count ) ) )
+            print( 'For isoform:', out_tbl.loc[ isogrp ].isoform )
+            print( 'The variants with the top', print_count, 'number of barcodes are:')
+            print( list(itertools.islice( var_bc_counts_sort.items(), print_count ) ) )
 
-        #get a list of all variants
-        var_list = [ v for var in var_bc_counts_sort for v in var.split(',') ]
-        var_list_unique = list( set( var_list ) )
+            #get a list of all variants
+            var_list = [ v for var in var_bc_counts_sort for v in var.split(',') ]
+            var_list_unique = list( set( var_list ) )
 
-        #this gets the first position where the isoform differs from expected junctions
-        jn_diff = list( { jn for jns in out_tbl.loc[isogrp].isoform for jn in jns }
+            #this gets the first position where the isoform differs from expected junctions
+            jn_diff = list( { jn for jns in out_tbl.loc[isogrp].isoform for jn in jns }
                         - set( unique_jns ) )
-        if len( jn_diff )>1:
-            jn_diff = [ min( jn_diff ) ]
+            if len( jn_diff )>1:
+                jn_diff = [ min( jn_diff ) ]
 
-        #lets keep the best isoforms
-        #first check if the max bc per isoform is greater than 100
-        if top_var[1] >= min_maxbc_count:
-            isogrp_var_count[ isogrp ].append( 1 )
-        #requires the top variant to have at least x barcodes and the top barcode to have at least y reads
-        elif top_var[1] <= min_bc_max_reads[0] and isogrp_var_count[ isogrp ][2] <= min_bc_max_reads[1]:
-            chucked_bcs += isogrp_var_count[ isogrp ][0]
-            chucked_reads += out_tbl.loc[ isogrp ].read_count
-            isogrp_var_count[ isogrp ].append( 0 )
-            continue
-        #check if the var with the max bc is within tolerance of the where the isoform differs
-        elif any( [ check_tolerance( int( var.split(':')[1] ),
+            #lets keep the best isoforms
+            #first check if the isoform exactly matches an isoform we're expecting to see
+            if any( [ out_tbl.loc[ isogrp ].isoform == can_iso for can_iso in canonical_isos ] ):
+                isogrp_var_count[ isogrp ].append( 1 )
+            #then check if the max bc per isoform is greater than 100
+            elif top_var[1] >= min_maxbc_count:
+                isogrp_var_count[ isogrp ].append( 2 )
+            #requires the top variant to have at least x barcodes and the top barcode to have at least y reads
+            elif top_var[1] <= min_bc_max_reads[0] and isogrp_var_count[ isogrp ][2] <= min_bc_max_reads[1]:
+                chucked_bcs += isogrp_var_count[ isogrp ][0]
+                chucked_reads += out_tbl.loc[ isogrp ][ samp+'_read_count' ]
+                isogrp_var_count[ isogrp ].append( 0 )
+                continue
+            #check if the var with the max bc is within tolerance of the where the isoform differs
+            elif any( [ check_tolerance( int( var.split(':')[1] ),
                                  jn_diff,
                                  tol )
                     for var in top_var[0].split(',') ] ):
-            isogrp_var_count[ isogrp ].append( 2 )
-        #check if at least min_cluster_size of variants are within a tol of each other
-        elif cluster_vars(  var_bc_counts_sort,
+                isogrp_var_count[ isogrp ].append( 3 )
+            #check if at least min_cluster_size of variants are within a tol of each other
+            elif cluster_vars(  var_bc_counts_sort,
                             min_cluster_size,
                             tol,
                             clustered_bc_ave ):
-            isogrp_var_count[ isogrp ].append( 3 )
-        #check if a double variant is also listed as a single variant
-        elif len( var_list ) != len( var_list_unique ):
-            isogrp_var_count[ isogrp ].append( 4 )
-        else:
-            isogrp_var_count[ isogrp ].append( 0 )
-            missed_bcs += isogrp_var_count[ isogrp ][0]
-            missed_reads += out_tbl.loc[ isogrp ].read_count
+                isogrp_var_count[ isogrp ].append( 4 )
+            #check if a double variant is also listed as a single variant
+            elif len( var_list ) != len( var_list_unique ):
+                isogrp_var_count[ isogrp ].append( 5 )
+            else:
+                isogrp_var_count[ isogrp ].append( 0 )
+                missed_bcs += isogrp_var_count[ isogrp ][0]
+                missed_reads += out_tbl.loc[ isogrp ][ samp+'_read_count' ]
 
-    print('%i (%.2f%%) barcodes failed the min_bc_max_reads filter' \
+        print('%i (%.2f%%) barcodes failed the min_bc_max_reads filter' \
             % ( chucked_bcs, 100*(chucked_bcs/sum(i[0] for i in isogrp_var_count.values() ) ) ) )
-    print('%i (%.2f%%) reads failed the min_bc_max_reads filter' \
-            % ( chucked_reads, 100*(chucked_reads/out_tbl.read_count.sum() ) ) )
-    print('%i (%.2f%%) barcodes did not fulfill any filter' \
+        print('%i (%.2f%%) reads failed the min_bc_max_reads filter' \
+            % ( chucked_reads, 100*(chucked_reads/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) barcodes did not fulfill any filter' \
             % ( missed_bcs, 100*(missed_bcs/sum(i[0] for i in isogrp_var_count.values() ) ) ) )
-    print('%i (%.2f%%) reads did not fulfill any filter'\
-            % ( missed_reads, 100*(missed_reads/out_tbl.read_count.sum() ) ) )
+        print('%i (%.2f%%) reads did not fulfill any filter'\
+            % ( missed_reads, 100*(missed_reads/out_tbl[ samp+'_read_count' ].sum() ) ) )
 
-    iso_cnts = pd.DataFrame.from_dict(isogrp_var_count, orient='index',
-                                    columns=['num_bcs','num_vars','max_reads_per_bc','max_bc_per_var','filter'])
+        cols = [ samp + suffix for suffix in ['_num_bcs','_num_vars','_max_reads_per_bc','_max_bc_per_var','_filter'] ]
+        iso_cnts = pd.DataFrame.from_dict(isogrp_var_count, orient='index',
+                                    columns=cols)
 
-    out_tbl = pd.merge(out_tbl, iso_cnts, left_index=True, right_index=True).sort_values(by=['read_count'],ascending=False)
+        out_tbl = pd.merge(out_tbl, iso_cnts, left_index=True, right_index=True, how="outer")
+
+        out_tbl.index.name = 'isonum'
+
+    #if iso_counts doesn't contain all the isoforms, the values will be null for those rows
+    #change to zeros
+    out_tbl = out_tbl.fillna(0)
+
+    #get totals across samples
+    for suffix in [ '_read_count', '_num_bcs', '_num_vars' ]:
+
+        #sum of each row across the columns
+        col = [ col for col in out_tbl.columns if suffix in col ]
+        out_tbl[ 'total'+suffix ] = out_tbl[ col ].sum( axis=1 )
+
+    #counts number of samples passing filter for each isoform
+    #specifically, counting non zero filter values
+    filter_col = [ col for col in out_tbl.columns if 'filter' in col ]
+    out_tbl[ 'total_passfilt' ] = out_tbl[ filter_col ].astype( bool ).sum( axis=1 )
 
     return(out_tbl)
 
@@ -426,11 +439,15 @@ def combine_isoforms(iso_df,
 
     out_tbl = iso_df.copy()
 
-    out_tbl.drop( columns = ['filter'], inplace=True )
+    filter_cols = [ col for col in out_tbl.columns if 'filter' in col ]
+    out_tbl.drop( columns = filter_cols, inplace=True )
 
     isoform_comb = []
 
     for iso in out_tbl.isoform:
+
+        #this will make sure any strings are converted to tuples
+        iso = literal_eval(iso)
 
         cur_iso = []
         prev_jn = None
@@ -454,25 +471,35 @@ def combine_isoforms(iso_df,
     out_tbl[ 'comb_isoform' ] = isoform_comb
 
     #sums across matching isoforms
-    #print(out_tbl.groupby(['comb_isoform'],as_index=False).max())
-    sums_df = out_tbl.groupby(['comb_isoform'],as_index=False).sum().drop(columns=['max_reads_per_bc','max_bc_per_var'])
+    max_cols = [ col for col in out_tbl.columns if 'max' in col ]
+    sums_df = out_tbl.groupby(['comb_isoform'],as_index=False).sum().drop(columns=max_cols)
     #max across matching isoforms
-    max_df = out_tbl.groupby(['comb_isoform'],as_index=False).max().drop(columns=['read_count','num_bcs','num_vars','isoform'])
+    other_cols = [ col for col in out_tbl.columns for name in ['read_count','num_bcs','num_vars','isoform'] if name in col and col!= 'comb_isoform' ]
+    max_df = out_tbl.groupby(['comb_isoform'],as_index=False).max().drop(columns=other_cols)
     #counts number of isoforms per isogrp
     counts_df = out_tbl.groupby(['comb_isoform'],as_index=False).count()[['comb_isoform','isoform']].rename(columns={"isoform": "isoform_counts"})
     #concatenates isoform numbers to track from previous tables
-    iso_nums_df = out_tbl.reset_index().groupby(['comb_isoform'])['index'].apply(','.join).reset_index()
+    #iso_nums_df = out_tbl.reset_index().groupby(['comb_isoform'])['index'].apply(','.join).reset_index()
+    iso_nums_df = out_tbl.reset_index().groupby(['comb_isoform'])['isonum'].apply(','.join).reset_index()
     #concatenates all isoforms to track from previous table
     isoform_df = out_tbl.reset_index().groupby(['comb_isoform'])['isoform'].apply(tuple).reset_index()
 
+    print('sums',sums_df)
+    print('max',max_df)
     out_tbl = pd.merge(sums_df,max_df,on='comb_isoform')
+    print('one',out_tbl.head())
     out_tbl = pd.merge(out_tbl,counts_df,on='comb_isoform')
+    print('two',out_tbl.head())
     out_tbl = pd.merge(out_tbl,isoform_df,on='comb_isoform')
+    print('three',out_tbl.head())
     out_tbl = pd.merge(out_tbl,iso_nums_df,on='comb_isoform').rename(columns={"index": "comb_iso_nums"})
-    out_tbl.sort_values(by=['read_count'], ascending=False, inplace=True)
+    print('four',out_tbl.head())
+    out_tbl = out_tbl.sort_values(by='total_read_count', ascending=False)
+    print('five',out_tbl.head())
 
-    out_tbl['index'] = ['isogrp'+str(i).zfill(3) for i in range(out_tbl.shape[0])]
-    out_tbl.set_index('index',inplace=True)
+
+    out_tbl['isogrp'] = ['isogrp'+str(i).zfill( len( str( out_tbl.shape[0] ) ) ) for i in range( out_tbl.shape[0] ) ]
+    out_tbl.set_index('isogrp',inplace=True)
 
     return (out_tbl)
 
@@ -506,71 +533,14 @@ def check_individual_variants(pysam_align,
 
     return([iso_dict, full_reads])
 
-def add_junctions(iso,
-                    con_exons,
-                    read_len,
-                    start_site):
-
-    #add in first constant exon
-    iso = ( ( start_site, con_exons[0][1] ), ) + iso
-
-    used_bases = sum( jn[1]-jn[0] for jn in iso )
-
-    if used_bases > read_len:
-        print(iso)
-
-    #assert used_bases <= read_len, str(iso)+'\nMore bases in isoform than read length'
-
-    #if we still have bases left, add final constant exon
-    if used_bases < read_len:
-        iso_end = con_exons[1][0] + (read_len - used_bases)
-        iso = iso + ( ( con_exons[1][0], iso_end ), )
-
-    #make 1 - based inclusive
-    isos_out = tuple( [ ( jn[0]+1, jn[1] ) for jn in iso ] )
-
-    return( isos_out )
-
-
-def create_iso_dict(iso_df,
-                    con_exons,
-                    read_len,
-                    start_site):
-
-    iso_df_c = iso_df.copy()
-
-    isogrpdict = { iso: add_junctions( iso_df_c.loc[ iso ].isoform,
-                                        con_exons,
-                                        read_len,
-                                        start_site )
-                    for iso in iso_df_c.index}
-
-    return( isogrpdict )
-
 def create_iso_dict_no_cnst(iso_df):
 
     iso_df_c = iso_df.copy()
 
-    #make 1-based inclusive
-    isogrpdict = { iso: tuple( [ ( jn[0]+1, jn[1] )
-                    for jn in iso_df_c.loc[ iso ].isoform ] )
-                    for iso in iso_df_c.index}
+    isogrpdict = { iso: iso_df_c.loc[ iso ].isoform
+                    for iso in iso_df_c.index }
 
     return( isogrpdict )
-
-
-def filter_junctions(jn_df,
-                    thresh):
-    """Removes junctions with read counts lower than the threshold.
-
-    Args:
-        jn_df (Pandas data frame): Pandas data frame containing junctions and their read col_read_counts
-        thresh (int): Number of reads required to remain in the data frame
-
-    Returns:
-        jn_df_filt (Pandas data frame): Pandas data frame with only junctions that meet the read count threshold
-    """
-    return( jn_df[ jn_df[ 'read_count' ]>=thresh ] )
 
 def make_junction_graph(exon_bed):
 
@@ -713,9 +683,9 @@ def trunc_isoforms_by_readlayout_SE(
 def compute_isoform_counts(
     bam,
     isogrpdict,
-    read_start_coord,
+    cnst_exons,
     tol_first_last=0,
-    min_reads=10,
+    min_reads=1,
     count_otherisos=False
 ):
     """
@@ -753,10 +723,13 @@ def compute_isoform_counts(
         for read in reads:
             if read.is_unmapped:
                 n_umapped+=1
-            elif abs(read.reference_start+1-read_start_coord)>tol_first_last:
+            #if the end of the upstream constant exon isn't within the tolerance count it as a bad start
+            elif not( any( jn[1] <= cnst_exons[ 0 ][ 1 ] + tol_first_last
+                            or jn[1] > cnst_exons[ 0 ][ 1 ] - tol_first_last
+                            for jn in read.get_blocks() ) ):
                 n_badstart+=1
             else:
-                cur_matches = check_junctions2( read, isogrpdict, tol_first_last )
+                cur_matches = check_junctions2( read, isogrpdict, cnst_exons, tol_first_last )
 
                 if sum(cur_matches)==0:
                     n_nomatch+=1
@@ -805,7 +778,7 @@ def compute_isoform_counts(
 
 
 # check coverage of exon and of junctions
-def check_junctions2( read, isogrpdict, tol_first_last=0 ):
+def check_junctions2( read, isogrpdict, cnst_exons, tol_first_last=0 ):
 
     """Check an individual aligned read vs a list of isoforms
 
@@ -817,20 +790,11 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
     Returns:
         list of bools indicating whether this alignment is consistent with each of the provided isoform compat. groups.
     """
-    #print(read)
     # get blocks of reference coverage from the read.
-    l_refcoord_blks = read.get_blocks()
+    l_refcoord_blks_cleaned = clean_jns( read.get_blocks(), cnst_exons )
 
-    # coalesce any adjacent blocks; fix from [00) coordinate system to [11]
-    l_refcoord_blks_joined = []
-    for i in range(len(l_refcoord_blks)):
-        l_refcoord_blks_joined.append( (l_refcoord_blks[i][0]+1,l_refcoord_blks[i][1]) )
-        if len(l_refcoord_blks_joined) >= 2:
-            if l_refcoord_blks_joined[-1][0] == l_refcoord_blks_joined[-2][1]+1:
-                l_refcoord_blks_joined[-2:]=[ (l_refcoord_blks_joined[-2][0], l_refcoord_blks_joined[-1][1]) ]
+    l_refcoord_blks_cleaned=tuple(l_refcoord_blks_cleaned)
 
-    l_refcoord_blks_joined=tuple(l_refcoord_blks_joined)
-    #print('data',l_refcoord_blks_joined)
     lmatches=[]
 
     # now compare to isogrps
@@ -839,42 +803,9 @@ def check_junctions2( read, isogrpdict, tol_first_last=0 ):
         #print(isogrpname,isogrp)
 
         match = False
-        lblks = len( l_refcoord_blks_joined )
-        if lblks == len( isogrp ):
-            # from IPython.core.debugger import set_trace
-            # set_trace()
-
-            # do the aligned blocks of this read strictly equal the isoform coord blocks?
-            if isogrp == l_refcoord_blks_joined:
-                # yes, great, it's a match
-                match=True
-            elif tol_first_last>0:
-                # no, but check for mismatch at the very first or last base within the specified tol.
-                match=all( [ ( c_read[0] in range( c_ref[0]-tol_first_last,c_ref[0]+tol_first_last )
-                           and c_read[1] in range( c_ref[1]-tol_first_last,c_ref[1]+tol_first_last ) )
-                           if ( c_ref==isogrp[0] or c_ref==isogrp[-1] )
-                           else ( c_read == c_ref )
-                           for c_ref,c_read in zip(isogrp,l_refcoord_blks_joined) ] )
-                #print(match)
-
-                #commented out by CS - wasn't working properly
-
-                """if lblks>1:
-                    if (isogrp[1:-1] == l_refcoord_blks_joined[1:--1]) and \
-                       l_refcoord_blks_joined[0][1]==isogrp[0][1] and \
-                       l_refcoord_blks_joined[0][0]>=isogrp[0][0]-tol_first_last and \
-                       l_refcoord_blks_joined[0][0]<=isogrp[0][0]+tol_first_last and \
-                       l_refcoord_blks_joined[-1][1]>=isogrp[1][1]-tol_first_last and \
-                       l_refcoord_blks_joined[-1][1]<=isogrp[1][1]+tol_first_last :
-
-                        match=True
-                else:
-                    if l_refcoord_blks_joined[0][1]==isogrp[0][1] and \
-                       l_refcoord_blks_joined[0][0]>=isogrp[0][0]-tol_first_last and \
-                       l_refcoord_blks_joined[0][0]<=isogrp[0][0]+tol_first_last and \
-                       l_refcoord_blks_joined[-1][1]>=isogrp[1][1]-tol_first_last and \
-                       l_refcoord_blks_joined[-1][1]<=isogrp[1][1]+tol_first_last :
-                        match=True"""
+        lblks = len( l_refcoord_blks_cleaned )
+        if lblks == len( isogrp ) and isogrp == l_refcoord_blks_cleaned:
+            match=True
 
         lmatches.append( match )
 
@@ -885,13 +816,73 @@ def filter_on_barc_len( jxnbybctbl, max_len=35 ):
     subtbl = jxnbybctbl.loc[li].copy()
     return subtbl
 
+def create_named_isogrps(iso_grp_dict,
+                        iso_names_dict,
+                        remove_exon_coords,
+                        upstream_ex_len,
+                        read_len,
+                        tol = 0):
+
+    named_iso_grps = { isoname: [] for isoname in iso_names_dict }
+    #set up an other category for isoforms that don't match
+    named_iso_grps['OTHER']=[]
+
+    for isonum,iso in iso_grp_dict.items():
+
+        iso_cleaned = []
+        for jn in iso:
+            #check if the junction overlaps the exons to remove
+            if not( any ( jn[0] in range( r_exon[0], r_exon[1] ) or jn[1] in range( r_exon[0], r_exon[1] )
+                    for r_exon in remove_exon_coords ) ):
+                iso_cleaned.append(jn)
+
+        #more likely to be off by a base if we are near the read length
+        bases_used = sum( jn[1] - jn[0] +1 for jn in iso_cleaned ) + upstream_ex_len
+
+        #this will fail if there's two possible isoform matches
+        #would that ever happen?
+        match=False
+        for isoname, iso_to_match in iso_names_dict.items():
+            #check if it perfectly matches the named isoform
+            if iso_cleaned == iso_to_match:
+                match = isoname
+                break
+
+            #if they're different lengths don't bother going through all the tolerance checks
+            elif len( iso_to_match ) != len( iso_cleaned ):
+                continue
+
+            #if we have are using a tolerance and we are near the read length
+            elif tol > 0 and bases_used in range( read_len - tol, read_len +tol ):
+                #check if the final junction is within the tolerance (allows for deletions in the upstream exon)
+
+                #gets index of all mismatched junctions
+                mismatched_jn = [ iso_cleaned.index( jn_c )
+                                for jn_m, jn_c in zip( iso_to_match, iso_cleaned )
+                                if jn_m != jn_c ]
+
+                #we only want to allow mismatches at the end of the last junction
+                #so first check the only mismatch is the last junction
+                #then check the start of the junction matches
+                #then check if the final junction is within tolerance
+                if mismatched_jn[0] == len( iso_cleaned ) - 1 \
+                and iso_cleaned[-1][0] == iso_to_match[-1][0] \
+                and iso_cleaned[-1][1] in range(iso_to_match[-1][1] - tol, iso_to_match[-1][1] + tol):
+                    match = isoname
+                    break
+
+        if match:
+            named_iso_grps[ match ].append( isonum )
+        else:
+            named_iso_grps[ 'OTHER' ].append( isonum )
+
+    return(named_iso_grps)
 
 def combine_isogrps(
     new_grpnames_to_old_grpnames,
     jxnbybctbl
  ):
     """ combine barcode groups
-
     Arguments:
         new_grpnames_to_old_grpnames {[type]} -- [description]
     """

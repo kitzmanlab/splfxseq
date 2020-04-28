@@ -55,14 +55,12 @@ def merge_subasm_and_rna_tbls(
 
     return join_tbl
 
-
 def summarize_byvar_singlevaronly(
     subasm_tbl,
     rna_tbl,
     exon_coords,
     min_usable_reads_per_bc,
     isonames=None ):
-
     """
     Summarize per-variant effects across associated barcodes.
     Considers only single-variant clones; barcodes w/ ≥1 variants are ignored.
@@ -90,7 +88,7 @@ def summarize_byvar_singlevaronly(
     if isonames is None:
         isonames = [ cn[ :cn.rindex('_') ] for cn in rna_isect.columns if cn.endswith('psi') ]
         assert len(isonames)>0, 'cant infer the isoform name columns; please specify them in parameter isonames'
-        
+
     rna_isect['varlist'] = sa_filt.loc[ li_rna, 'variant_list' ]
 
     out_tbl = blanktbl(
@@ -105,38 +103,6 @@ def summarize_byvar_singlevaronly(
          [ 'median_{}'.format(cn) for cn in isonames ]
      )
 
-    """aminoCode = {
-     'TTT': 'F', 'TTC': 'F', 'TTA': 'L', 'TTG': 'L',
-     'TCT': 'S', 'TCC': 'S', 'TCA': 'S', 'TCG': 'S',
-     'TAT': 'Y', 'TAC': 'Y', 'TAA': 'X', 'TAG': 'X',
-     'TGT': 'C', 'TGC': 'C',  'TGA': 'X', 'TGG': 'W',
-     'CTT': 'L', 'CTC': 'L', 'CTA': 'L', 'CTG': 'L',
-     'CCT': 'P', 'CCC': 'P', 'CCA': 'P', 'CCG': 'P',
-     'CAT': 'H', 'CAC': 'H', 'CAA': 'Q', 'CAG': 'Q',
-     'CGT': 'R', 'CGC': 'R', 'CGA': 'R', 'CGG': 'R',
-     'ATT': 'I', 'ATC': 'I', 'ATA': 'I', 'ATG': 'M',
-     'ACT': 'T', 'ACC': 'T', 'ACA': 'T', 'ACG': 'T',
-     'AAT': 'N', 'AAC': 'N', 'AAA': 'K', 'AAG': 'K',
-     'AGT': 'S', 'AGC': 'S', 'AGA': 'R', 'AGG': 'R',
-     'GTT': 'V', 'GTC': 'V', 'GTA': 'V', 'GTG': 'V',
-     'GCT': 'A', 'GCC': 'A', 'GCA': 'A', 'GCG': 'A',
-     'GAT': 'D', 'GAC': 'D', 'GAA': 'E', 'GAG': 'E',
-     'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G',
-     }
-
-    #dictionary of position: reference to classify variants
-    seqDict = {int(singlevar.split(':')[1]) : singlevar.split(':')[2]
-                for singlevar, subtbl in rna_isect.groupby( 'varlist' )
-                if len( singlevar.split(':')[2] ) == 1 }
-
-    #dictionary of first position of codon: amino acid to classify variants
-    aminoDict={}
-    shift={}
-    for c in exon_coords:
-        for j in range(c[0],c[1]+1,3):
-            aminoDict[j]=aminoCode[''.join(seqDict[k] for k in range(j,j+3))]
-            shift.update({j:0,j+1:1,j+2:2})"""
-
     for singlevar, subtbl in rna_isect.groupby( 'varlist' ):
 
         subtbl_filt = subtbl.loc[ subtbl.usable_reads >= min_usable_reads_per_bc ].copy()
@@ -147,23 +113,6 @@ def summarize_byvar_singlevaronly(
         out_tbl['ref'].append(singlevar.split(':')[2])
         out_tbl['alt'].append(singlevar.split(':')[3])
 
-        """
-        #classifies variants as synonymous, nonsense, misssense, or intronic
-        pos=int(singlevar.split(':')[1])
-        #lets only deal with SNVs right now - later can be more precise
-        if ( len(singlevar.split(':')[2]) > 1 or len(singlevar.split(':')[3]) > 1 ):
-            out_tbl['var_type'].append('not SNV')
-        elif any([pos in range(coord[0],coord[1]+1) for coord in exon_coords]):
-            newAmino=aminoCode[''.join(seqDict[k] if k!= pos else singlevar.split(':')[3]
-                                for k in range(pos-shift[pos],pos+3-shift[pos]))]
-            if newAmino == aminoDict[pos-shift[pos]]:
-                out_tbl['var_type'].append('synonymous')
-            elif newAmino == 'X':
-                out_tbl['var_type'].append('nonsense')
-            else:
-                out_tbl['var_type'].append('missense')
-        else:
-            out_tbl['var_type'].append('intronic SNV')"""
         out_tbl['var_type'].append(None)
 
         out_tbl['n_bc'].append( subtbl.shape[0] )
@@ -193,7 +142,10 @@ def summarize_byvar_singlevaronly(
                 # mean psi
                 out_tbl[ f'mean_{iso}' ].append( subtbl_filt[ f'{iso}_psi' ].mean() )
                 # mean psi, weighted by #usable reads
-                out_tbl[ f'wmean_{iso}' ].append( ( subtbl_filt[ f'{iso}_psi' ] * subtbl_filt['usable_reads'] ).sum() / subtbl_filt['usable_reads'].sum() )
+                if subtbl_filt['usable_reads'].sum() != 0:
+                    out_tbl[ f'wmean_{iso}' ].append( ( subtbl_filt[ f'{iso}_psi' ] * subtbl_filt['usable_reads'] ).sum() / subtbl_filt['usable_reads'].sum() )
+                else:
+                    out_tbl[ f'wmean_{iso}' ].append( np.nan )
                 # median psi
                 out_tbl[ f'median_{iso}' ].append( subtbl_filt[ f'{iso}_psi' ].median() )
 
@@ -373,3 +325,32 @@ def filter_byvartbl_snvonly(
 
     byvar_snvonly = byvar_tbl.loc[ (byvar_tbl.ref.str.len() == 1) & (byvar_tbl.alt.str.len() == 1) ].copy()
     return byvar_snvonly
+
+def across_sample_stats(ltbls,
+                        lsampnames,
+                        med_col_names):
+
+    out_tbl = { 'sample_group':[],
+                'sample':[],
+                'n_reads':[],
+                'n_bcs':[],
+                'n_bcs_passfilt':[]}
+
+    for col in med_col_names:
+        out_tbl['med_'+col] = []
+
+    i=0
+    for grp, _lsamp in lsampnames.items():
+        for lsamp in _lsamp:
+            out_tbl['sample_group'].append(grp)
+            out_tbl['sample'].append(grp+'_'+lsamp)
+            out_tbl['n_reads'].append( int( ltbls[ i ].query( 'sample=="%s"' % lsamp ).sum_reads.sum() ) )
+            out_tbl['n_bcs'].append( int( ltbls[ i ].query( 'sample=="%s"' % lsamp ).n_bc.sum() ) )
+            out_tbl['n_bcs_passfilt'].append( int( ltbls[ i ].query( 'sample=="%s"' % lsamp ).n_bc_passfilt.sum() ) )
+            for col in med_col_names:
+                out_tbl['med_'+col].append( float( ltbls[ i ].query( 'sample=="%s"' % lsamp )[ col ].median() ) )
+        i+=1
+
+    out_tbl = pd.DataFrame( out_tbl )
+
+    return out_tbl

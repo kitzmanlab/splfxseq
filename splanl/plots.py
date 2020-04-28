@@ -6,74 +6,48 @@ from .coords import pos_to_hgvspos
 import splanl.merge_bcs as mbcs
 
 
-def altplot_bc_thresh_onesamp(
+def waterfall_plot(
     bctbl,
     col_read_counts,
     percentile,
-    addl_cols_tooltip=[],
-    height=300,
-    width=300,
     title='',
     x_ax_title='Read Count Rank Log10',
     y1_ax_title='Read Count Log10',
     y2_ax_title='Cumulative Read Count Percentile'
 ):
+
     bc_ranks = bctbl.copy()
 
     bc_ranks.sort_values(by=[col_read_counts],ascending=False,inplace=True)
 
-    #I was using the commented out code but it struggles with ties and the df is already sorted
-    #bc_ranks[col_read_counts+'_rank'] =  np.argsort( np.argsort( np.array(-bc_ranks[col_read_counts])) )
     bc_ranks[col_read_counts+'_rank'] =  np.arange(bc_ranks.shape[0])
     bc_ranks[col_read_counts+'_log10']=np.log10(bc_ranks[col_read_counts]+.1)
     bc_ranks[col_read_counts+'_rank_log10']=np.log10(bc_ranks[col_read_counts+'_rank']+1)
     bc_ranks['cumulative_read_percentage'] = 100*bc_ranks[col_read_counts].cumsum()/bc_ranks[col_read_counts].sum()
-    bc_ranks['per_rank'] = bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts+'_rank_log10'].reset_index(drop=True)[0]
+    percentile_cutoff = bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts+'_rank_log10'].reset_index(drop=True)[0]
+    read_count_cutoff = bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts].reset_index(drop=True)[0]
 
-    base = alt.Chart( bc_ranks, title=title
-                    ).encode(
-                        x = col_read_counts+'_rank_log10:Q'
-                    )
+    fig, ax1 = plt.subplots()
 
-    pl1 = base.mark_circle(
-                    size=20
-                ).encode(
-                    y=alt.Y(col_read_counts+'_log10:Q',
-                            axis=alt.Axis( title=y1_ax_title ) ),
-                    tooltip=[col_read_counts,col_read_counts+'_rank','cumulative_read_percentage']+addl_cols_tooltip
-                )
+    color = 'blue'
+    ax1.set_xlabel(x_ax_title)
+    ax1.set_ylabel(y1_ax_title, color=color)
+    ax1.plot(bc_ranks[col_read_counts+'_rank_log10'], bc_ranks[col_read_counts+'_log10'], color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
 
-    pl2 = base.mark_circle(
-                    size=20,
-                    color='red'
-                ).encode(
-                    y=alt.Y('cumulative_read_percentage:Q',
-                            axis=alt.Axis( title=y2_ax_title ) ),
-                    tooltip=[col_read_counts,col_read_counts+'_rank','cumulative_read_percentage']+addl_cols_tooltip
-                )
+    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
 
-    vline = base.mark_rule(
-                    strokeDash=[2,2]
-                ).encode(
-                    x=alt.X('per_rank:Q',
-                            axis=alt.Axis( title=x_ax_title ) )
-                )
+    color = 'red'
+    ax2.set_ylabel(y2_ax_title, color=color)  # we already handled the x-label with ax1
+    ax2.plot(bc_ranks[col_read_counts+'_rank_log10'], bc_ranks['cumulative_read_percentage'], color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
 
-    comb= alt.layer(
-                    pl1,
-                    pl2,
-                    vline,
-                ).resolve_scale(
-                    y='independent'
-                ).properties(
-                    height=height,
-                    width=width
-                )
+    plt.axvline(percentile_cutoff, color='black')
 
-    print('The read count cut off at the '+str(percentile)+'th percentile is '
-            +str(bc_ranks.loc[bc_ranks['cumulative_read_percentage']>=percentile][col_read_counts].reset_index(drop=True)[0]))
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.show()
 
-    return comb
+    print('The read count cut off at the',percentile,'th percentile is',read_count_cutoff)
 
 
 ##########################################################################################
@@ -428,7 +402,8 @@ def PlotBCsByPos(vardf,
                  vec_corange_exons,
                  cdna_corange_exons,
                  shade_exons,
-                 gene_name):
+                 gene_name,
+                 y_ax_lim=None):
 
     tbv=vardf.copy()
 
@@ -447,6 +422,9 @@ def PlotBCsByPos(vardf,
     plt.title(
         'Number of Distinct Barcodes Present by Position for Single Nucleotide Variants in $\it{%s}$'%gene_name,
         fontsize=24)
+
+    if y_ax_lim:
+        plt.ylim(0,y_ax_lim)
 
     plt.ylabel('Number of Distinct Barcodes',fontsize=22)
     plt.yticks(fontsize=18)
@@ -475,3 +453,28 @@ def PlotBCsByPos(vardf,
     present = sum( bcs_tbl.reset_index().isna().sum() ) - bcs_tbl.shape[0]
     #subtraction accounts for missing values due to reference allele at each position
     print( str( 100 * ( 1- ( present / (3*bcs_tbl.shape[0] ) ) ) ) +'% of all possible mutations present' )
+
+def plot_corr_waterfalls(benchmark_df,
+                        compare_df_long,
+                        corr_col,
+                        benchmark_samp_name,
+                        merge_idx = ['chrom','pos','ref','alt','varlist'],
+                        sample_col = 'sample'):
+
+    rank_df = benchmark_df.copy()[ merge_idx + [corr_col] ]
+    rank_df[ corr_col+'_rank' ] =  np.argsort( np.argsort( np.array( -rank_df[ corr_col ] ) ) )
+    rank_df = rank_df.set_index( merge_idx )
+
+    compare_df = compare_df_long.copy().set_index( merge_idx )
+
+    merge_df = compare_df.merge( rank_df[ corr_col+'_rank' ], left_index=True, right_index=True )
+
+    for samp in list( set( merge_df[ sample_col ] ) ):
+        print(samp)
+        plt.scatter(merge_df.query('sample == "%s"' %samp)[ corr_col+'_rank' ],
+                    merge_df.query('sample == "%s"' %samp)[ corr_col ],
+                    s=5)
+
+        plt.ylabel(samp + ' ' + corr_col)
+        plt.xlabel( benchmark_samp_name + ' ' + corr_col + ' rank')
+        plt.show()
