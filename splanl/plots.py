@@ -20,7 +20,7 @@ def waterfall_plot(
 
     bc_ranks.sort_values(by=[col_read_counts],ascending=False,inplace=True)
 
-    bc_ranks[col_read_counts+'_rank'] =  np.arange(bc_ranks.shape[0])
+    bc_ranks[col_read_counts+'_rank'] = np.arange(bc_ranks.shape[0])
     bc_ranks[col_read_counts+'_log10']=np.log10(bc_ranks[col_read_counts]+.1)
     bc_ranks[col_read_counts+'_rank_log10']=np.log10(bc_ranks[col_read_counts+'_rank']+1)
     bc_ranks['cumulative_read_percentage'] = 100*bc_ranks[col_read_counts].cumsum()/bc_ranks[col_read_counts].sum()
@@ -371,7 +371,7 @@ def PlotPSIByPos(vardf,
         fontsize=24)
 
     if y_ax_lim:
-        plt.ylim(0,y_ax_lim)
+        plt.ylim( y_ax_lim )
 
     plt.ylabel(col_y_isoform+' '+y_ax_title,fontsize=22)
     plt.yticks(fontsize=18)
@@ -408,7 +408,7 @@ def PlotBCsByPos(vardf,
     tbv=vardf.copy()
 
     tbv.sort_values(by=['pos'],inplace=True)
-    bcs_tbl=tbv.pivot(index='pos',columns='alt',values='n_bc')
+    bcs_tbl=tbv.pivot(index='pos',columns='alt',values='n_bc_passfilt')
     bcs_tbl['hgvs_pos'] = mbcs.pos_to_hgvspos( bcs_tbl.index,
                            vec_corange_cloned,
                            vec_corange_exons,
@@ -449,10 +449,12 @@ def PlotBCsByPos(vardf,
 
     plt.tight_layout()
     plt.show()
-    bcs_tbl['num_missing']=bcs_tbl.isnull().sum(axis=1)
-    present = sum( bcs_tbl.reset_index().isna().sum() ) - bcs_tbl.shape[0]
-    #subtraction accounts for missing values due to reference allele at each position
-    print( str( 100 * ( 1- ( present / (3*bcs_tbl.shape[0] ) ) ) ) +'% of all possible mutations present' )
+
+    #counts entries that are missing - one is missing per position as its reference
+    missing = sum( bcs_tbl.isnull().sum() ) - bcs_tbl.shape[0]
+    #counts number of entries with 0 barcodes passing the filter
+    zero = 4*bcs_tbl.shape[0] - sum( bcs_tbl[[ 'A', 'C', 'G', 'T' ]].astype( bool ).sum() )
+    print( 100 * ( 1- ( ( missing + zero ) / (3*bcs_tbl.shape[0] ) ) ), '% of all possible mutations present' )
 
 def plot_corr_waterfalls(benchmark_df,
                         compare_df_long,
@@ -478,3 +480,29 @@ def plot_corr_waterfalls(benchmark_df,
         plt.ylabel(samp + ' ' + corr_col)
         plt.xlabel( benchmark_samp_name + ' ' + corr_col + ' rank')
         plt.show()
+
+def barplot_allisos( allisos_df,
+                    psi_cols,
+                    stat,
+                    title = ''):
+
+    plot_df = allisos_df.copy()
+
+    if stat == 'max':
+        plot_df[ psi_cols ].max().plot( kind = 'bar',
+                                        figsize = ( 40, 5 ),
+                                        title = title,
+                                        ylim = ( 0, 1 ) )
+
+    if stat == 'min':
+        plot_df[ psi_cols ].min().plot( kind = 'bar',
+                                        figsize = ( 40, 5 ),
+                                        title = title,
+                                        ylim = ( 0, 1 ) )
+
+    if stat == 'mean':
+        plot_df[ psi_cols ].mean().plot( kind = 'bar',
+                                        figsize = ( 40, 5 ),
+                                        title = title,
+                                        ylim = ( 0, 1 ) )
+plt.show()

@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+import scipy.stats as ss
 
 from collections import OrderedDict as odict  # default is for keys to come back out in order after I think python 3.7
 
@@ -301,13 +302,135 @@ def combine_rep_pervartbls_long(
         assert list(t.columns)==lcolnames
 
     for (tbl,sampname) in zip(ltbls_ixd,lsampnames):
-        tbl['sample']=sampname
+
+        #allows us to create long tables from long tables that already include a sample column
+        if 'sample' in lcolnames:
+            tbl['sample_grp']=sampname
+        else:
+            tbl['sample']=sampname
 
     tblout = pd.concat( ltbls_ixd, axis=0 )
 
-    tblout = tblout[ ['sample']+[cn for cn in lcolnames] ]
+    tblout = tblout[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames] ]
 
     tblout = tblout.reset_index()
+
+    return tblout
+
+def combine_rep_perbctbls_long(
+    ltbls,
+    lsampnames
+):
+
+    """
+    Combine replicate variant effect tables in long format
+
+    Args:
+        ltbls (list of pd.DataFrame): list of per-variant effect tables, one per replicate or condition
+        lsampnames (list of str): list of respective names for those replciates or conditions
+        indexcols (list of str): what columns to use to index each variant table
+
+    Returns:
+        New pd.DataFrame with by variant effect tables merged together, with each replicate appearing as a separate row
+    """
+
+    ltbls_ixd = [ tbl.copy() for tbl in ltbls ]
+
+    lcolnames = list(ltbls_ixd[0].columns)
+
+    # all tables must have the same set of columns
+    for t in ltbls_ixd:
+        assert list(t.columns)==lcolnames
+
+    for (tbl,sampname) in zip(ltbls_ixd,lsampnames):
+
+        #allows us to create long tables from long tables that already include a sample column
+        if 'sample' in lcolnames:
+            tbl['sample_grp']=sampname
+        else:
+            tbl['sample']=sampname
+
+    tblout = pd.concat( ltbls_ixd, axis=0 )
+
+    tblout = tblout[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames] ]
+
+    tblout.index.name = 'barcode'
+
+    return tblout
+
+
+def combine_allisos_pervartbls_long(
+    ltbls,
+    lsampnames,
+    indexcols=['chrom','pos','ref','alt','varlist'],
+):
+
+    """
+    Combine replicate variant effect tables with all isoforms (not necessarily matching column names) in long format
+
+    Args:
+        ltbls (list of pd.DataFrame): list of per-variant effect tables with all isoforms, one per replicate or condition
+        lsampnames (list of str): list of respective names for those replciates or conditions
+        indexcols (list of str): what columns to use to index each variant table
+
+    Returns:
+        New pd.DataFrame with by variant effect tables merged together, with each replicate appearing as a separate row
+        Columns not represented in one input dataframe compared to other input dataframes will contain nan values
+    """
+
+    lcolnames = list( set( [ col for tbl in ltbls for col in tbl ] ) )
+
+    ltbls_ixd = [ tbl.set_index(indexcols).copy() for tbl in ltbls ]
+
+    for (tbl,sampname) in zip(ltbls_ixd,lsampnames):
+
+        #allows us to create long tables from long tables that already include a sample column
+        if 'sample' in lcolnames:
+            tbl['sample_grp']=sampname
+        else:
+            tbl['sample']=sampname
+
+    tblout = ltbls_ixd[0].append( ltbls_ixd[1:], sort = True)
+
+    tblout = tblout.reset_index()[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames] ]
+
+    return tblout
+
+def combine_allisos_perbctbls_long(
+    ltbls,
+    lsampnames
+):
+
+    """
+    Combine replicate barcode effect tables with all isoforms (not necessarily matching column names) in long format
+
+    Args:
+        ltbls (list of pd.DataFrame): list of per-variant effect tables with all isoforms, one per replicate or condition
+        lsampnames (list of str): list of respective names for those replciates or conditions
+        indexcols (list of str): what columns to use to index each variant table
+
+    Returns:
+        New pd.DataFrame with by variant effect tables merged together, with each replicate appearing as a separate row
+        Columns not represented in one input dataframe compared to other input dataframes will contain nan values
+    """
+
+    lcolnames = list( set( [ col for tbl in ltbls for col in tbl ] ) )
+
+    ltbls_ixd = [ tbl.copy() for tbl in ltbls ]
+
+    for (tbl,sampname) in zip(ltbls_ixd,lsampnames):
+
+        #allows us to create long tables from long tables that already include a sample column
+        if 'sample' in lcolnames:
+            tbl['sample_grp']=sampname
+        else:
+            tbl['sample']=sampname
+
+    tblout = ltbls_ixd[0].append( ltbls_ixd[1:], sort = True)
+
+    tblout = tblout[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames] ]
+
+    tblout.index.name = 'barcode'
 
     return tblout
 
@@ -354,3 +477,24 @@ def across_sample_stats(ltbls,
     out_tbl = pd.DataFrame( out_tbl )
 
     return out_tbl
+
+def stdize_cols_by_sample(tbv,
+                            std_cols):
+
+    out_tbl = tbv.copy()
+
+    #if this is a long dataset
+    if 'sample' in out_tbl.columns:
+
+        for col in std_cols:
+            #creates z score by sample while ignoring any missing values
+            out_tbl[ 'z' + col ] = out_tbl.groupby( [ 'sample' ] )[ col ].transform( lambda x : ss.zscore( x, nan_policy='omit' ) )
+
+    #if the data contains only one sample
+    else:
+
+        for col in std_cols:
+            print(col)
+            out_tbl[ 'z' + col ] = ss.zscore( out_tbl[ col ], nan_policy='omit' )
+
+    return( out_tbl )

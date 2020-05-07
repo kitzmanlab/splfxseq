@@ -503,41 +503,12 @@ def combine_isoforms(iso_df,
 
     return (out_tbl)
 
-def check_individual_variants(pysam_align,
-                                bc_list,
-                                suspicious_isos=[]):
-
-    iso_dict = {}
-    full_reads = {}
-
-    for bc, _reads in itertools.groupby( pysam_align, lambda _r: _r.get_tag( 'RX' ) ):
-
-        if bc not in bc_list:
-            continue
-
-        reads = list(_reads)
-
-        for r in reads:
-            iso = tuple( r.get_blocks() )
-            if iso not in iso_dict:
-                iso_dict[ iso ] = {bc: 1}
-            elif bc not in iso_dict[ iso ]:
-                iso_dict[ iso ][ bc ] = 1
-            else:
-                iso_dict[ iso ][ bc ] += 1
-            if iso in suspicious_isos:
-                if iso not in full_reads:
-                    full_reads[ iso ] = [ r ]
-                else:
-                    full_reads[ iso ].append(r)
-
-    return([iso_dict, full_reads])
-
 def create_iso_dict_no_cnst(iso_df):
 
     iso_df_c = iso_df.copy()
 
-    isogrpdict = { iso: iso_df_c.loc[ iso ].isoform
+    #pandas hate tuples so this ensures any strings come out as tuples
+    isogrpdict = { iso: literal_eval( iso_df_c.loc[ iso ].isoform )
                     for iso in iso_df_c.index }
 
     return( isogrpdict )
@@ -772,6 +743,8 @@ def compute_isoform_counts(
 
         psidf['other_isoform_psi'] = psidf['other_isoform'] / psidf.usable_reads
 
+    #sets psi to 0 instead of nan if none of the reads map to that isoform'((1201, 1266),)'
+    psidf = psidf.fillna(0)
     psidf = psidf.set_index('barcode')
 
     return psidf
