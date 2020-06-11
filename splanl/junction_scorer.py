@@ -28,8 +28,15 @@ def adjust_junctions(pysam_align,
                 outfile.write( read )
                 continue
 
-            #check if the end of any junction is more downstream than the expected end of the downstream exon
-            #check if the end of any junction is at the expected end of the downstream exon
+            #if all of the ends of junctions are before (downstream) the end of the downstream constant exon
+            #OR all of the starts of junctions are after (upstream) the start of the upstream constant exon
+            #the read is garbage anyway so just skip it
+            if all( jn[1] < cnst_exons[0][1] for jn in iso ) or all( jn[0] > cnst_exons[1][0] for jn in iso ):
+                outfile.write( read )
+                continue
+
+            #check if the end of any junction is more upstream than the expected end of the upstream exon
+            #check if the end of any junction is at the expected end of the upstream exon
             if any( jn[1] < cnst_exons[0][1] for jn in iso ) and not( any( jn[1] == cnst_exons[0][1] for jn in iso ) ):
                 #grabs the last junction which is less than the expected end of the constant exon
                 bad_jn = [ jn for jn in iso if jn[1] < cnst_exons[0][1] ][-1]
@@ -58,8 +65,8 @@ def adjust_junctions(pysam_align,
                     cigarlist[ next_jn_idx ][1]-=cnst_exons[0][1] - bad_jn[1]
                     read.cigartuples = tuple( tuple(l) for l in cigarlist )
 
-            #check if the start of any junction is farther upstream than the expected start of the constant upstream exon
-            #check if the start of any junction is at the expected start of the constant upstream exon
+            #check if the start of any junction is farther upstream than the expected start of the constant downstream exon
+            #check if the start of any junction is at the expected start of the constant downstream exon
             elif any( jn[0] > cnst_exons[1][0] for jn in iso ) and not( any( jn[0] == cnst_exons[1][0] for jn in iso ) ):
                 #grabs the first junction which is less than the expected end of the constant exon
                 bad_jn = [ jn for jn in iso if jn[0] > cnst_exons[1][0] ][0]
@@ -163,16 +170,33 @@ def get_all_isoforms(align_by_samp_dict,
 
     return( out_tbls )
 
-def number_and_merge_isoforms(isodf_by_samp_dict):
+def number_and_merge_isoforms( isodf_by_samp_dict,
+                                existing_iso_df = None ):
+
+    if existing_iso_df:
+        cur_df = existing_iso_df.copy()
 
     out_tbl = { samp+'_read_count': [] for samp in isodf_by_samp_dict }
 
     out_tbl[ 'isoform' ] = list( set ( [ iso for samp in isodf_by_samp_dict
                                               for iso in isodf_by_samp_dict[ samp ].index ] ) )
 
-    #number all isoforms so they are of the form iso0001
-    out_tbl[ 'isonum' ] = [ 'iso'+str(i).zfill( len( str( len( out_tbl[ 'isoform' ] ) ) ) )
-                            for i in range( len( out_tbl[ 'isoform' ] ) ) ]
+    #this if/else not tested
+    if existing_iso_df:
+        out_tbl[ 'isonum' ] = []
+
+        non_matches = 0
+        for iso in out_tbl[ 'isoform' ]:
+
+            if iso in cur_df.isoform:
+                out_tbl[ 'isonum' ].append( cur_df.index[ cur_df.isoform == iso ] )
+            else:
+                out_tbl[ 'isonum' ].append( 'iso'+str( cur_df.shape[0] ) )
+                non_matches += 1
+    else:
+        #number all isoforms so they are of the form iso0001
+        out_tbl[ 'isonum' ] = [ 'iso'+str(i).zfill( len( str( len( out_tbl[ 'isoform' ] ) ) ) )
+                                for i in range( len( out_tbl[ 'isoform' ] ) ) ]
 
     for samp in isodf_by_samp_dict:
 
@@ -250,6 +274,7 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
                                 iso_df,
                                 unique_jns,
                                 canonical_isos,
+                                exising_iso_stats_df=None,
                                 print_count=5,
                                 min_maxbc_count=100,
                                 tol=10,
@@ -273,6 +298,9 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
         iso_df (pandas dataframe): Original iso_df with the addition of number of variants per isoform and number
                                     of barcodes per isoform
     """
+
+    if exising_iso_stats_df:
+        cur_df = exising_iso_stats_df.copy()
 
     out_tbl = iso_df.copy()
     satbl_c = satbl.copy()
@@ -431,6 +459,10 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
     #specifically, counting non zero filter values
     filter_col = [ col for col in out_tbl.columns if 'filter' in col ]
     out_tbl[ 'total_passfilt' ] = out_tbl[ filter_col ].astype( bool ).sum( axis=1 )
+
+    if exising_iso_stats_df:
+        out_tbl = pd.merge( cur_df, out_tbl, left_index=True, right_index=True, how="outer" )
+        out_tbl = out_tbl.fillna(0)
 
     return(out_tbl)
 
@@ -675,6 +707,7 @@ def compute_isoform_counts(
     Returns:
         Pandas data frame with per-barcode read counts
     """
+
     rowList = []
 
     ctr_bcs,ctr_reads=0,0
@@ -733,22 +766,23 @@ def compute_isoform_counts(
     if not count_otherisos:
         psidf['usable_reads']=psidf.num_reads-(psidf.unmapped_reads+psidf.bad_starts+psidf.other_isoform)
 
-        for iso in isogrpdict:
-            psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
+        #comment this out to save on memory
+        #for iso in isogrpdict:
+            #psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
     else:
         psidf['usable_reads']=psidf.num_reads-(psidf.unmapped_reads+psidf.bad_starts)
 
-        for iso in isogrpdict:
-            psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
+        #comment this out to save on memory
+        #for iso in isogrpdict:
+            #psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
 
-        psidf['other_isoform_psi'] = psidf['other_isoform'] / psidf.usable_reads
+        #psidf['other_isoform_psi'] = psidf['other_isoform'] / psidf.usable_reads
 
     #sets psi to 0 instead of nan if none of the reads map to that isoform'((1201, 1266),)'
     psidf = psidf.fillna(0)
     psidf = psidf.set_index('barcode')
 
     return psidf
-
 
 # check coverage of exon and of junctions
 def check_junctions2( read, isogrpdict, cnst_exons, tol_first_last=0 ):
@@ -879,5 +913,8 @@ def combine_isogrps(
 
     for newgrp in new_grpnames_to_old_grpnames:
         newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
+
+    #fills in missing PSI values with 0 so we can create sparse datasets
+    newtbl = newtbl.fillna(0)
 
     return newtbl

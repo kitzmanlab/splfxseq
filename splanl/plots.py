@@ -2,8 +2,11 @@ import altair as alt
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.transforms as tfrms
+from collections import Counter
 from .coords import pos_to_hgvspos
 import splanl.merge_bcs as mbcs
+import splanl.post_processing as pp
 
 
 def waterfall_plot(
@@ -335,36 +338,53 @@ def altplot_violin_onesamp(
 
 def PlotPSIByPos(vardf,
                  col_y_isoform,
-                 vec_corange_cloned,
-                 vec_corange_exons,
-                 cdna_corange_exons,
                  shade_exons,
                  gene_name,
+                 fig_size = (20,7),
+                 coords = 'cdna',
+                vec_corange_cloned = None,
+                vec_corange_exons = None,
+                cdna_corange_exons = None,
                  zoom=None,
                  tick_spacing=10,
                  legend_loc='best',
-                 y_ax_title='PSI',
+                 y_ax_title='',
                  legend_title='Nucleotide Substitution from WT',
-                 y_ax_lim=None
+                 y_ax_lim = (0,1),
+                 invert_x = False,
+                 tight = True,
+                 print_ex_count = False,
+                 scale_bar = False,
+                 rev_trans = False
                 ):
 
     tbv=vardf.copy()
 
-    tbv.sort_values(by=['pos'],inplace=True)
-    bcs_tbl=tbv.pivot(index='pos',columns='alt',values=col_y_isoform)
-    bcs_tbl['hgvs_pos'] = pos_to_hgvspos( bcs_tbl.index,
-                           vec_corange_cloned,
-                           vec_corange_exons,
-                           cdna_corange_exons
-                         )
+    tbv.sort_values( by = ['pos'], inplace = True )
+    bcs_tbl = tbv.pivot( index = 'pos', columns = 'alt', values = col_y_isoform )
 
     if zoom:
-        bcs_tbl=bcs_tbl.loc[ zoom[0]:zoom[1] ]
+        assert zoom[1] > zoom[0], 'Your final zoom coordinate must be larger than the first zoom coordinate'
+        bcs_tbl = bcs_tbl.loc[ zoom[0]:zoom[1] ]
 
-    bcs_tbl.loc[:,['A','C', 'G', 'T']].plot.bar(color=['#C00001', '#00AD4F', '#FFCF07', '#002966'],
-                                                align='center',
-                                                width=1,
-                                                figsize=(20,7))
+    #check if plot will lose bars due to not enough space for all the pixels
+    dpi = 100
+    if ( bcs_tbl.shape[0]*6 ) > ( fig_size[0]*dpi ):
+        fig_height = fig_size[1]
+        fig_size = ( ( bcs_tbl.shape[0]*6 / dpi ), fig_height )
+        print('Adjusting figure width to accomodate all pixels...')
+
+    if print_ex_count:
+        print('This figure shows %i exonic bases.' % sum( c[1]-c[0] for c in shade_exons ) )
+
+    #usually want to represent alternate as seen on the forward strand so reverse complement columns
+    if rev_trans:
+        bcs_tbl = bcs_tbl.rename( columns = { "A": "T", "C": "G", "G": "C", "T": "A" } )
+
+    bcs_tbl.loc[:,['A', 'C', 'G', 'T']].plot.bar( color = [ '#C00001', '#00AD4F', '#FFCF07', '#002966' ],
+                                                 align='center',
+                                                 width=1,
+                                                figsize= fig_size )
 
     plt.title(
         col_y_isoform+' '+y_ax_title+' by Position for Single Nucleotide Variants in $\it{%s}$'%gene_name,
@@ -376,25 +396,57 @@ def PlotPSIByPos(vardf,
     plt.ylabel(col_y_isoform+' '+y_ax_title,fontsize=22)
     plt.yticks(fontsize=18)
 
-    plt.xlabel('cDNA Position',fontsize=22)
-    plt.xticks( [idx for idx,p in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
-                   [c for idx,c in enumerate(bcs_tbl.hgvs_pos) if idx%tick_spacing==0],
+    if coords.lower() == 'cdna':
+        plt.xlabel('cDNA Position',fontsize=22)
+        bcs_tbl['hgvs_pos'] = pos_to_hgvspos( bcs_tbl.index,
+                               vec_corange_cloned,
+                               vec_corange_exons,
+                               cdna_corange_exons
+                             )
+        plt.xticks( [idx for idx,p in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
+                       [c for idx,c in enumerate(bcs_tbl.hgvs_pos) if idx%tick_spacing==0],
+                       fontsize=18,
+                       rotation='vertical' )
+
+    elif coords.lower() == 'gdna':
+        plt.xlabel('gDNA Position',fontsize=22)
+        plt.xticks( [idx for idx,p in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
+                   [c for idx,c in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
                    fontsize=18,
                    rotation='vertical' )
 
-    legend = plt.legend(title=legend_title,
-                        ncol=2,
-                        loc=legend_loc,
-                        fontsize=14)
+    elif coords.lower() == 'vector':
+        plt.xlabel('Vector Position',fontsize=22)
+        plt.xticks( [idx for idx,p in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
+                   [c for idx,c in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
+                   fontsize=18,
+                   rotation='vertical' )
+
+    legend = plt.legend( title = legend_title,
+                         ncol = 2,
+                         loc = legend_loc,
+                         fontsize = 14)
     plt.setp(legend.get_title(),fontsize=14)
 
     for ex in shade_exons:
-        plt.axvspan(bcs_tbl.index.get_loc(ex[0])-.5,
-                    bcs_tbl.index.get_loc(ex[1])+.5,
-                    facecolor='gray',
-                    alpha=0.15)
+        plt.axvspan( bcs_tbl.index.get_loc( ex[0] ) - .5,
+                    bcs_tbl.index.get_loc( ex[1] ) + .5,
+                    facecolor = 'gray',
+                    alpha = 0.15)
 
-    plt.tight_layout()
+    if invert_x:
+        plt.gca().invert_xaxis()
+
+    if scale_bar:
+        ax = plt.gca()
+        trans = tfrms.blended_transform_factory( ax.transData, ax.transAxes )
+        plt.errorbar( tick_spacing, 0.96, xerr=tick_spacing/2, color='black', capsize=3, transform=trans)
+        plt.text( tick_spacing, 0.94, str( tick_spacing )+' bases',  horizontalalignment='center',
+        verticalalignment='top', transform=trans, fontsize = 14 )
+
+    if tight:
+        plt.tight_layout()
+
     plt.show()
 
 def PlotBCsByPos(vardf,
@@ -403,7 +455,8 @@ def PlotBCsByPos(vardf,
                  cdna_corange_exons,
                  shade_exons,
                  gene_name,
-                 y_ax_lim=None):
+                 y_ax_lim=None,
+                 fig_size = (20,7) ):
 
     tbv=vardf.copy()
 
@@ -415,9 +468,16 @@ def PlotBCsByPos(vardf,
                            cdna_corange_exons
                          )
 
-    bcs_tbl.loc[:,['A','C', 'G', 'T']].plot.bar(stacked=True,
-                                                color=['#C00001', '#00AD4F', '#FFCF07', '#002966'],
-                                                figsize=(20,7))
+    #check if plot will lose bars due to not enough space for all the pixels
+    dpi = 100
+    if ( bcs_tbl.shape[0]*1.5 ) > ( fig_size[0]*dpi ):
+        fig_height = fig_size[1]
+        fig_size = ( ( bcs_tbl.shape[0]*1.5 / dpi ), fig_height )
+        print('Adjusting figure width to accomodate all pixels...')
+
+    bcs_tbl.loc[:,['A','C', 'G', 'T']].plot.bar( stacked = True,
+                                                color = [ '#C00001', '#00AD4F', '#FFCF07', '#002966' ],
+                                                figsize = fig_size )
 
     plt.title(
         'Number of Distinct Barcodes Present by Position for Single Nucleotide Variants in $\it{%s}$'%gene_name,
@@ -482,11 +542,13 @@ def plot_corr_waterfalls(benchmark_df,
         plt.show()
 
 def barplot_allisos( allisos_df,
+                    isoform_df,
                     psi_cols,
                     stat,
                     title = ''):
 
     plot_df = allisos_df.copy()
+    iso_df = isoform_df.copy()
 
     if stat == 'max':
         plot_df[ psi_cols ].max().plot( kind = 'bar',
@@ -505,4 +567,182 @@ def barplot_allisos( allisos_df,
                                         figsize = ( 40, 5 ),
                                         title = title,
                                         ylim = ( 0, 1 ) )
+
+    loc, labels = plt.xticks()
+
+    plt.xticks( loc,
+                iso_df.loc[ [ iso.split('_')[1] for iso in psi_cols ] ].isoform.tolist(),\
+               fontsize=14,
+               rotation='vertical' )
+
 plt.show()
+
+def barplot_across_samples( byvartbl_long,
+                            bar_col,
+                            y_scale = None,
+                            y_label = None,
+                            title = '',
+                            y_lim = None,
+                            color_col = None,
+                            color_dict = None):
+
+    tbv = byvartbl_long.copy()
+
+    assert ( color_col and color_dict ) or not( color_col or color_dict ), \
+    "color_col and color_dict must either both be none or both entered"
+
+    if color_col:
+        tbv.set_index('sample')[ bar_col ].plot.bar( color=[ color_dict[i] for i in tbv[ color_col ] ] )
+    else:
+        tbv.set_index('sample')[ bar_col ].plot.bar()
+
+    if y_label:
+        plt.ylabel( y_label )
+
+    if y_lim:
+        plt.ylim( y_lim )
+
+    if y_scale:
+        plt.yscale( y_scale )
+
+    plt.title( title )
+
+    plt.show()
+
+def per_sdv_by_thresh( byvartbl,
+                     sdv_col,
+                     thresh_range = None,
+                     abs_vals = True,
+                     num_pts = 20,
+                     title = '',
+                     y_lim = None,
+                     vlines = ( 1.96, 3 ),
+                     fig_size = ( 12, 9.5 ) ):
+
+    tbv = byvartbl.loc[ byvartbl.n_bc_passfilt > 0  ].copy()
+
+    samp = 'sample' in tbv.columns
+
+    if thresh_range:
+        thresh = np.arange( thresh_range[0],
+                            thresh_range[1],
+                            ( thresh_range[1] - thresh_range[0] ) / num_pts )
+    else:
+        min_thresh = 0 if tbv[ sdv_col ].min() <= 0 else tbv[ sdv_col ].min()
+        thresh = np.arange( min_thresh,
+                            tbv[ sdv_col ].max(),
+                            ( tbv[ sdv_col ].max() - min_thresh ) / num_pts )
+
+    #add vline points into array while maintaining sort order
+    for pt in vlines:
+        thresh = np.insert( thresh, thresh.searchsorted( float( pt ) ), float( pt ) )
+
+    plt.figure( figsize = fig_size )
+
+    if samp:
+        for smpl in set( tbv['sample'] ):
+            sdv_per = []
+            for t in thresh:
+                tbv_samp = tbv.query( 'sample == "%s"' % smpl ).copy()
+                tbv_samp = pp.sdvs( tbv_samp, sdv_col, t, abs_vals = abs_vals )
+                sdv_per.append( 100*( tbv_samp.sdv.sum() / tbv_samp.shape[0] ) )
+
+            plt.plot( thresh, sdv_per, label = smpl )
+
+            print( smpl )
+            for pt in vlines:
+                per = sdv_per[ np.where( thresh == pt )[0][0] ]
+                print( 'At a threshold of %.2f, %.2f%% of variants are splice disrupting.' % ( pt, per ) )
+
+        plt.legend()
+
+    else:
+        sdv_per = []
+        for t in thresh:
+            tbv = pp.sdvs( tbv.query( 'sample == "%s"' % smpl ), sdv_col, t, abs_vals = abs_vals )
+            sdv_per.append( 100*( tbv.sdv.sum() / tbv.shape[0] ) )
+
+        plt.plot( thresh, sdv_per, label = smpl )
+
+        for pt in vlines:
+            per = sdv_per[ np.where( thresh == pt ) ]
+            print( 'At a threshold of %.2f, %.2f%% of variants are splice disrupting.' % ( pt, per ) )
+
+    for pt in vlines:
+        plt.axvline( x = pt, color = 'gray', linestyle = '--' )
+
+    if y_lim:
+        plt.ylim( y_lim )
+    else:
+        plt.ylim( ( 0, 100 ) )
+
+    plt.ylabel( 'Percentage splice disrupting variants' )
+    plt.xlabel( sdv_col + ' threshold' )
+
+    plt.title( title )
+
+    plt.show()
+
+def per_repeat_sdv( byvartbl,
+                     sdv_col = None,
+                     thresh = None,
+                     abs_vals = True,
+                     title = '',
+                     y_lim = None, ):
+
+    tbv = byvartbl.loc[ byvartbl.n_bc_passfilt > 0  ].copy()
+
+    n_var = len( set( tbv.varlist ) )
+
+    assert ( sdv_col and thresh ) or ( 'sdv' in tbv.columns ), \
+    'Please specify a column and threshold to determine splice disrupting variants'
+
+    if ( sdv_col and thresh ):
+        tbv = pp.sdvs( tbv, sdv_col, thresh, abs_vals = abs_vals )
+
+    n_samp = len( set( tbv[ 'sample' ] ) )
+
+    assert n_samp > 1, 'Please provide a dataset with more than one sample'
+
+    sdvs = tbv.loc[ tbv.sdv ]
+
+    #this gets you a counter { n_samples: n_sdvs }
+    repeat_counts = Counter( Counter( sdvs.varlist ).values() )
+
+    n_sdvs = sum( repeat_counts.values() )
+
+    print( '%i of %i variants (%.2f%%) are splice disrupting in at least one sample.' \
+            % ( n_sdvs, n_var, 100*( n_sdvs / n_var )  ) )
+
+    #adds zero counts to create plot with full range of possible values
+    for i in range( 1, n_samp + 1 ):
+        if i not in repeat_counts:
+            repeat_counts[ i ] = 0
+
+    print( '%i of %i variants (%.2f%%) are splice disrupting in all samples.' \
+            % ( repeat_counts[ n_samp ], n_var, 100*( repeat_counts[ n_samp ] / n_var )  ) )
+
+    #gives us a list sorted by n_samples in ascending order
+    repeat_counts = sorted( repeat_counts.items() )
+
+    labels, counts = zip( *repeat_counts )
+
+    per = [ 100*( count / n_sdvs ) for count in counts ]
+
+    indexes = np.arange( n_samp )
+
+    plt.bar( indexes, per )
+
+    plt.xticks(indexes, labels)
+
+    if y_lim:
+        plt.ylim( y_lim )
+    else:
+        plt.ylim( ( 0, 100 ) )
+
+    plt.ylabel( 'Percent of splice disrupting variants' )
+    plt.xlabel( 'Number of samples' )
+
+    plt.title( title )
+
+    plt.show()

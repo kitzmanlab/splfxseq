@@ -56,6 +56,34 @@ def merge_subasm_and_rna_tbls(
 
     return join_tbl
 
+def compute_psi_values(
+    in_df,
+    iso_col = None,
+    read_count_col = 'usable_reads'
+):
+    """
+
+    Args:
+
+
+    Returns:
+
+    """
+
+    out_df = in_df.copy()
+
+    if not iso_col:
+        iso_col = [ col for col in out_df.columns if col.startswith( 'iso' ) ]
+
+    assert iso_col, 'Please specify columns for PSI'
+
+    assert read_count_col in out_df.columns, '%s is not within %s' % ( read_count_col, str( in_df ) )
+
+    for col in iso_col:
+        out_df[ col + '_psi' ] = out_df[ col ] / out_df[ read_count_col ]
+
+    return out_df
+
 def summarize_byvar_singlevaronly(
     subasm_tbl,
     rna_tbl,
@@ -79,22 +107,24 @@ def summarize_byvar_singlevaronly(
         isoform x
     """
 
-
     sa_filt = subasm_tbl.query( 'n_variants_passing==1' ).copy()
 
     li_rna = rna_tbl.index.intersection( sa_filt.index )
 
     rna_isect = rna_tbl.loc[ li_rna ].copy()
 
+    rna_isect_psi = compute_psi_values( rna_isect, iso_col = isonames )
+
     if isonames is None:
-        isonames = [ cn[ :cn.rindex('_') ] for cn in rna_isect.columns if cn.endswith('psi') ]
+        isonames = [ cn[ :cn.rindex('_') ] for cn in rna_isect_psi.columns if cn.endswith('psi') ]
         assert len(isonames)>0, 'cant infer the isoform name columns; please specify them in parameter isonames'
 
-    rna_isect['varlist'] = sa_filt.loc[ li_rna, 'variant_list' ]
+    rna_isect_psi['varlist'] = sa_filt.loc[ li_rna, 'variant_list' ]
 
     out_tbl = blanktbl(
-        ['chrom','pos','ref','alt','varlist','var_type','n_bc','n_bc_passfilt',
+        ['chrom','pos','ref','alt','varlist','n_bc','n_bc_passfilt',
          'sum_reads',
+         'sum_reads_passfilt',
          'sum_usable_reads',
          'sum_unmapped_reads',
          'sum_badstart_reads',
@@ -104,9 +134,9 @@ def summarize_byvar_singlevaronly(
          [ 'median_{}'.format(cn) for cn in isonames ]
      )
 
-    for singlevar, subtbl in rna_isect.groupby( 'varlist' ):
+    for singlevar, subtbl in rna_isect_psi.groupby( 'varlist' ):
 
-        subtbl_filt = subtbl.loc[ subtbl.usable_reads >= min_usable_reads_per_bc ].copy()
+        subtbl_filt = subtbl.loc[ subtbl.usable_reads > min_usable_reads_per_bc ].copy()
 
         out_tbl['varlist'].append(singlevar)
         out_tbl['chrom'].append(singlevar.split(':')[0])
@@ -114,13 +144,13 @@ def summarize_byvar_singlevaronly(
         out_tbl['ref'].append(singlevar.split(':')[2])
         out_tbl['alt'].append(singlevar.split(':')[3])
 
-        out_tbl['var_type'].append(None)
-
         out_tbl['n_bc'].append( subtbl.shape[0] )
         out_tbl['n_bc_passfilt'].append( subtbl_filt.shape[0] )
 
+        out_tbl['sum_reads'].append( subtbl['num_reads'].sum() )
+
         if subtbl_filt.shape[0]==0:
-            out_tbl['sum_reads'].append( 0 )
+            out_tbl['sum_reads_passfilt'].append( 0 )
             out_tbl['sum_usable_reads'].append( 0 )
             out_tbl['sum_unmapped_reads'].append( 0 )
             out_tbl['sum_badstart_reads'].append( 0 )
@@ -132,8 +162,10 @@ def summarize_byvar_singlevaronly(
                 out_tbl[ f'median_{iso}' ].append( None )
 
             continue
+        #this is tricky to think about
+        #currently set so that its counting reads after removing the barcodes not passing the filter
         else:
-            out_tbl['sum_reads'].append( subtbl_filt['num_reads'].sum() )
+            out_tbl['sum_reads_passfilt'].append( subtbl_filt['num_reads'].sum() )
             out_tbl['sum_usable_reads'].append( subtbl_filt['usable_reads'].sum()  )
             out_tbl['sum_unmapped_reads'].append( subtbl_filt['unmapped_reads'].sum()  )
             out_tbl['sum_badstart_reads'].append( subtbl_filt['bad_starts'].sum()  )
@@ -151,6 +183,40 @@ def summarize_byvar_singlevaronly(
                 out_tbl[ f'median_{iso}' ].append( subtbl_filt[ f'{iso}_psi' ].median() )
 
     out_tbl = pd.DataFrame( out_tbl )
+
+    out_tbl = count_bcs_per_var_sa( out_tbl,
+                                    sa_filt )
+
+    #these two are have the total barcode/read count in the denominator
+    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+
+    #these columns are based of barcodes which are passing the filter
+    #so only reads from barcodes passing the filter are used in the denominator
+    out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
+
+
+    return out_tbl
+
+def count_bcs_per_var_sa( rna_tbl,
+                          satbl ):
+
+    #count the number of rows for each variant
+    #this is the number of barcodes for that variant
+    count_tbl = satbl.copy().groupby( [ 'variant_list' ] )[ 'variant_list' ].count().rename('n_bc_sa')
+
+    rna_tbl = rna_tbl.copy().set_index( 'varlist' )
+
+    out_tbl = pd.merge( rna_tbl, count_tbl, left_index = True, right_index = True )
+
+    out_tbl.index.name = 'varlist'
+
+    out_tbl = out_tbl.reset_index()
+
+    assert rna_tbl.shape[0] == out_tbl.shape[0], 'RNA table rows were lost in the merge'
 
     return out_tbl
 
@@ -430,6 +496,9 @@ def combine_allisos_perbctbls_long(
 
     tblout = tblout[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames] ]
 
+    #makes all missing columns 0's
+    tblout = tblout.fillna(0)
+
     tblout.index.name = 'barcode'
 
     return tblout
@@ -449,52 +518,21 @@ def filter_byvartbl_snvonly(
     byvar_snvonly = byvar_tbl.loc[ (byvar_tbl.ref.str.len() == 1) & (byvar_tbl.alt.str.len() == 1) ].copy()
     return byvar_snvonly
 
-def across_sample_stats(ltbls,
-                        lsampnames,
-                        med_col_names):
+def create_sparse_df( large_df,
+                        sparse_val = 'nan' ):
 
-    out_tbl = { 'sample_group':[],
-                'sample':[],
-                'n_reads':[],
-                'n_bcs':[],
-                'n_bcs_passfilt':[]}
+    """Make sure the large_df has no meaningful index columns - ie enter as df.reset_index()"""
 
-    for col in med_col_names:
-        out_tbl['med_'+col] = []
+    in_df = large_df.copy()
 
-    i=0
-    for grp, _lsamp in lsampnames.items():
-        for lsamp in _lsamp:
-            out_tbl['sample_group'].append(grp)
-            out_tbl['sample'].append(grp+'_'+lsamp)
-            out_tbl['n_reads'].append( int( ltbls[ i ].query( 'sample=="%s"' % lsamp ).sum_reads.sum() ) )
-            out_tbl['n_bcs'].append( int( ltbls[ i ].query( 'sample=="%s"' % lsamp ).n_bc.sum() ) )
-            out_tbl['n_bcs_passfilt'].append( int( ltbls[ i ].query( 'sample=="%s"' % lsamp ).n_bc_passfilt.sum() ) )
-            for col in med_col_names:
-                out_tbl['med_'+col].append( float( ltbls[ i ].query( 'sample=="%s"' % lsamp )[ col ].median() ) )
-        i+=1
+    non_num_col = list( in_df.select_dtypes(exclude=np.number).columns )
 
-    out_tbl = pd.DataFrame( out_tbl )
+    #the sparse dataframe can't have any non-numerical columns so lets set them all as indices
+    out_df = in_df.set_index( non_num_col ).select_dtypes(include=np.number)
 
-    return out_tbl
+    if sparse_val == 'nan':
+        out_df = out_df.astype( pd.SparseDtype( "float", np.nan ) )
+    elif isinstance(sparse_val, int):
+        out_df = out_df.astype( pd.SparseDtype( "float", sparse_val ) )
 
-def stdize_cols_by_sample(tbv,
-                            std_cols):
-
-    out_tbl = tbv.copy()
-
-    #if this is a long dataset
-    if 'sample' in out_tbl.columns:
-
-        for col in std_cols:
-            #creates z score by sample while ignoring any missing values
-            out_tbl[ 'z' + col ] = out_tbl.groupby( [ 'sample' ] )[ col ].transform( lambda x : ss.zscore( x, nan_policy='omit' ) )
-
-    #if the data contains only one sample
-    else:
-
-        for col in std_cols:
-            print(col)
-            out_tbl[ 'z' + col ] = ss.zscore( out_tbl[ col ], nan_policy='omit' )
-
-    return( out_tbl )
+    return out_df.reset_index()
