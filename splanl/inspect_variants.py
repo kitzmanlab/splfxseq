@@ -35,21 +35,26 @@ def check_individual_variants(pysam_align,
 
 def extract_nonzero_isos_byvar(alliso_byvar_df,
                             isoform_df,
-                            col_prefix='wmean_'):
+                            col_prefix='wmean_',
+                            remove_prefix=True):
 
     byvar = alliso_byvar_df.copy()
 
-    col = [ col for col in byvar if col_prefix in col ]
+    col = [ col for col in byvar if col.startswith( col_prefix ) ]
     max_psi = byvar[col].max()
 
     #grab all the columns > 0
     nonzero_max = max_psi[ max_psi>0 ]
 
-    #remove column suffix to just leave the isoform name
-    #needed to look up isoform number in isoform dataframe
-    #creates dictionary with column as keys and the isoform as values
-    nonzero_iso_dict = { iso_col: iso_lookup( isoform_df, iso_col.replace( col_prefix, '' ) )
-                            for iso_col in nonzero_max.index }
+    if remove_prefix:
+        #remove column suffix to just leave the isoform name
+        #needed to look up isoform number in isoform dataframe
+        #creates dictionary with column as keys and the isoform as values
+        nonzero_iso_dict = { iso_col: iso_lookup( isoform_df, iso_col.replace( col_prefix, '' ) )
+                                for iso_col in nonzero_max.index }
+    else:
+        nonzero_iso_dict = { iso_col: iso_lookup( isoform_df, iso_col )
+                                for iso_col in nonzero_max.index }
 
     return( nonzero_iso_dict )
 

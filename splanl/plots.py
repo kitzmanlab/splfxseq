@@ -355,7 +355,8 @@ def PlotPSIByPos(vardf,
                  tight = True,
                  print_ex_count = False,
                  scale_bar = False,
-                 rev_trans = False
+                 rev_trans = False,
+                 hlines = None
                 ):
 
     tbv=vardf.copy()
@@ -421,6 +422,10 @@ def PlotPSIByPos(vardf,
                    [c for idx,c in enumerate(bcs_tbl.index) if idx%tick_spacing==0],
                    fontsize=18,
                    rotation='vertical' )
+
+    if hlines:
+        for line in hlines:
+            plt.axhline( line, c = 'black', ls = '--', alpha = .6 )
 
     legend = plt.legend( title = legend_title,
                          ncol = 2,

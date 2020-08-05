@@ -20,7 +20,10 @@ def create_spliceai_df( spliceai_tbx,
                 'POS_donor_GAIN': [],
                 'POS_donor_LOSS': [] }
 
-    chrom = int( chrom.replace('chr','') )
+    chrom = chrom.replace('chr','')
+
+    if is_int( chrom ):
+        chrom = int( chrom )
 
     for row in spliceai_tbx.fetch(  chrom ,
                                     coords[0],
@@ -51,6 +54,13 @@ def create_spliceai_df( spliceai_tbx,
     out_tbl['POS_max'] = out_tbl.lookup(POS_max_type.index, POS_max_type.values)
 
     return out_tbl
+
+def is_int( str ):
+  try:
+    int( str )
+    return True
+  except ValueError:
+    return False
 
 def get_exon_coords( ccds_exons_df,
                     gene_name,
@@ -147,30 +157,36 @@ def count_SDVs( spliceai_df,
         out_tbl[ 'n_ex_bp' ].append( int( coords[1] - coords[0] ) )
 
         for t in spliceai_thresh:
-            out_tbl[ 'n_ex_abv_'+str( t ) ].append( ex_df.loc[ ex_df.DS_max >= t ].shape[0] )
-            out_tbl[ 'per_ex_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_ex_abv_'+str( t ) ][-1] / ( ex_df.shape[0] ) ) )
+            if ex_df.shape[ 0 ] > 0:
+                out_tbl[ 'n_ex_abv_'+str( t ) ].append( ex_df.loc[ ex_df.DS_max >= t ].shape[0] )
+                out_tbl[ 'per_ex_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_ex_abv_'+str( t ) ][-1] / ( ex_df.shape[0] ) ) )
+            else:
+                out_tbl[ 'n_ex_abv_'+str( t ) ].append( np.nan )
+                out_tbl[ 'per_ex_abv_'+str( t ) ].append( np.nan )
 
         us_int_df = sa_df.loc[ coords[0] - intron_flank :coords[0] - 1 ]
 
         out_tbl[ 'n_us_int_bp' ].append( int( us_int_df.shape[0] / 3 ) )
 
         for t in spliceai_thresh:
-            out_tbl[ 'n_us_int_abv_'+str( t ) ].append( us_int_df.loc[ us_int_df.DS_max >= t ].shape[0] )
             if us_int_df.shape[0] > 0:
-                out_tbl[ 'per_us_int_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_us_int_abv_'+str( t ) ][-1] / ( us_int_df.shape[0] ) ) ) 
+                out_tbl[ 'n_us_int_abv_'+str( t ) ].append( us_int_df.loc[ us_int_df.DS_max >= t ].shape[0] )
+                out_tbl[ 'per_us_int_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_us_int_abv_'+str( t ) ][-1] / ( us_int_df.shape[0] ) ) )
             else:
-                out_tbl[ 'per_us_int_abv_'+str( t ) ].append( 0 )
+                out_tbl[ 'n_us_int_abv_'+str( t ) ].append( np.nan )
+                out_tbl[ 'per_us_int_abv_'+str( t ) ].append( np.nan )
 
         ds_int_df = sa_df.loc[ coords[1] + 1 :coords[1] + intron_flank ]
 
         out_tbl[ 'n_ds_int_bp' ].append( int( ds_int_df.shape[0] / 3 ) )
 
         for t in spliceai_thresh:
-            out_tbl[ 'n_ds_int_abv_'+str( t ) ].append( ds_int_df.loc[ ds_int_df.DS_max >= t ].shape[0] )
             if ds_int_df.shape[0] > 0:
+                out_tbl[ 'n_ds_int_abv_'+str( t ) ].append( ds_int_df.loc[ ds_int_df.DS_max >= t ].shape[0] )
                 out_tbl[ 'per_ds_int_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_ds_int_abv_'+str( t ) ][-1] / ( ds_int_df.shape[0] ) ) )
             else:
-                out_tbl[ 'per_ds_int_abv_'+str( t ) ].append( 0 )
+                out_tbl[ 'n_ds_int_abv_'+str( t ) ].append( np.nan )
+                out_tbl[ 'per_ds_int_abv_'+str( t ) ].append( np.nan )
 
     out_tbl[ 'exon' ].append( None )
     out_tbl[ 'n_ex_bp' ].append( sum( out_tbl[ 'n_ex_bp' ] ) )
@@ -178,11 +194,11 @@ def count_SDVs( spliceai_df,
     out_tbl[ 'n_ds_int_bp' ].append( sum( out_tbl[ 'n_ds_int_bp' ] ) )
 
     for t in spliceai_thresh:
-        out_tbl[ 'n_ex_abv_'+str( t ) ].append( sum( out_tbl[ 'n_ex_abv_'+str( t ) ] ) )
+        out_tbl[ 'n_ex_abv_'+str( t ) ].append( np.nansum( out_tbl[ 'n_ex_abv_'+str( t ) ] ) )
         out_tbl[ 'per_ex_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_ex_abv_'+str( t ) ][-1] / ( 3*out_tbl[ 'n_ex_bp' ][-1] ) ) )
-        out_tbl[ 'n_us_int_abv_'+str( t ) ].append( sum( out_tbl[ 'n_us_int_abv_'+str( t ) ] ) )
+        out_tbl[ 'n_us_int_abv_'+str( t ) ].append( np.nansum( out_tbl[ 'n_us_int_abv_'+str( t ) ] ) )
         out_tbl[ 'per_us_int_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_ex_abv_'+str( t ) ][-1] / ( 3*out_tbl[ 'n_us_int_bp' ][-1] ) ) )
-        out_tbl[ 'n_ds_int_abv_'+str( t ) ].append( sum( out_tbl[ 'n_ds_int_abv_'+str( t ) ] ) )
+        out_tbl[ 'n_ds_int_abv_'+str( t ) ].append( np.nansum( out_tbl[ 'n_ds_int_abv_'+str( t ) ] ) )
         out_tbl[ 'per_ds_int_abv_'+str( t ) ].append( 100*( out_tbl[ 'n_ex_abv_'+str( t ) ][-1] / ( 3*out_tbl[ 'n_ds_int_bp' ][-1] ) ) )
 
     out_tbl = pd.DataFrame( out_tbl )

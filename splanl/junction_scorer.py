@@ -467,7 +467,8 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
     return(out_tbl)
 
 def combine_isoforms(iso_df,
-                    cryptic_exons):
+                    cryptic_exons,
+                    data_from_csv = False):
 
     out_tbl = iso_df.copy()
 
@@ -479,7 +480,8 @@ def combine_isoforms(iso_df,
     for iso in out_tbl.isoform:
 
         #this will make sure any strings are converted to tuples
-        iso = literal_eval(iso)
+        if data_from_csv:
+            iso = literal_eval(iso)
 
         cur_iso = []
         prev_jn = None
@@ -516,19 +518,11 @@ def combine_isoforms(iso_df,
     #concatenates all isoforms to track from previous table
     isoform_df = out_tbl.reset_index().groupby(['comb_isoform'])['isoform'].apply(tuple).reset_index()
 
-    print('sums',sums_df)
-    print('max',max_df)
     out_tbl = pd.merge(sums_df,max_df,on='comb_isoform')
-    print('one',out_tbl.head())
     out_tbl = pd.merge(out_tbl,counts_df,on='comb_isoform')
-    print('two',out_tbl.head())
     out_tbl = pd.merge(out_tbl,isoform_df,on='comb_isoform')
-    print('three',out_tbl.head())
     out_tbl = pd.merge(out_tbl,iso_nums_df,on='comb_isoform').rename(columns={"index": "comb_iso_nums"})
-    print('four',out_tbl.head())
     out_tbl = out_tbl.sort_values(by='total_read_count', ascending=False)
-    print('five',out_tbl.head())
-
 
     out_tbl['isogrp'] = ['isogrp'+str(i).zfill( len( str( out_tbl.shape[0] ) ) ) for i in range( out_tbl.shape[0] ) ]
     out_tbl.set_index('isogrp',inplace=True)

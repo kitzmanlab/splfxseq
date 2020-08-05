@@ -317,10 +317,10 @@ def get_snv_alt_amino( vartbl,
     for i in range( frame_shift ):
 
         #adjust for 1 and 0 based coordinates
-        ref = refseq[ exon_coords[0] - 1 + i ]
+        ref = refseq[ exon_coords[0] - 1 + i ].upper()
 
-        if ( i + exon_coords[0] + frame_shift ) not in daminos:
-            daminos[ i + exon_coords[0] + frame_shift ] = {}
+        if ( i + exon_coords[0] ) not in daminos:
+            daminos[ i + exon_coords[0] ] = {}
 
         for snv in nt_sub:
 
@@ -332,7 +332,7 @@ def get_snv_alt_amino( vartbl,
     for i in range( exon_coords[1] - exon_coords[0] - frame_shift ):
 
         #adjust for 1 and 0 based coordinates
-        ref = refseq[ exon_coords[0] - 1 + frame_shift + i ]
+        ref = refseq[ exon_coords[0] - 1 + frame_shift + i ].upper()
         codon = lcodons[ i // 3 ]
         snv_pos = i % 3
 
