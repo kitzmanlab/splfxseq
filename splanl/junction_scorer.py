@@ -106,7 +106,9 @@ def adjust_junctions(pysam_align,
 
 
 def clean_jns(jns,
-            cnst_exons):
+            cnst_exons,
+            tol = 3,
+            min_matches = 120 ):
     """Removes any junctions within the constant exons,
     joins adjacent junctions,
     and removes the last junction if its <= 3 bp long
@@ -122,10 +124,26 @@ def clean_jns(jns,
     jns_joined = []
 
     prev_jn = None
+    #used to check if downstream constant in read
+    ds_cnst = soft_clipped = False
+
+    #screens out reads with too many bases soft_clipped
+    if sum( jn[1] - jn[0] + 1 for jn in jns ) < min_matches:
+        soft_clipped = True
+
+    #handles the case in which the read doesn't make it to the downstream constant
+    #empty junctions implies the read was unmapped - also let that pass
+    if jns == [] or jns[-1][1] < cnst_exons[1][0]:
+        ds_cnst = True
 
     for _jn in jns:
+
+        if not( ds_cnst ) and ( cnst_exons[1][0] - tol ) <= _jn[0] <= ( cnst_exons[1][0] + tol ):
+            ds_cnst = True
+
         #changes to 1-based inclusive numbering
         jn = (_jn[0]+1, _jn[1])
+
         if jn[0] >= cnst_exons[0][1] and jn[1] < ( cnst_exons[1][0]+1 ):
             jns_joined.append(jn)
             cur_jn = jn
@@ -140,10 +158,17 @@ def clean_jns(jns,
     if len(jns_joined)>0 and ( jns_joined[-1][1] - jns_joined[-1][0] ) <= 3:
         jns_joined = jns_joined[:-1]
 
-    return(jns_joined)
+    jns_joined = tuple( jns_joined )
+
+    if not ds_cnst:
+        jns_joined = None
+    elif soft_clipped:
+        jns_joined = 0
+
+    return jns_joined
 
 def get_all_isoforms(align_by_samp_dict,
-                    cnst_exons):
+                    cnst_exons = None ):
     """Gets all isoforms within a pysam alignment file
 
     Args:
@@ -159,8 +184,16 @@ def get_all_isoforms(align_by_samp_dict,
 
         print(samp)
 
-        #creates a counter object of all of the exon junctions
-        all_isos_cnt = Counter( [ tuple( clean_jns( read.get_blocks(), cnst_exons ) ) for read in align_by_samp_dict[ samp ] ] )
+        if cnst_exons:
+            #creates a counter object of all of the exon junctions
+            all_isos_cnt = Counter( [ clean_jns( read.get_blocks(), cnst_exons ) for read in align_by_samp_dict[ samp ] ] )
+        else:
+            all_isos_cnt = Counter( [ tuple( read.get_blocks() ) for read in align_by_samp_dict[ samp ] ] )
+
+        #removes None type from counter - represents reads not mapping to the downstream constant
+        del all_isos_cnt[None]
+        #removes 0 from counter - represents reads with not enough matches
+        del all_isos_cnt[0]
 
         iso_df = pd.DataFrame.from_dict( all_isos_cnt, orient='index' ).reset_index()
         iso_df = iso_df.rename(columns={'index':'isoform', 0:'read_count'}).sort_values(by='read_count', ascending=False)
@@ -320,7 +353,11 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
             if bc not in satbl_c.index:
                 continue
 
-            for iso, reads in itertools.groupby( _reads, lambda _r: tuple( clean_jns( _r.get_blocks(), cnst_exons ))):
+            for iso, reads in itertools.groupby( _reads, lambda _r: clean_jns( _r.get_blocks(), cnst_exons ) ):
+
+                #ignore read if it doesn't splice to downtstream constant or has too few matches
+                if iso == None or iso == 0:
+                    continue
 
                 r=list(reads)
 
@@ -715,6 +752,8 @@ def compute_isoform_counts(
 
         n_umapped=0
         n_badstart=0
+        n_badend=0
+        n_softclip=0
         n_nomatch = 0
         ln_matches=[0] * len( isogrpdict )
 
@@ -729,7 +768,11 @@ def compute_isoform_counts(
             else:
                 cur_matches = check_junctions2( read, isogrpdict, cnst_exons, tol_first_last )
 
-                if sum(cur_matches)==0:
+                if cur_matches == None:
+                    n_badend+=1
+                elif cur_matches == .1:
+                    n_softclip+=1
+                elif sum(cur_matches)==0:
                     n_nomatch+=1
                 else:
                     assert sum(cur_matches) <= 1, ( str(read),str(cur_matches) )
@@ -739,7 +782,7 @@ def compute_isoform_counts(
                     for i in range(len(cur_matches)):
                         ln_matches[i]+=cur_matches[i]
 
-        total = n_umapped + n_badstart + n_nomatch + sum(ln_matches)
+        total = n_umapped + n_badstart + n_badend + n_softclip + n_nomatch + sum(ln_matches)
 
         ctr_bcs+=1
         ctr_reads+=len(reads)
@@ -750,21 +793,21 @@ def compute_isoform_counts(
         if ctr_bcs % 1000 == 0 :
             print('processed {} bcs, {} reads'.format( ctr_bcs, ctr_reads ))
 
-        rowList.append( [tag,total,n_umapped,n_badstart,n_nomatch]+ln_matches )
+        rowList.append( [tag,total,n_umapped,n_badstart,n_badend,n_softclip,n_nomatch]+ln_matches )
 
     # from IPython.core.debugger import set_trace
     # set_trace()
 
-    psidf=pd.DataFrame(rowList, columns=['barcode','num_reads','unmapped_reads','bad_starts','other_isoform']+list(isogrpdict.keys()))
+    psidf=pd.DataFrame(rowList, columns=['barcode','num_reads','unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform']+list(isogrpdict.keys()))
 
     if not count_otherisos:
-        psidf['usable_reads']=psidf.num_reads-(psidf.unmapped_reads+psidf.bad_starts+psidf.other_isoform)
+        psidf['usable_reads']=psidf.num_reads-(psidf.unmapped_reads+psidf.bad_starts+psidf.bad_ends+psidf.soft_clipped+psidf.other_isoform)
 
         #comment this out to save on memory
         #for iso in isogrpdict:
             #psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
     else:
-        psidf['usable_reads']=psidf.num_reads-(psidf.unmapped_reads+psidf.bad_starts)
+        psidf['usable_reads']=psidf.num_reads-(psidf.unmapped_reads+psidf.bad_starts+psidf.bad_ends+psidf.soft_clipped)
 
         #comment this out to save on memory
         #for iso in isogrpdict:
@@ -794,21 +837,24 @@ def check_junctions2( read, isogrpdict, cnst_exons, tol_first_last=0 ):
     # get blocks of reference coverage from the read.
     l_refcoord_blks_cleaned = clean_jns( read.get_blocks(), cnst_exons )
 
-    l_refcoord_blks_cleaned=tuple(l_refcoord_blks_cleaned)
+    if l_refcoord_blks_cleaned == None:
+        lmatches = None
+    elif l_refcoord_blks_cleaned == 0:
+        lmatches = .1
+    else:
+        lmatches=[]
 
-    lmatches=[]
+        # now compare to isogrps
+        for isogrpname in isogrpdict:
+            isogrp = isogrpdict[isogrpname]
+            #print(isogrpname,isogrp)
 
-    # now compare to isogrps
-    for isogrpname in isogrpdict:
-        isogrp = isogrpdict[isogrpname]
-        #print(isogrpname,isogrp)
+            match = False
+            lblks = len( l_refcoord_blks_cleaned )
+            if lblks == len( isogrp ) and isogrp == l_refcoord_blks_cleaned:
+                match=True
 
-        match = False
-        lblks = len( l_refcoord_blks_cleaned )
-        if lblks == len( isogrp ) and isogrp == l_refcoord_blks_cleaned:
-            match=True
-
-        lmatches.append( match )
+            lmatches.append( match )
 
     return lmatches
 
@@ -889,7 +935,7 @@ def combine_isogrps(
     """
 
     newtbl = pd.DataFrame()
-    for c in ['num_reads','unmapped_reads','bad_starts','other_isoform','usable_reads']:
+    for c in ['num_reads','unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform','usable_reads']:
         newtbl[c] = jxnbybctbl[c]
 
     for newgrp in new_grpnames_to_old_grpnames:

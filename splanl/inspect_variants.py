@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import pysam
 import itertools
+import subprocess as subp
 
 def check_individual_variants(pysam_align,
                                 bc_list,
@@ -175,3 +176,73 @@ def get_refseqs( fa_file ):
         refseq = [ entry.sequence for entry in fa ]
 
     return refseq
+
+def create_rownames_align_bctbl( bc,
+                                 hisat_bam,
+                                 print_err = False ):
+
+    #gets all read names associated with the barcode
+    out = subp.run( 'samtools view %s | grep RX:Z:%s | cut -f 1 | sort | uniq ' % ( hisat_bam, bc ),
+                    stdout = subp.PIPE,
+                    stderr = subp.PIPE,
+                    shell = True,
+                )
+
+    if print_err:
+        #the formatting of the output is annoying - trying to make it look nice
+        err_nl = out.stderr.decode('utf-8').split( '\n' )
+        print(*err_nl, sep='\n')
+
+    read_names = out.stdout.decode('utf-8').split( '\n' )[ : -1 ]
+    barcode = [ bc ]*len( read_names )
+    empty_col = [ None ]*len( read_names )
+
+    outtbl = pd.DataFrame( list( zip( barcode, empty_col, empty_col, empty_col, empty_col ) ),
+                           columns = [ 'barcode', 'hisat_prim_cigar', 'hisat_alt_cigar', 'gmap_prim_cigar', 'gmap_alt_cigar' ],
+                           index = read_names )
+
+    outtbl.index.name = 'readname'
+
+    return outtbl
+
+def primary_secondary_align_bctbl( bc,
+                                   hisat_bam,
+                                   gmap_bam,
+                                   print_err = False
+                                 ):
+
+    #creates a table with readnames as the index
+    outtbl = create_rownames_align_bctbl( bc,
+                                          hisat_bam,
+                                          print_err )
+
+    with pysam.AlignmentFile( hisat_bam, 'rb' ) as hisat:
+
+        for read in hisat:
+
+            if read.get_tag( 'RX' ) == bc:
+
+                if read.is_unmapped:
+                    outtbl.loc[ read.query_name ].hisat_prim_cigar = '*'
+                elif not( read.is_secondary ):
+                    outtbl.loc[ read.query_name ].hisat_prim_cigar = read.cigarstring
+                else:
+                    outtbl.loc[ read.query_name ].hisat_alt_cigar = read.cigarstring
+
+    with pysam.AlignmentFile( gmap_bam, 'rb' ) as gmap:
+
+        for read in gmap:
+
+            if read.get_tag( 'RX' ) == bc:
+
+                #read is unmapped
+                if read.is_unmapped:
+                    outtbl.loc[ read.query_name ].gmap_prim_cigar = '*'
+                elif read.get_tag( 'HI' ) == 1:
+                    outtbl.loc[ read.query_name ].gmap_prim_cigar = read.cigarstring
+                else:
+                    outtbl.loc[ read.query_name ].gmap_alt_cigar = read.cigarstring
+
+    outtbl[ 'same_primary' ] = outtbl.hisat_prim_cigar == outtbl.gmap_prim_cigar
+
+    return outtbl

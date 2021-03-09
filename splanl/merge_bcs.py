@@ -5,8 +5,7 @@ import scipy.stats as ss
 
 from collections import OrderedDict as odict  # default is for keys to come back out in order after I think python 3.7
 
-from .coords import pos_to_hgvspos
-from .coords import pos_to_gDNA
+import splanl.coords as cds
 
 
 # make (ordered) dict of lists
@@ -128,6 +127,8 @@ def summarize_byvar_singlevaronly(
          'sum_usable_reads',
          'sum_unmapped_reads',
          'sum_badstart_reads',
+         'sum_badend_reads',
+         'sum_softclipped_reads',
          'sum_otheriso'] +
          [ 'mean_{}'.format(cn) for cn in isonames ] +
          [ 'wmean_{}'.format(cn) for cn in isonames ] +
@@ -154,6 +155,8 @@ def summarize_byvar_singlevaronly(
             out_tbl['sum_usable_reads'].append( 0 )
             out_tbl['sum_unmapped_reads'].append( 0 )
             out_tbl['sum_badstart_reads'].append( 0 )
+            out_tbl['sum_badend_reads'].append( 0 )
+            out_tbl['sum_softclipped_reads'].append( 0 )
             out_tbl['sum_otheriso'].append( 0 )
 
             for iso in isonames:
@@ -169,6 +172,8 @@ def summarize_byvar_singlevaronly(
             out_tbl['sum_usable_reads'].append( subtbl_filt['usable_reads'].sum()  )
             out_tbl['sum_unmapped_reads'].append( subtbl_filt['unmapped_reads'].sum()  )
             out_tbl['sum_badstart_reads'].append( subtbl_filt['bad_starts'].sum()  )
+            out_tbl['sum_badend_reads'].append( subtbl_filt['bad_ends'].sum()  )
+            out_tbl['sum_softclipped_reads'].append( subtbl_filt['soft_clipped'].sum()  )
             out_tbl['sum_otheriso'].append( subtbl_filt['other_isoform'].sum()  )
 
             for iso in isonames:
@@ -195,7 +200,9 @@ def summarize_byvar_singlevaronly(
     #so only reads from barcodes passing the filter are used in the denominator
     out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
     out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
     out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
     out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
 
 

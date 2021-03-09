@@ -26,7 +26,7 @@ def acceptors_donors(refseq,
 
     tbv = byvartbl.copy()
 
-    assert use_col in tbv, '%s is not in the dataframe columns'
+    assert use_col in tbv, '%s is not in the dataframe columns' % use_col
 
     min_pos = tbv.pos.min()
     max_pos = tbv.pos.max()
@@ -129,8 +129,8 @@ def print_summary_info( byvartbl ):
 
     print( 'Out of %i possible alternate donors, %i (%.2f%%) have a high OTHER value.\n' % ( pos_don, used_don, don_per ) )
 
-def stdize_cols_by_sample(tbv,
-                            std_cols):
+def stdize_cols_by_sample(  tbv,
+                            std_cols ):
 
     out_tbl = tbv.copy()
 
@@ -145,7 +145,6 @@ def stdize_cols_by_sample(tbv,
     else:
 
         for col in std_cols:
-            print(col)
             out_tbl[ 'z' + col ] = ss.zscore( out_tbl[ col ], nan_policy='omit' )
 
     return( out_tbl )
@@ -167,6 +166,8 @@ def across_sample_stats(ltbls,
                 'n_bc_passfilt':[],
                 'n_unmapped':[],
                 'n_badstart':[],
+                'n_badend':[],
+                'n_softclip':[],
                 'n_otheriso':[],
                 'n_sdv':[],
                 'n_sdv_ex':[],
@@ -198,6 +199,8 @@ def across_sample_stats(ltbls,
             out_tbl['n_bc_passfilt'].append( int( lsamp_df.n_bc_passfilt.sum() ) )
             out_tbl['n_unmapped'].append( int( lsamp_df.sum_unmapped_reads.sum() ) )
             out_tbl['n_badstart'].append( int( lsamp_df.sum_badstart_reads.sum() ) )
+            out_tbl['n_badend'].append( int( lsamp_df.sum_badend_reads.sum() ) )
+            out_tbl['n_softclip'].append( int( lsamp_df.sum_softclipped_reads.sum() ) )
             out_tbl['n_otheriso'].append( int( lsamp_df.sum_otheriso.sum() ) )
             out_tbl['n_sdv'].append( int( lsamp_filt_df.sdv.sum() ) )
             out_tbl['psbl_alt_acc'].append( int( lsamp_filt_df.psbl_snv_acc.sum() ) )
@@ -227,6 +230,8 @@ def across_sample_stats(ltbls,
     out_tbl['per_usable'] = 100*( out_tbl.n_usable_reads / out_tbl.n_reads_passfilt )
     out_tbl['per_unmapped'] = 100*( out_tbl.n_unmapped / out_tbl.n_reads_passfilt )
     out_tbl['per_badstart'] = 100*( out_tbl.n_badstart / out_tbl.n_reads_passfilt )
+    out_tbl['per_badend'] = 100*( out_tbl.n_badend / out_tbl.n_reads_passfilt )
+    out_tbl['per_softclip'] = 100*( out_tbl.n_softclip / out_tbl.n_reads_passfilt )
     out_tbl['per_otheriso'] = 100*( out_tbl.n_otheriso / out_tbl.n_reads_passfilt )
     out_tbl['per_sdv'] = 100*( out_tbl.n_sdv / out_tbl.n_var )
     out_tbl['per_sdv_ex'] = 100*( out_tbl.n_sdv_ex / out_tbl.n_var_ex )
@@ -364,16 +369,17 @@ def get_snv_alt_amino( vartbl,
 def extract_var_type( vartbl,
                       refseq,
                         exon_coords,
-                        frame_shift = 0 ):
+                        frame_shift = 0,
+                        overwrite = True ):
 
     assert isinstance( frame_shift, int) and frame_shift < 3, 'Frameshift must be a non-negative integer less than 3'
 
     tbv = vartbl.sort_values( by = 'pos' ).copy()
 
-    if 'ref_aa' not in tbv.columns:
+    if 'ref_aa' not in tbv.columns or overwrite:
         tbv = get_ref_amino( tbv, refseq, exon_coords, frame_shift )
 
-    if 'alt_aa' not in tbv.columns:
+    if 'alt_aa' not in tbv.columns or overwrite:
         tbv = get_snv_alt_amino( tbv, refseq, exon_coords, frame_shift )
 
     var_type = []
@@ -409,5 +415,73 @@ def sdv_by_var_type( vartbl ):
     tbv['sdv_exon'] = ( ( tbv.sdv ) & ( tbv.var_type != 'Intronic' ) )
 
     tbv['sdv_intron'] = ( ( tbv.sdv ) & ( tbv.var_type == 'Intronic' ) )
+
+    return tbv
+
+def patient_var( vartbl,
+                 pat_pos_alt ):
+
+    tbv = vartbl.copy()
+
+    tbv[ 'patient_var' ] = False
+
+    for pos, alt in pat_pos_alt:
+
+        tbv.loc[ ( tbv.pos == pos ) & ( tbv.alt == alt ), 'patient_var' ] = True
+
+    return tbv
+
+def frameshift( tbl_byvar,
+                acc_don_bool,
+                exon_bd,
+                acc = True
+              ):
+
+    tbv = tbl_byvar.copy()
+
+    if acc:
+        col = 'frameshift_acc'
+    else:
+        col = 'frameshift_don'
+
+    tbv[ col ] = False
+
+    posl = tbv.loc[ tbv[ acc_don_bool ] ].pos
+    altl = tbv.loc[ tbv[ acc_don_bool ] ].alt
+
+    if acc:
+        assert len( set( altl ) ) == 2 and 'C' not in set( altl ) and 'T' not in set( altl ), \
+        'Alternate alleles for acceptor have bases other than A/G'
+    else:
+        assert len( set( altl ) ) and 'A' not in set( altl ) and 'C' not in set( altl ), \
+        'Alternate alleles for donor have bases other than G/T'
+
+    fs = []
+
+    for p,a in zip( posl, altl ):
+
+        if acc:
+
+            #for this exon bd should be vec_coord of first exonic base
+            if a.upper() == 'A':
+
+                fs.append( ( ( ( exon_bd - ( p + 2 ) ) % 3 ) != 0 ) )
+
+            elif a.upper() == 'G':
+
+                fs.append( ( ( ( exon_bd - ( p + 1 ) ) % 3 ) != 0 ) )
+
+        else:
+
+            #for this exon bd should be vec_coord of last exonic base
+            if a.upper() == 'G':
+
+                fs.append( ( ( ( exon_bd - ( p + 1 ) ) % 3 ) != 0 ) )
+
+            elif a.upper() == 'T':
+
+                fs.append( ( ( ( exon_bd - p ) % 3 ) != 0 ) )
+
+    tbv.loc[ tbv[ acc_don_bool ], col ] = fs
 
     return tbv

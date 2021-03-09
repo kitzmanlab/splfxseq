@@ -5,6 +5,51 @@ import subprocess as subp
 from os import path
 import itertools
 
+def trim_Tn5_adaptors( infq1,
+                       infq2,
+                       outdir = None,
+                       outfiles = None,
+                       print_out = True,
+                       print_err = False ):
+
+    #if outdirectory is unspecified, save in same directory as input
+    if not outdir:
+        outdir = ''.join( fq1.split( '/' )[ : -1 ] )
+
+    #sets outfile names
+    if not outfiles:
+        #if not provided same as input file with the indication it was trimmed
+        outfq1 = '.'.join( infq1.split( '/' )[ -1 ].split( '.' )[ :-1 ] ) + '.trim.fq.gz'
+        outfq2 = '.'.join( infq2.split( '/' )[ -1 ].split( '.' )[ :-1 ] ) + '.trim.fq.gz'
+    else:
+        outfq1 = outfiles[ 0 ]
+        outfq2 = outfiles[ 1 ]
+
+    out = subp.run( 'cutadapt \
+                    -a CTGTCTCTTATACACATCTCCGAGCCCACGAGAC \
+                    -A CTGTCTCTTATACACATCTGACGCTGCCGACGA \
+                    --minimum-length 20 \
+                    -q 15 \
+                    -O 12 \
+                    -e 0.1 \
+                    -o %s \
+                    -p %s \
+                    %s %s' % ( outdir+outfq1, outdir+outfq2, infq1, infq2 ),
+                    stdout = subp.PIPE,
+                    stderr = subp.PIPE,
+                    shell = True,
+                )
+
+    if print_out:
+        #the formatting of the output is annoying - trying to make it look nice
+        out_nl = out.stdout.decode('utf-8').split( '\n' )
+        print(*out_nl, sep='\n')
+
+    if print_err:
+        #the formatting of the output is annoying - trying to make it look nice
+        err_nl = out.stderr.decode('utf-8').split( '\n' )
+        print(*err_nl, sep='\n')
+
 def filter_by_snv( satbl ):
 
     sa = satbl.copy()
@@ -17,6 +62,16 @@ def filter_by_snv( satbl ):
     sa_snvs = sa_singlevar.loc[ (sa_singlevar.ref.str.len() == 1) & (sa_singlevar.alt.str.len() == 1) ].copy()
 
     return sa_snvs
+
+def unzip( infile,
+            outfile = 'temp',
+           directory = None ):
+
+    file_ext = infile.split( '.' )[ -2 ]
+
+    subp.run( 'zcat %s > %s' % ( infile, directory + outfile + '.' + file_ext  ),
+                    shell = True,
+                )
 
 def extract_snv_bcs( satbl ):
 
@@ -50,9 +105,13 @@ def write_temp_fa( refseq,
                     tempdir ):
 
     with open( tempdir + 'temp.fa', 'w' ) as fa:
-        fa.write( '>' + variant + '\n' )
-        fa.write( create_varseq( refseq,
-                                 variant ) )
+            fa.write( '>' + variant + '\n' )
+
+            if variant == 'WT':
+                fa.write( refseq )
+            else:
+                fa.write( create_varseq( refseq,
+                                         variant ) )
 
 def build_index( tempdir,
                 variant,
@@ -79,21 +138,40 @@ def build_index( tempdir,
 def convert_fq_to_bam( fq_file1,
                        fq_file2,
                        sample_name,
-                       tempdir ):
+                       tempdir,
+                       append_bcs = True ):
 
-    #convert forward fq to unaligned bam
-    subp.run( 'java -Xmx8g -jar /nfs/kitzman2/lab_software/platform_indep/picard-tools-2.9.0/picard.jar \
-                FastqToSam F1=%s SM=%s O=%s' % ( fq_file1, sample_name, tempdir + 'temp.bam' ),
-         shell = True,
-         stdout = subp.PIPE,
-         stderr = subp.PIPE )
+    if append_bcs:
 
-    append_bcs( tempdir, fq_file2 )
+        #convert forward fq to unaligned bam
+        subp.run( 'java -Xmx8g -jar /nfs/kitzman2/lab_software/platform_indep/picard-tools-2.9.0/picard.jar \
+                    FastqToSam F1=%s SM=%s O=%s' % ( fq_file1, sample_name, tempdir + 'temp.bam' ),
+             shell = True,
+             stdout = subp.PIPE,
+             stderr = subp.PIPE )
 
-    subp.run( 'samtools sort -@8 -m8G -o %s -t RX %s' % ( tempdir + sample_name + '_unaligned.bam', tempdir + 'temp_bc.bam' ),
-         shell = True,
-         stdout = subp.PIPE,
-         stderr = subp.PIPE )
+        append_bcs( tempdir, fq_file2 )
+
+        subp.run( 'samtools sort -@8 -m8G -o %s -t RX %s' % ( tempdir + sample_name + '_unaligned.bam', tempdir + 'temp_bc.bam' ),
+            shell = True,
+            stdout = subp.PIPE,
+            stderr = subp.PIPE )
+
+    else:
+
+        #convert forward fq to unaligned bam
+        subp.run( 'java -Xmx8g -jar /nfs/kitzman2/lab_software/platform_indep/picard-tools-2.9.0/picard.jar \
+                    FastqToSam F1=%s SM=%s O=%s' % ( fq_file1, sample_name, tempdir + sample_name + '_unaligned1.bam' ),
+             shell = True,
+             stdout = subp.PIPE,
+             stderr = subp.PIPE )
+
+        subp.run( 'java -Xmx8g -jar /nfs/kitzman2/lab_software/platform_indep/picard-tools-2.9.0/picard.jar \
+                    FastqToSam F1=%s SM=%s O=%s' % ( fq_file2, sample_name, tempdir + sample_name + '_unaligned2.bam' ),
+             shell = True,
+             stdout = subp.PIPE,
+             stderr = subp.PIPE )
+
 
 def write_temp_fq(  pysam_align_in,
                     reads,
@@ -119,16 +197,19 @@ def write_temp_fq(  pysam_align_in,
 def align_reads( tempdir,
                  variant,
                   fqfile = 'temp.fq',
-                  print_err = False ):
+                  print_err = False,
+                  outbam = 'temp.bam'
+                   ):
+
 
     out = subp.run( '/home/smithcat/bin/gmap -d %s -D %s -t 8 -f samse --microexon-spliceprob=1.0 --allow-close-indels=2 %s > %s'
-                    % ( variant, tempdir + 'indices/', tempdir + fqfile, tempdir + 'temp.sam' ) ,
-                    stderr = subp.PIPE,
-                    shell = True,
-                    )
+                        % ( variant, tempdir + 'indices/', fqfile, tempdir + 'temp.sam' ) ,
+                        stderr = subp.PIPE,
+                        shell = True,
+                        )
 
     subp.run( 'samtools view -S -b %s > %s'
-                    % ( tempdir + 'temp.sam', tempdir + 'temp.bam' ) ,
+                    % ( tempdir + 'temp.sam', tempdir + outbam ) ,
                     stderr = subp.PIPE,
                     shell = True,
                     )
@@ -156,6 +237,32 @@ def coordsort_bam( tempdir,
                     print_err = False ):
 
     out = subp.run( 'samtools sort %s > %s ' % ( tempdir + 'temp.sam', tempdir + bamfile ),
+                    stderr = subp.PIPE,
+                    shell = True,
+                    )
+
+    if print_err:
+        #the formatting of the output is annoying - trying to make it look nice
+        err_nl = out.stderr.decode('utf-8').split( '\n' )
+        print(*err_nl, sep='\n')
+
+def align_pe_reads( tempdir,
+                    variant,
+                    fqfile1 = 'for.temp.fq',
+                    fqfile2 = 'rev.temp.fq',
+                    print_err = False,
+                    outbam = 'temp.bam'
+                   ):
+
+
+    out = subp.run( '/home/smithcat/bin/gsnap -d %s -D %s -N 1 -t 8 --format sam %s %s > %s'
+                        % ( variant, tempdir + 'indices/', fqfile1, fqfile2, tempdir + 'temp.sam' ) ,
+                        stderr = subp.PIPE,
+                        shell = True,
+                        )
+
+    subp.run( 'samtools view -S -b %s > %s'
+                    % ( tempdir + 'temp.sam', tempdir + outbam ) ,
                     stderr = subp.PIPE,
                     shell = True,
                     )
@@ -219,7 +326,7 @@ def align_sample( satbl,
 
             write_temp_fq( sample_bam, reads, tempdir, print_err )
 
-            align_reads( tempdir, var )
+            align_reads( tempdir, var, tempdir + 'temp.fq' )
 
             with pysam.AlignmentFile( tempdir + 'temp.bam', 'rb' ) as bc_bam:
 
@@ -229,3 +336,59 @@ def align_sample( satbl,
     append_bcs( tempdir, fq_file2, bam_in = sample_name + '.bam', bcbam_out = sample_name + '_bc.bam' )
 
     sample_bam.close()
+
+def filter_secondary_alignments( tempdir,
+                                 infile ):
+
+    outfile = '.'.join( infile.split( '.' )[ :-1 ] )
+
+    with pysam.AlignmentFile( tempdir + infile, 'rb' ) as unfiltered_bam:
+
+        with pysam.AlignmentFile( tempdir + outfile + '_filt.bam', 'wb', template = unfiltered_bam ) as filt_bam:
+
+            for read in unfiltered_bam:
+
+                if not( read.has_tag( 'HI' ) ) or read.get_tag( 'HI' ) == 1:
+                    filt_bam.write( read )
+
+
+def align_indiv_sample( variant,
+                        refseq,
+                        tempdir,
+                        fq_file1,
+                        chrom_name,
+                        fq_file2 = None,
+                        sample_name = 'sample',
+                        create_indices = False,
+                        print_err = False
+                      ):
+
+    #don't need to recreate indices for every sample
+    if create_indices:
+
+        #create folder to store indices
+        subp.run( 'mkdir %s' % ( tempdir + 'indices/' ),
+                        shell = True,
+                        )
+
+        #for the variant create a temporary fa file
+        #then create an index within indices directory named by the variant
+        write_temp_fa( refseq, variant, tempdir )
+        build_index( tempdir, variant, print_err = print_err )
+
+    if not fq_file2:
+
+        align_reads( tempdir,
+                     variant,
+                     fq_file1,
+                     outbam = sample_name + '.bam',
+                     print_err = print_err )
+
+    else:
+
+        align_pe_reads( tempdir,
+                        variant,
+                        fq_file1,
+                        fq_file2,
+                        outbam = sample_name + '.bam',
+                        print_err = print_err )

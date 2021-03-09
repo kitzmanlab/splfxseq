@@ -20,10 +20,11 @@ def create_spliceai_df( spliceai_tbx,
                 'POS_donor_GAIN': [],
                 'POS_donor_LOSS': [] }
 
-    chrom = chrom.replace('chr','')
+    if chrom:
+        chrom = chrom.replace('chr','')
 
-    if is_int( chrom ):
-        chrom = int( chrom )
+        if is_int( chrom ):
+            chrom = int( chrom )
 
     for row in spliceai_tbx.fetch(  chrom ,
                                     coords[0],
@@ -109,6 +110,12 @@ def create_exon_coord_df( exon_coord_file = '/nfs/kitzman2/smithcat/proj/spliceA
                             names = ['chrom', 'start', 'end', 'gene'])
 
     return exon_df
+
+def rev_comp_seq( refseq ):
+
+    comp_DNA = str.maketrans( 'ACGTacgt', 'TGCAtgca' )
+
+    return refseq.translate( comp_DNA )
 
 def merge_exper_spliceai( exper_df,
                           spliceai_df,

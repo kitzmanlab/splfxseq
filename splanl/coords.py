@@ -1,5 +1,3 @@
-
-
 def pos_to_hgvspos(
     lvecpos,
     vec_corange_cloned,
@@ -60,8 +58,27 @@ def pos_to_gDNA(
                 vec_exon_match,
                 rev_transcribed=False
                 ):
+
     if rev_transcribed:
         out_pos = [ gdna_exon_end + ( vec_exon_match-pos ) for pos in vec_pos ]
     else:
         out_pos = [ gdna_exon_end - ( vec_exon_match-pos ) for pos in vec_pos ]
+    return(out_pos)
+
+def vpos_to_gpos(
+                vec_pos,
+                vec_crange,
+                gdna_crange,
+                rev_strand=False
+                ):
+
+    gdna_crange.sort()
+
+    assert ( vec_crange[ 1 ] - vec_crange[ 0 ] ) == ( gdna_crange[ 1 ] - gdna_crange[ 0 ] ), \
+    'Vector range and genomic DNA range are of different lengths'
+
+    if rev_strand:
+        out_pos = [ gdna_crange[ 0 ] + ( vec_crange[ 1 ] - pos ) for pos in vec_pos ]
+    else:
+        out_pos = [ gdna_crange[ 0 ] + ( pos - vec_crange[ 0 ] ) for pos in vec_pos ]
     return(out_pos)
