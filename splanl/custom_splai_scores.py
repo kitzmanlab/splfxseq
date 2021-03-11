@@ -5,13 +5,13 @@ from pkg_resources import resource_filename
 from spliceai.utils import one_hot_encode
 
 def rev_complement( seq ):
-"""
+    """
     Creates reverse complement of DNA string (not case sensitive)
 
     Args: seq (str)
 
     Returns: comp (str) reverse complement of input string
-"""
+    """
 
     trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
 
@@ -27,7 +27,7 @@ def get_gene_bds( annots_df,
                   scored_context,
                   unscored_context = 5000,
                 ):
-"""
+    """
     Gets the number of bases which are within the sequence context but outside the gene boundaries on each side.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -40,7 +40,7 @@ def get_gene_bds( annots_df,
     Returns: gene_bds - (tuple of ints) ( upstream bases outside of gene bds, downstream bases outside of gene bds )
                         if sequence is contained entirely within the gene, returns ( 0, 0 )
                         These are the number of bases that will be replaced with N's on either side of the sequence
-"""
+    """
 
     ann_df = annots_df.copy()
 
@@ -66,7 +66,7 @@ def get_2exon_bds( annots_df,
                   position,
                   rev_strand = False,
                 ):
-"""
+    """
     Gets the distance from the center variant to the nearest acceptor and donor.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -78,7 +78,7 @@ def get_2exon_bds( annots_df,
     Returns: 2exon_bds - (tuple of ints) ( distance to nearest acceptor, distance to nearest donor )
                          SpliceAI default scoring would only return distance to nearest donor OR acceptor
                          These values are used for masking..
-"""
+    """
 
     ann_df = annots_df.copy()
 
@@ -114,11 +114,11 @@ def create_input_seq( refseq,
                       haplotype,
                       ref_var,
                       gene_bds,
+                      scored_context,
                       rev_strand = False,
-                      scored_context = 50,
                       unscored_context = 5000,
                     ):
-"""
+    """
     Creates the reference and variant sequences to input into SpliceAI models
 
     Args: refseq (str) - fasta file for an entire chromosome
@@ -145,7 +145,7 @@ def create_input_seq( refseq,
 
     Returns: refvar_seq - (tuple of str) ( reference sequence, variant sequence )
                           Both sequences will be 2*( scored_context + unscored_context ) + 1 long if none of the variants are indels
-"""
+    """
 
     flanks = unscored_context + scored_context
 
@@ -180,7 +180,7 @@ def create_input_seq( refseq,
 
     for pos,ref,alt in hap_seqpos:
 
-        assert refseq[ pos: pos + len( ref ) ] == ref, 'Reference base within haplotype does not match given position'
+        assert refseq[ pos: pos + len( ref ) ].upper() == ref, 'Reference base within haplotype does not match given position'
 
         varseq = varseq[ : pos ] + alt + varseq[ pos + len( ref ): ]
 
@@ -202,7 +202,7 @@ def splai_score_variants( annots_df,
                            rev_strand = False,
                            mask_value = 0,
                          ):
-"""
+    """
     Uses SpliceAI default scoring to compute SDV probabilities.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -225,7 +225,7 @@ def splai_score_variants( annots_df,
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event
                                  and separate probabilities after masking
-"""
+    """
 
     outtbl = { 'ref_name': [ ref_name ]*len( refvarseqs ),
                'chrom': [ chrom ]*len( refvarseqs ),
@@ -354,7 +354,7 @@ def adjust_for_indels( var_accp,
                        var_donp,
                        variants,
                      ):
-"""
+    """
     Adjusts the length of the variant sequence probabilities when there are indels.
     Specifically, for deletions, fills deleted bases with a probability of 0 and for insertions,
     take the maximum probability across the inserted bases.
@@ -368,7 +368,7 @@ def adjust_for_indels( var_accp,
                       alternate base(s) - (str) alternate base(s) relative to forward strand, )
 
     Returns: variantp - (tuple of np arrays) ( acceptor probabilities, donor probabilities )
-"""
+    """
 
     #make sure the variants are sorted
     variants.sort()
@@ -412,7 +412,7 @@ def splai_score_mult_variants_onegene( annots_df,
                                       scored_context = 50,
                                       unscored_context = 5000,
                                       rev_strand = False ):
-"""
+    """
     Wrapper function to compute SpliceAI default probabilities across one gene.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -445,7 +445,7 @@ def splai_score_mult_variants_onegene( annots_df,
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event for each center_var
                                  and separate probabilities after masking
-"""
+    """
 
     flanks = scored_context + unscored_context
 
@@ -476,8 +476,8 @@ def splai_score_mult_variants_onegene( annots_df,
                                                    center[ 0 ],
                                                    scored_context = scored_context,
                                                    unscored_context = unscored_context ),
+                                     scored_context,
                                      rev_strand = rev_strand,
-                                     scored_context = scored_context,
                                      unscored_context = unscored_context )
                   for center,hapref in zip( center_var, zip( haplotypes, ref_vars ) ) ]
 
@@ -508,7 +508,7 @@ def score_mult_variants_multgene( annots_df,
                                   scored_context = 50,
                                   unscored_context = 5000,
                                 ):
-"""
+    """
     Wrapper function to compute SpliceAI default probabilities across multiple genes.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -544,7 +544,7 @@ def score_mult_variants_multgene( annots_df,
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event for each center_var
                                  and separate probabilities after masking
-"""
+    """
 
     outdfs = []
 
@@ -627,7 +627,7 @@ def get_allexon_bds( annots_df,
                      scored_context,
                      rev_strand = False,
                     ):
-"""
+    """
     Gets the distance from the center variant to all acceptors and donors within range
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -644,7 +644,7 @@ def get_allexon_bds( annots_df,
                          get_2exon_bds returns only two values
                          This fn returns all values within the scored context range
                          These values are used for masking and getting relative jn use
-"""
+    """
 
     ann_df = annots_df.copy()
 
@@ -697,6 +697,7 @@ def get_relative_jn_use( gtex_df,
 
     acc, don = exon_bds.copy()
 
+    #print( exon_bds )
     #gets jns back into gdna coords
     #adjusts back to 0 based coords
     if rev_strand:
@@ -707,6 +708,8 @@ def get_relative_jn_use( gtex_df,
         acc_jn = [ position + acc_pos - 1 for acc_pos in acc ]
         don_jn = [ position + don_pos for don_pos in don ]
 
+    #print( acc_jn )
+    #print( don_jn )
     if len( acc_jn ) > 1:
         #create dictionaries to hold sequence position jn: relative expression (proportion of total reads) pairs
         acc_use = { acc_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == acc_gpos ) ].n_rds.values[ 0 ]
@@ -714,8 +717,11 @@ def get_relative_jn_use( gtex_df,
         tot_reads = sum( acc_use.values() )
         acc_use = { jn: rds / tot_reads for jn, rds in acc_use.items() }
 
+    elif len( acc_jn ) == 1:
+        acc_use = { acc[ 0 ]: 1 }
+
     else:
-        acc_use = { acc_jn[ 0 ]: 1 }
+        acc_use = {}
 
     if len( don_jn ) > 1:
         don_use = { don_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == don_gpos ) ].n_rds.values[ 0 ]
@@ -723,13 +729,15 @@ def get_relative_jn_use( gtex_df,
         tot_reads = sum( don_use.values() )
         don_use = { jn: rds / tot_reads for jn, rds in don_use.items() }
 
+    elif len( don_jn ) == 1:
+        don_use = { don[ 0 ]: 1 }
+
     else:
-        don_use = { don_jn[ 0 ]: 1 }
+        don_use = {}
 
     return [ acc_use, don_use ]
 
-def jnuse_score_variants( annots_df,
-                           models,
+def jnuse_score_variants(  models,
                            refvarseqs,
                            ref_name,
                            ss_jn_use,
@@ -740,11 +748,10 @@ def jnuse_score_variants( annots_df,
                            rev_strand = False,
                            mask_losses = 0,
                  ):
-"""
+    """
     Uses relative junction use to compute SDV probabilities.
 
-    Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
-                                    EXON_START, EXON_END are both comma separated strings of all exon bds
+    Args:
           models (list) - SpliceAI models
           refvarseqs ( list of tuples of strings ) - list of all of the reference and variant sequence pairs to score
           refname (str) - reference and/or annotation name to label the entry
@@ -768,7 +775,7 @@ def jnuse_score_variants( annots_df,
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event
                                  and separate probabilities after masking
-"""
+    """
 
     outtbl = { 'ref_name': [ ref_name ]*len( refvarseqs ),
                'chrom': [ chrom ]*len( refvarseqs ),
@@ -914,7 +921,7 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                         scored_context_pad = 10,
                                         unscored_context = 5000,
                                         rev_strand = False ):
-"""
+    """
     Wrapper function to compute junction use weighted probabilities across one exon.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
@@ -949,7 +956,7 @@ def jnuse_score_mult_variants_oneexon( annots_df,
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event for each center_var
                                  and separate probabilities after masking
-"""
+    """
 
     exon_len = exon_cds[ 1 ] - exon_cds[ 0 ]
 
@@ -1002,8 +1009,7 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                         rev_strand = rev_strand )
                    for center in center_var ]
 
-    outdf = jnuse_score_variants( annots_df,
-                                    models,
+    outdf = jnuse_score_variants(  models,
                                     refvarseqs,
                                     ref_name,
                                     rel_jn_use,
