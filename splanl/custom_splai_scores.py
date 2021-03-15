@@ -1018,8 +1018,7 @@ def custom_score_mult_variants_oneexon( annots_df,
 
     #this will fail if any of the other variants are indels...
     #maybe I should add some functionality to the score_variant fn to handle this...
-    outdf = custom_score_variants( annots_df,
-                                    models,
+    outdf = jnuse_score_variants(  models,
                                     refvarseqs,
                                     ref_name,
                                     rel_jn_use,
@@ -1029,4 +1028,5 @@ def custom_score_mult_variants_oneexon( annots_df,
                                     scored_context,
                                     rev_strand = rev_strand,
                                   )
+
     return outdf
