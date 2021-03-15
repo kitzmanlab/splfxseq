@@ -3,6 +3,7 @@ import numpy as np
 from keras.models import load_model
 from pkg_resources import resource_filename
 from spliceai.utils import one_hot_encode
+import pysam
 
 def rev_complement( seq ):
     """
@@ -628,7 +629,7 @@ def get_allexon_bds( annots_df,
                      rev_strand = False,
                     ):
     """
-    Gets the distance from the center variant to all acceptors and donors within range
+    Gets gdna position of all annotated acceptors and donors within range of scored_context
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
                                     EXON_START, EXON_END are both comma separated strings of all exon bds
@@ -638,11 +639,12 @@ def get_allexon_bds( annots_df,
           rev_strand - (bool) is the variant on the reverse strand?
 
     Returns: allexon_bds - (list of tuples of ints)
-                         [ ( distance to acceptor1,...,distance to acceptorn ),
-                           ( distance to donor1,...,distance to donorn ) ]
+                         [ ( acceptor1 gdna position,..., acceptorn gdna position ),
+                           ( donor1 gdna position,..., donorn gdna position ) ]
                          SpliceAI default scoring would only return distance to nearest donor OR acceptor
                          get_2exon_bds returns only two values
                          This fn returns all values within the scored context range
+                         The values returned are gdna coordinates and not distance to acceptor like other fns
                          These values are used for masking and getting relative jn use
     """
 
@@ -653,79 +655,104 @@ def get_allexon_bds( annots_df,
                       & ( ann_df.TX_END >= position ) ]
 
     assert len( idx ) == 1, \
-    'The chromosome and position is not matching exactly one gene - the code is not ready for that!'
+    'The chromosome and position is not matching exactly one gene!'
+
+    exon_starts = ann_df.at[ idx[ 0 ], 'EXON_START' ].split( ',' )
 
     exon_startd = [ ( int( start ) + 1 ) - position
-                            for start in ann_df.at[ idx[ 0 ], 'EXON_START' ].split( ',' )
+                            for start in exon_starts
                             if start != '' ]
 
-    starts = tuple( p for p in exon_startd if np.abs( p ) <= scored_context )
+    prox_starts = tuple( int( gpos ) + 1 for gpos, dist in zip( exon_starts, exon_startd )
+                         if np.abs( dist ) <= scored_context )
+
+    exon_ends = ann_df.at[ idx[ 0 ], 'EXON_END' ].split( ',' )
 
     exon_endd = [ int( end ) - position
-                          for end in ann_df.at[ idx[ 0 ], 'EXON_END' ].split( ',' )
+                          for end in exon_ends
                           if end != '' ]
 
-    ends = tuple( p for p in exon_endd if np.abs( p ) <= scored_context )
+    prox_ends = tuple( int( gpos ) for gpos, dist in zip( exon_ends, exon_endd )
+                         if np.abs( dist ) <= scored_context )
 
-    exon_bds = [ starts, ends ] if not rev_strand else [ ends, starts ]
+    exon_bds = [ prox_starts, prox_ends ] if not rev_strand else [ prox_ends, prox_starts ]
 
     return exon_bds
 
-def get_relative_jn_use( gtex_df,
-                         chrom,
-                         position,
-                         exon_bds,
-                         scored_context,
-                         rev_strand = False, ):
+def create_rel_jn_use_tbl( pext_tbx,
+                           pext_header,
+                           chrom,
+                           exon_bds,
+                           col_name = 'mean_proportion'
+                        ):
 
     """
-        Gets the distance from the center variant to all acceptors and donors within range
+    Creates a pandas dataframe of pext base-level scores for each annotated acceptor/donor
 
-        Args: gtex_df (pandas df) - columns: chrom, jn (1-based), reads
+    Args: pext_tbx (pysam tabix file) - tabixed file for pext scores
+          pext_header (list of strings) - column names for each pext row
+          chrom - (str) chromosome of center variant ( format should match your annots file (ie chr3 v 3) )
+          exon_bds - (tuple of list of ints) position (genomic coords) of acceptors and donors within range
+          col_name - (str) name of tissue column to extract as relative jn use score
+
+    Returns: pext_df - (pandas df) columns: chrom, jn (0-based), pext
+    """
+
+    outtbl = { 'chrom': [],
+               'jn': [],
+               'pext': [] }
+
+    acc, don = exon_bds.copy()
+
+    sort_bds = sorted( acc + don )
+
+    col_idx = pext_header.index( col_name )
+
+    for pos in sort_bds:
+
+        outtbl[ 'chrom' ].append( chrom )
+        outtbl[ 'jn' ].append( pos )
+
+        for row in pext_tbx.fetch( chrom, pos - 1, pos ):
+
+            outtbl[ 'pext' ].append( float( row.split( '\t' )[ col_idx ] ) )
+
+    outdf = pd.DataFrame( outtbl )
+
+    return outdf
+
+def get_relative_jn_use( pext_df,
+                         chrom,
+                         position,
+                         exon_bds, ):
+
+    """
+        Gets the relative use of each acceptor and donor within range
+
+        Args: pext_df (pandas df) - columns: chrom, jn (0-based), pext
               chrom - (str) chromosome of center variant ( format should match your gtex file (ie chr3 v 3) )
               position - (int) position (genomic coords) of center variant
-              scored_context - (int) number of bases on each side to look for donors and acceptors
-              rev_strand - (bool) is the variant on the reverse strand?
+              exon_bds - (tuple of list of ints) position (genomic coords) of acceptors and donors within range
 
         Returns: acceptor and donor relative use for each acceptor and donor (list of dictionaries)
                  [ { acceptor1_pos: acceptor1_rel_use, ... acceptorn_pos: acceptorn_rel_use },
                    { donor1_pos: donor1_rel_use, ... donorn_pos: donorn_rel_use } ]
-                 The values in both dictionaries should sum to 1
                  The positions are the relative distances to the center variant
     """
 
-    gtex = gtex_df.copy()
+    pext = pext_df.copy()
 
-    acc, don = exon_bds.copy()
+    acc_gdna, don_gdna = exon_bds.copy()
 
-    #gets jns back into gdna coords
-    #adjusts back to 0 based coords
-    if rev_strand:
-        acc_jn = [ position + acc_pos - scored_context for acc_pos in acc ]
-        don_jn = [ position + don_pos - scored_context - 1 for don_pos in don ]
+    #gets jns into sequence coords
+    acc_seq = [ acc_pos - position for acc_pos in acc_gdna ]
+    don_seq = [ don_pos - position for don_pos in don_gdna ]
 
-    else:
-        acc_jn = [ position + acc_pos - scored_context - 1 for acc_pos in acc ]
-        don_jn = [ position + don_pos - scored_context for don_pos in don ]
+    acc_exp = { acc_spos: pext.loc[ ( pext.chrom == chrom ) & ( pext.jn == acc_gpos ) ].pext.values[ 0 ]
+                    for acc_spos, acc_gpos in zip( acc_seq, acc_gdna ) }
 
-    if len( acc_jn ) > 1:
-        #create dictionaries to hold sequence position jn: relative expression (proportion of total reads) pairs
-        acc_exp = { acc_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == acc_gpos ) ].n_rds.values[ 0 ]
-                    for acc_spos, acc_gpos in zip( acc, acc_jn ) }
-        tot_reads = sum( acc_exp.values() )
-        acc_exp = { jn: rds / tot_reads for jn, rds in acc_exp.items() }
-
-    else:
-        acc_exp = { acc[ 0 ]: 1 }
-
-    if len( don_jn ) > 1:
-        don_exp = { don_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == don_gpos ) ].n_rds.values[ 0 ]
-                    for don_spos, don_gpos in zip( don, don_jn ) }
-        tot_reads = sum( don_exp.values() )
-        don_exp = { jn: rds / tot_reads for jn, rds in don_exp.items() }
-
-    else:
-        don_exp = { don[ 0 ]: 1 }
+    don_exp = { don_spos: pext.loc[ ( pext.chrom == chrom ) & ( pext.jn == don_gpos ) ].pext.values[ 0 ]
+                    for don_spos, don_gpos in zip( don_seq, don_gdna ) }
 
     return [ acc_exp, don_exp ]
 
@@ -877,8 +904,9 @@ def jnuse_score_variants(  models,
 
     return outdf
 
-def jnuse_score_mult_variants_oneexon( annots_df,
-                                        gtex_df,
+def custom_score_mult_variants_oneexon( annots_df,
+                                        pext_tbx,
+                                        pext_header,
                                         models,
                                         refseq,
                                         ref_name,
@@ -889,13 +917,15 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                         ref_vars = None,
                                         scored_context_pad = 10,
                                         unscored_context = 5000,
-                                        rev_strand = False ):
+                                        rev_strand = False,
+                                        pext_col = 'mean_proportion' ):
     """
     Wrapper function to compute junction use weighted probabilities across one exon.
 
     Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
                                     EXON_START, EXON_END are both comma separated strings of all exon bds
-          gtex_df (pandas df) - columns: chrom, jn (1-based), reads
+          pext_tbx (pysam tabix file) - tabixed file for pext scores
+          pext_header (list of strings) - column names for each pext row
           models (list) - SpliceAI models
           refseq (str) - fasta file for an entire chromosome
           exon_cds (tuple of ints) - exon bds in genomic coords to determined scored context length
@@ -921,6 +951,7 @@ def jnuse_score_mult_variants_oneexon( annots_df,
           scored_context_pad - (int) number of additional bases above exon length to score on each side of the center variant
           unscored_context - (int) number of flanking unscored bases on each side of the center variant
           rev_strand - (bool) is the exon on the reverse strand?
+          pext_col - (str) name of tissue column to use for pext scores
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event for each center_var
                                  and separate probabilities after masking
@@ -965,7 +996,16 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                   for center,hapref in zip( center_var, zip( haplotypes, ref_vars ) ) ]
 
     #creates a giant list of lists of relative acceptor/donor use
-    rel_jn_use = [ get_relative_jn_use( gtex_df,
+    rel_jn_use = [ get_relative_jn_use( create_rel_jn_use_tbl( pext_tbx,
+                                                               pext_header,
+                                                               chrom,
+                                                               get_allexon_bds( annots_df,
+                                                                                chrom,
+                                                                                center[ 0 ],
+                                                                                scored_context,
+                                                                                rev_strand = rev_strand
+                                                                                ),
+                                                               col_name = pext_col ),
                                         chrom,
                                         center[ 0 ],
                                         get_allexon_bds( annots_df,
@@ -973,10 +1013,8 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                                          center[ 0 ],
                                                          scored_context,
                                                          rev_strand = rev_strand
-                                                        ),
-                                        scored_context,
-                                        rev_strand = rev_strand )
-                   for center in center_var ]
+                                                        ), )
+                  for center in center_var ]
 
     #this will fail if any of the other variants are indels...
     #maybe I should add some functionality to the score_variant fn to handle this...
