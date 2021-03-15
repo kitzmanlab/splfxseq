@@ -653,7 +653,7 @@ def get_allexon_bds( annots_df,
                       & ( ann_df.TX_END >= position ) ]
 
     assert len( idx ) == 1, \
-    'The chromosome and position is not matching exactly one gene!'
+    'The chromosome and position is not matching exactly one gene - the code is not ready for that!'
 
     exon_startd = [ ( int( start ) + 1 ) - position
                             for start in ann_df.at[ idx[ 0 ], 'EXON_START' ].split( ',' )
@@ -675,6 +675,7 @@ def get_relative_jn_use( gtex_df,
                          chrom,
                          position,
                          exon_bds,
+                         scored_context,
                          rev_strand = False, ):
 
     """
@@ -697,45 +698,36 @@ def get_relative_jn_use( gtex_df,
 
     acc, don = exon_bds.copy()
 
-    #print( exon_bds )
     #gets jns back into gdna coords
     #adjusts back to 0 based coords
     if rev_strand:
-        acc_jn = [ position + acc_pos for acc_pos in acc ]
-        don_jn = [ position + don_pos - 1 for don_pos in don ]
+        acc_jn = [ position + acc_pos - scored_context for acc_pos in acc ]
+        don_jn = [ position + don_pos - scored_context - 1 for don_pos in don ]
 
     else:
-        acc_jn = [ position + acc_pos - 1 for acc_pos in acc ]
-        don_jn = [ position + don_pos for don_pos in don ]
+        acc_jn = [ position + acc_pos - scored_context - 1 for acc_pos in acc ]
+        don_jn = [ position + don_pos - scored_context for don_pos in don ]
 
-    #print( acc_jn )
-    #print( don_jn )
     if len( acc_jn ) > 1:
         #create dictionaries to hold sequence position jn: relative expression (proportion of total reads) pairs
-        acc_use = { acc_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == acc_gpos ) ].n_rds.values[ 0 ]
+        acc_exp = { acc_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == acc_gpos ) ].n_rds.values[ 0 ]
                     for acc_spos, acc_gpos in zip( acc, acc_jn ) }
-        tot_reads = sum( acc_use.values() )
-        acc_use = { jn: rds / tot_reads for jn, rds in acc_use.items() }
-
-    elif len( acc_jn ) == 1:
-        acc_use = { acc[ 0 ]: 1 }
+        tot_reads = sum( acc_exp.values() )
+        acc_exp = { jn: rds / tot_reads for jn, rds in acc_exp.items() }
 
     else:
-        acc_use = {}
+        acc_exp = { acc[ 0 ]: 1 }
 
     if len( don_jn ) > 1:
-        don_use = { don_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == don_gpos ) ].n_rds.values[ 0 ]
+        don_exp = { don_spos: gtex.loc[ ( gtex.chrom == chrom ) & ( gtex.jn == don_gpos ) ].n_rds.values[ 0 ]
                     for don_spos, don_gpos in zip( don, don_jn ) }
-        tot_reads = sum( don_use.values() )
-        don_use = { jn: rds / tot_reads for jn, rds in don_use.items() }
-
-    elif len( don_jn ) == 1:
-        don_use = { don[ 0 ]: 1 }
+        tot_reads = sum( don_exp.values() )
+        don_exp = { jn: rds / tot_reads for jn, rds in don_exp.items() }
 
     else:
-        don_use = {}
+        don_exp = { don[ 0 ]: 1 }
 
-    return [ acc_use, don_use ]
+    return [ acc_exp, don_exp ]
 
 def jnuse_score_variants(  models,
                            refvarseqs,
@@ -746,7 +738,6 @@ def jnuse_score_variants(  models,
                            haplotypes,
                            scored_context,
                            rev_strand = False,
-                           mask_losses = 0,
                  ):
     """
     Uses relative junction use to compute SDV probabilities.
@@ -771,7 +762,6 @@ def jnuse_score_variants(  models,
                                         Empty list indicates no additional variants
           scored_context - (int) number of bases to score on each side of the variant
           rev_strand - (bool) is the center variant on the reverse strand?
-          mask_losses - (int) mult factor to mask acceptor/donor loss values if they aren't annotated
 
     Returns: outdf - (pandas df) Pandas dataframe with probabilities for each type of splice site event
                                  and separate probabilities after masking
@@ -783,25 +773,21 @@ def jnuse_score_variants(  models,
                'ref': [],
                'alt': [],
                'other_var': [],
-               'acc_abs_chg': [],
-               'don_abs_chg': [],
-               'DS_AG': [],
-               'DS_AL': [],
-               'DS_DG': [],
-               'DS_DL': [],
-               'DP_AG': [],
-               'DP_AL': [],
-               'DP_DG': [],
-               'DP_DL': [],
-               'DS_max': [],
-               'DS_max_type': [],
-               'POS_max': [],
-               'DS_AGm': [],
-               'DS_ALm': [],
-               'DS_DGm': [],
-               'DS_DLm': [],
-               'DS_maxm': [],
-               'DS_maxm_type': [],
+               'AL_chg': [],
+               'AG_chg': [],
+               'DL_chg': [],
+               'DG_chg': [],
+               'DS_AGrw': [],
+               'DS_ALrw': [],
+               'DS_DGrw': [],
+               'DS_DLrw': [],
+               'DP_AGrw': [],
+               'DP_ALrw': [],
+               'DP_DGrw': [],
+               'DP_DLrw': [],
+               'DS_maxrw': [],
+               'DS_maxrw_type': [],
+               'POS_maxrw': [],
              }
 
     for idx, refvarseq in enumerate( refvarseqs ):
@@ -836,72 +822,56 @@ def jnuse_score_variants(  models,
         diff_acc = ref_acc - var_acc
         diff_don = ref_don - var_don
 
+        outtbl[ 'AL_chg' ].append( sum( ( diff_acc > 0 ) * diff_acc ) )
+        outtbl[ 'AG_chg' ].append( sum( ( diff_acc < 0 ) * diff_acc ) )
+        outtbl[ 'DL_chg' ].append( sum( ( diff_don > 0 ) * diff_don ) )
+        outtbl[ 'DG_chg' ].append( sum( ( diff_don < 0 ) * diff_don ) )
+
+        acc_jn_use, don_jn_use = ss_jn_use[ idx ]
+
+        acc_wt = np.zeros( len( diff_acc ) )
+
+        for acc_jn in acc_jn_use.keys():
+
+            acc_wt[ acc_jn ] = acc_jn_use[ acc_jn ]
+
+        diff_acc = ( diff_acc > 0 ) * ( acc_wt ) * ( diff_acc ) \
+                     + ( diff_acc < 0 ) * ( 1 - acc_wt ) * ( diff_acc )
+
+        don_wt = np.zeros( len( diff_acc ) )
+
+        for don_jn in don_jn_use.keys():
+
+            don_wt[ don_jn ] = don_jn_use[ don_jn ]
+
+        diff_don = ( diff_don > 0 ) * ( don_wt ) * ( diff_don ) \
+                     + ( diff_don < 0 ) * ( 1 - don_wt ) * ( diff_don )
+
         outtbl[ 'pos' ].append( center_var[ idx ][ 0 ] )
         outtbl[ 'ref' ].append( center_var[ idx ][ 1 ] )
         outtbl[ 'alt' ].append( center_var[ idx ][ 2 ] )
         outtbl[ 'other_var' ].append( ';'.join( [ ':'.join( [ str( p ), '>'.join( [ r, a ] ) ] )
                                       for p,r,a in haplotypes[ idx ] ] ) )
 
-        outtbl[ 'acc_abs_chg' ].append( sum( np.abs( diff_acc ) ) )
-        outtbl[ 'don_abs_chg' ].append( sum( np.abs( diff_don ) ) )
+        outtbl[ 'DS_AGrw' ].append( np.abs( np.min( [ 0, np.min( diff_acc ) ] ) ) )
+        outtbl[ 'DS_ALrw' ].append( np.max( [ 0, np.max( diff_acc ) ] ) )
+        outtbl[ 'DS_DGrw' ].append( np.abs( np.min( [ 0, np.min( diff_don ) ] ) ) )
+        outtbl[ 'DS_DLrw' ].append( np.max( [ 0, np.max( diff_don ) ] ) )
 
-        outtbl[ 'DS_AG' ].append( np.abs( np.min( [ 0, np.min( diff_acc ) ] ) ) )
-        outtbl[ 'DS_AL' ].append( np.max( [ 0, np.max( diff_acc ) ] ) )
-        outtbl[ 'DS_DG' ].append( np.abs( np.min( [ 0, np.min( diff_don ) ] ) ) )
-        outtbl[ 'DS_DL' ].append( np.max( [ 0, np.max( diff_don ) ] ) )
+        outtbl[ 'DP_AGrw' ].append( np.argmin( diff_acc ) - scored_context )
+        outtbl[ 'DP_ALrw' ].append( np.argmax( diff_acc ) - scored_context )
+        outtbl[ 'DP_DGrw' ].append( np.argmin( diff_don ) - scored_context )
+        outtbl[ 'DP_DLrw' ].append( np.argmax( diff_don ) - scored_context )
 
-        outtbl[ 'DP_AG' ].append( np.argmin( diff_acc ) - scored_context )
-        outtbl[ 'DP_AL' ].append( np.argmax( diff_acc ) - scored_context )
-        outtbl[ 'DP_DG' ].append( np.argmin( diff_don ) - scored_context )
-        outtbl[ 'DP_DL' ].append( np.argmax( diff_don ) - scored_context )
-
-        score_keys = [ 'DS_AG', 'DS_AL', 'DS_DG', 'DS_DL' ]
+        score_keys = [ 'DS_AGrw', 'DS_ALrw', 'DS_DGrw', 'DS_DLrw' ]
 
         #first get the maximum probability across the difference scores
-        outtbl[ 'DS_max' ].append( max( outtbl[ key ][ -1 ] for key in score_keys ) )
+        outtbl[ 'DS_maxrw' ].append( max( outtbl[ key ][ -1 ] for key in score_keys ) )
         #then get the type of event that represents the maximum probability
-        outtbl[ 'DS_max_type' ].append( [ key for key in score_keys
-                                          if outtbl[ key ][ -1 ] == outtbl[ 'DS_max' ][ -1 ] ][ 0 ] )
+        outtbl[ 'DS_maxrw_type' ].append( [ key for key in score_keys
+                                          if outtbl[ key ][ -1 ] == outtbl[ 'DS_maxrw' ][ -1 ] ][ 0 ] )
         #finally, get the location of the event associated with the highest difference score
-        outtbl[ 'POS_max' ].append( outtbl[ outtbl[ 'DS_max_type' ][ -1 ].replace( 'DS', 'DP' ) ][ -1 ] )
-
-        outtbl[ 'DS_AGm' ].append( outtbl[ 'DS_AG' ][ -1 ] )
-        outtbl[ 'DS_ALm' ].append( outtbl[ 'DS_AL' ][ -1 ] )
-        outtbl[ 'DS_DGm' ].append( outtbl[ 'DS_DG' ][ -1 ] )
-        outtbl[ 'DS_DLm' ].append( outtbl[ 'DS_DL' ][ -1 ] )
-
-        acc_jn_use, don_jn_use = ss_jn_use[ idx ]
-
-        #alter masked values if based on annotated donors/acceptors
-        for acc_jn in acc_jn_use.keys():
-
-            if outtbl[ 'DP_AL' ][ -1 ] == acc_jn:
-                outtbl[ 'DS_ALm' ][ -1 ] *= acc_jn_use[ acc_jn ]
-            if outtbl[ 'DP_AG' ][ -1 ] == acc_jn:
-                outtbl[ 'DS_AGm' ][ -1 ] *= ( 1 - acc_jn_use[ acc_jn ] )
-
-        for don_jn in don_jn_use.keys():
-
-            if outtbl[ 'DP_DL' ][ -1 ] == don_jn:
-                outtbl[ 'DS_DLm' ][ -1 ] *= don_jn_use[ don_jn ]
-            if outtbl[ 'DP_DG' ][ -1 ] == acc_jn:
-                outtbl[ 'DS_DGm' ][ -1 ] *= ( 1 - don_jn_use[ don_jn ] )
-
-        if mask_losses is not False:
-
-            if outtbl[ 'DP_AL' ][ -1 ] not in acc_jn_use:
-                outtbl[ 'DS_ALm' ][ -1 ] *= mask_losses
-
-            if outtbl[ 'DP_DL' ][ -1 ] not in don_jn_use:
-                outtbl[ 'DS_DLm' ][ -1 ] *= mask_losses
-
-        score_keys = [ key + 'm' for key in score_keys ]
-
-        #first get the maximum probability across the difference scores
-        outtbl[ 'DS_maxm' ].append( max( outtbl[ key ][ -1 ] for key in score_keys ) )
-        #then get the type of event that represents the maximum probability
-        outtbl[ 'DS_maxm_type' ].append( [ key for key in score_keys
-                                              if outtbl[ key ][ -1 ] == outtbl[ 'DS_maxm' ][ -1 ] ][ 0 ] )
+        outtbl[ 'POS_maxrw' ].append( outtbl[ outtbl[ 'DS_maxrw_type' ][ -1 ].replace( 'DS', 'DP' ) ][ -1 ] )
 
     outdf = pd.DataFrame( outtbl )
 
@@ -917,7 +887,6 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                         center_var,
                                         haplotypes = None,
                                         ref_vars = None,
-                                        mask_losses = 0,
                                         scored_context_pad = 10,
                                         unscored_context = 5000,
                                         rev_strand = False ):
@@ -949,7 +918,6 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                              alternate base(s) - (str) alternate base(s) relative to forward strand, )
                                              None adds no additional variants
                                              NOTE: currently only substitutions can be handled - indels will raise error
-          mask_losses - (int) mult factor to mask acceptor/donor loss values if they aren't annotated
           scored_context_pad - (int) number of additional bases above exon length to score on each side of the center variant
           unscored_context - (int) number of flanking unscored bases on each side of the center variant
           rev_strand - (bool) is the exon on the reverse strand?
@@ -1006,10 +974,14 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                                          scored_context,
                                                          rev_strand = rev_strand
                                                         ),
+                                        scored_context,
                                         rev_strand = rev_strand )
                    for center in center_var ]
 
-    outdf = jnuse_score_variants(  models,
+    #this will fail if any of the other variants are indels...
+    #maybe I should add some functionality to the score_variant fn to handle this...
+    outdf = custom_score_variants( annots_df,
+                                    models,
                                     refvarseqs,
                                     ref_name,
                                     rel_jn_use,
@@ -1018,6 +990,5 @@ def jnuse_score_mult_variants_oneexon( annots_df,
                                     haplotypes,
                                     scored_context,
                                     rev_strand = rev_strand,
-                                    mask_losses = mask_losses
                                   )
     return outdf
