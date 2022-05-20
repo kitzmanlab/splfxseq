@@ -18,9 +18,6 @@ def create_gnomad_df( gnomad_tbx,
                 'n_allele': [],
                 'n_homo': [], }
 
-    if is_int( chrom ):
-        chrom = 'chr' + str( chrom )
-
     for row in gnomad_tbx.fetch( chrom ,
                                  coords[0],
                                  coords[1],

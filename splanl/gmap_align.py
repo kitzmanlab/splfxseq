@@ -139,9 +139,9 @@ def convert_fq_to_bam( fq_file1,
                        fq_file2,
                        sample_name,
                        tempdir,
-                       append_bcs = True ):
+                       append_bc = True ):
 
-    if append_bcs:
+    if append_bc:
 
         #convert forward fq to unaligned bam
         subp.run( 'java -Xmx8g -jar /nfs/kitzman2/lab_software/platform_indep/picard-tools-2.9.0/picard.jar \
@@ -392,3 +392,65 @@ def align_indiv_sample( variant,
                         fq_file2,
                         outbam = sample_name + '.bam',
                         print_err = print_err )
+
+def align_WT_sample( wt_bcs,
+                     refseq,
+                     tempdir,
+                     fq_file1,
+                     fq_file2,
+                     chrom_name,
+                     sample_name = 'sample',
+                     create_indices = False,
+                     print_err = False
+                   ):
+
+    var_to_bc_d = { 'WT': wt_bcs }
+
+    #don't need to recreate indices for every sample
+    if create_indices:
+
+        #create folder to store indices
+        subp.run( 'mkdir %s' % ( tempdir + 'indices/' ),
+                        shell = True,
+                        )
+
+        #for each variant create a temporary fa file
+        #then create an index within indices directory named by the variant
+        for var in var_to_bc_d.keys():
+
+                write_temp_fa( refseq, var, tempdir )
+                build_index( tempdir, var )
+
+    convert_fq_to_bam( fq_file1, fq_file2, sample_name , tempdir )
+
+    #import with check_sq as False since this bam is unaligned
+    sample_bam = pysam.AlignmentFile( tempdir + sample_name + '_unaligned.bam', 'rb', check_sq = False )
+
+    #fake header junk
+    header = { 'HD': {'VN': '1.5'},
+            'SQ': [{'LN': 6490, 'SN': chrom_name}] }
+
+    with pysam.AlignmentFile( tempdir + sample_name + '_wt.bam', 'wb', header = header ) as bam_out:
+
+        for bc, _reads in itertools.groupby( sample_bam, lambda _r: _r.get_tag( 'RX' ) ):
+
+            if bc not in wt_bcs:
+                #print( 'Barcode:', bc, 'not in the subassembly table')
+                continue
+
+            var = 'WT'
+
+            reads = list(_reads)
+
+            write_temp_fq( sample_bam, reads, tempdir, print_err )
+
+            align_reads( tempdir, var, tempdir + 'temp.fq' )
+
+            with pysam.AlignmentFile( tempdir + 'temp.bam', 'rb' ) as bc_bam:
+
+                for read in bc_bam:
+                    bam_out.write( read )
+
+    append_bcs( tempdir, fq_file2, bam_in = sample_name + '_wt.bam', bcbam_out = sample_name + '_bc_wt.bam' )
+
+    sample_bam.close()

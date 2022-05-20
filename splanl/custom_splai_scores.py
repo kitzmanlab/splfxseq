@@ -4,6 +4,8 @@ from keras.models import load_model
 from pkg_resources import resource_filename
 from spliceai.utils import one_hot_encode
 import pysam
+import splanl.post_processing as pp
+import matplotlib.pyplot as plt
 
 def rev_complement( seq ):
     """
@@ -25,6 +27,7 @@ def rev_complement( seq ):
 def get_gene_bds( annots_df,
                   chrom,
                   position,
+                  strand,
                   scored_context,
                   unscored_context = 5000,
                 ):
@@ -47,10 +50,11 @@ def get_gene_bds( annots_df,
 
     idx = ann_df.index[ ( ann_df.CHROM == chrom )
                       & ( ann_df.TX_START <= position )
-                      & ( ann_df.TX_END >= position ) ]
+                      & ( ann_df.TX_END >= position )
+                      & ( ann_df.STRAND == strand ) ]
 
-    assert len( idx ) == 1, \
-    'The chromosome and position is not matching exactly one gene!'
+    if len( idx ) != 1:
+        print( 'The chromosome and position is not matching exactly one gene at %s:%i!' % ( chrom, position ) )
 
     tx_startsd = position - ( ann_df.at[ idx[ 0 ], 'TX_START' ] + 1 )
 
@@ -110,6 +114,55 @@ def get_2exon_bds( annots_df,
 
     return exon_bds
 
+def get_allexon_dist( annots_df,
+                     chrom,
+                     position,
+                     scored_context,
+                     rev_strand = False,
+                ):
+    """
+    Gets the distance from the center variant to the nearest acceptor and donor.
+
+    Args: annots_df (pandas df) - columns: #NAME, CHROM, STRAND, TX_START, TX_END, EXON_START, EXON_END
+                                    EXON_START, EXON_END are both comma separated strings of all exon bds
+          chrom - (str) chromosome of center variant ( format should match your annots file (ie chr3 v 3) )
+          position - (int) position (genomic coords) of center variant
+          rev_strand - (bool) is the variant on the reverse strand?
+
+    Returns: 2exon_bds - (tuple of ints) ( distance to nearest acceptor, distance to nearest donor )
+                         SpliceAI default scoring would only return distance to nearest donor OR acceptor
+                         These values are used for masking..
+    """
+
+    ann_df = annots_df.copy()
+
+    idx = ann_df.index[ ( ann_df.CHROM == chrom )
+                      & ( ann_df.TX_START <= position )
+                      & ( ann_df.TX_END >= position ) ]
+
+    assert len( idx ) == 1, \
+    'The chromosome and position is not matching exactly one gene!'
+
+    #add 1 to adjust to 0-based coords
+    #compute distance to center variant
+    exon_startd = [ ( int( start ) + 1 ) - position
+                        for start in ann_df.at[ idx[ 0 ], 'EXON_START' ].split( ',' )
+                        if start != '' ]
+
+    starts = [ start for start in exon_startd if np.abs( start ) <= scored_context ]
+
+    #compute distance to center variant
+    exon_endd = [ int( end ) - position
+                      for end in ann_df.at[ idx[ 0 ], 'EXON_END' ].split( ',' )
+                      if end != '' ]
+
+    ends = [ end for end in exon_endd if np.abs( end ) <= scored_context ]
+
+    #if reverse strand, flip acceptors/donors
+    exon_bds = ( starts, ends ) if not rev_strand else ( ends, starts )
+
+    return exon_bds
+
 def create_input_seq( refseq,
                       center_var,
                       haplotype,
@@ -148,6 +201,10 @@ def create_input_seq( refseq,
                           Both sequences will be 2*( scored_context + unscored_context ) + 1 long if none of the variants are indels
     """
 
+    #print( center_var )
+
+    #print( haplotype )
+
     flanks = unscored_context + scored_context
 
     #subtracting one to adjust from 1 based to 0 based coords
@@ -170,7 +227,7 @@ def create_input_seq( refseq,
 
         assert refseq[ pos: pos + len( ref ) ].upper() == ref, 'Reference base within reference variants does not match given position'
 
-        refseq = refseq[ : pos ] + alt + varseq[ pos + len( ref ): ]
+        refseq = refseq[ : pos ] + alt + refseq[ pos + len( ref ): ]
 
     hap_seqpos = [ ( flanks + ( p - center_var[ 0 ] ), r, a ) for p,r,a in haplotype + [ center_var ] ]
 
@@ -181,7 +238,11 @@ def create_input_seq( refseq,
 
     for pos,ref,alt in hap_seqpos:
 
-        assert refseq[ pos: pos + len( ref ) ].upper() == ref, 'Reference base within haplotype does not match given position'
+        #print( pos, ref, alt )
+
+        #print( refseq[ pos: pos + len( ref ) ].upper() )
+
+        assert refseq[ pos: pos + len( ref ) ].upper() == ref, 'Reference base within haplotype does not match given position at %s:%s>%s' % ( center_var[ 0 ], ref, alt )
 
         varseq = varseq[ : pos ] + alt + varseq[ pos + len( ref ): ]
 
@@ -251,8 +312,13 @@ def splai_score_variants( annots_df,
                'DS_ALm': [],
                'DS_DGm': [],
                'DS_DLm': [],
+               'DP_AGm': [],
+               'DP_ALm': [],
+               'DP_DGm': [],
+               'DP_DLm': [],
                'DS_maxm': [],
                'DS_maxm_type': [],
+               'POS_maxm': [],
              }
 
     for idx, refvarseq in enumerate( refvarseqs ):
@@ -316,36 +382,48 @@ def splai_score_variants( annots_df,
         #finally, get the location of the event associated with the highest difference score
         outtbl[ 'POS_max' ].append( outtbl[ outtbl[ 'DS_max_type' ][ -1 ].replace( 'DS', 'DP' ) ][ -1 ] )
 
-        outtbl[ 'DS_AGm' ].append( outtbl[ 'DS_AG' ][ -1 ] )
-        outtbl[ 'DS_ALm' ].append( outtbl[ 'DS_AL' ][ -1 ] )
-        outtbl[ 'DS_DGm' ].append( outtbl[ 'DS_DG' ][ -1 ] )
-        outtbl[ 'DS_DLm' ].append( outtbl[ 'DS_DL' ][ -1 ] )
-
-        exon_bds = get_2exon_bds( annots_df,
+        #this section changed 28 July to find max positions after masking
+        exon_bds = get_allexon_dist( annots_df,
                                   chrom,
                                   center_var[ idx ][ 0 ],
+                                  scored_context,
                                   rev_strand = rev_strand,
                                   )
 
-        if outtbl[ 'DP_AL' ][ -1 ] != exon_bds[ 0 ]:
-            outtbl[ 'DS_ALm' ][ -1 ] = mask_value
+        acc_wt = np.zeros( len( diff_acc ) )
 
-        if outtbl[ 'DP_AG' ][ -1 ] == exon_bds[ 0 ]:
-            outtbl[ 'DS_AGm' ][ -1 ] = mask_value
+        for acc in exon_bds[ 0 ]:
+            acc_wt[ scored_context + acc ] = 1
 
-        if outtbl[ 'DP_DL' ][ -1 ] != exon_bds[ 1 ]:
-            outtbl[ 'DS_DLm' ][ -1 ] = mask_value
+        diff_acc_m = ( diff_acc > 0 ) * ( acc_wt ) * ( diff_acc ) \
+                     + ( diff_acc < 0 ) * ( 1 - acc_wt ) * ( diff_acc )
 
-        if outtbl[ 'DP_DG' ][ -1 ] == exon_bds[ 1 ]:
-            outtbl[ 'DS_DGm' ][ -1 ] = mask_value
+        don_wt = np.zeros( len( diff_acc ) )
 
-        score_keys = [ key + 'm' for key in score_keys ]
+        for don in exon_bds[ 1 ]:
+            don_wt[ scored_context + don ] = 1
 
-        #first get the maximum probability across the difference scores
+        diff_don_m = ( diff_don > 0 ) * ( don_wt ) * ( diff_don ) \
+                     + ( diff_don < 0 ) * ( 1 - don_wt ) * ( diff_don )
+
+        outtbl[ 'DS_AGm' ].append( np.abs( np.min( [ 0, np.min( diff_acc_m ) ] ) ) )
+        outtbl[ 'DS_ALm' ].append( np.max( [ 0, np.max( diff_acc_m ) ] ) )
+        outtbl[ 'DS_DGm' ].append( np.abs( np.min( [ 0, np.min( diff_don_m ) ] ) ) )
+        outtbl[ 'DS_DLm' ].append( np.max( [ 0, np.max( diff_don_m ) ] ) )
+
+        outtbl[ 'DP_AGm' ].append( np.argmin( diff_acc_m ) - scored_context )
+        outtbl[ 'DP_ALm' ].append( np.argmax( diff_acc_m ) - scored_context )
+        outtbl[ 'DP_DGm' ].append( np.argmin( diff_don_m ) - scored_context )
+        outtbl[ 'DP_DLm' ].append( np.argmax( diff_don_m ) - scored_context )
+
+        score_keys = [ 'DS_AGm', 'DS_ALm', 'DS_DGm', 'DS_DLm' ]
+
         outtbl[ 'DS_maxm' ].append( max( outtbl[ key ][ -1 ] for key in score_keys ) )
         #then get the type of event that represents the maximum probability
         outtbl[ 'DS_maxm_type' ].append( [ key for key in score_keys
-                                              if outtbl[ key ][ -1 ] == outtbl[ 'DS_maxm' ][ -1 ] ][ 0 ] )
+                                          if outtbl[ key ][ -1 ] == outtbl[ 'DS_maxm' ][ -1 ] ][ 0 ] )
+        #finally, get the location of the event associated with the highest difference score
+        outtbl[ 'POS_maxm' ].append( outtbl[ outtbl[ 'DS_maxm_type' ][ -1 ].replace( 'DS', 'DP' ) ][ -1 ] )
 
     outdf = pd.DataFrame( outtbl )
 
@@ -448,6 +526,8 @@ def splai_score_mult_variants_onegene( annots_df,
                                  and separate probabilities after masking
     """
 
+    strand = '-' if rev_strand else '+'
+
     flanks = scored_context + unscored_context
 
     if not haplotypes:
@@ -475,8 +555,10 @@ def splai_score_mult_variants_onegene( annots_df,
                                      get_gene_bds( annots_df,
                                                    chrom,
                                                    center[ 0 ],
+                                                   strand,
                                                    scored_context = scored_context,
-                                                   unscored_context = unscored_context ),
+                                                   unscored_context = unscored_context,
+                                                    ),
                                      scored_context,
                                      rev_strand = rev_strand,
                                      unscored_context = unscored_context )
@@ -650,12 +732,15 @@ def get_allexon_bds( annots_df,
 
     ann_df = annots_df.copy()
 
+    strand = '-' if rev_strand else '+'
+
     idx = ann_df.index[ ( ann_df.CHROM == chrom )
                       & ( ann_df.TX_START <= position )
-                      & ( ann_df.TX_END >= position ) ]
+                      & ( ann_df.TX_END >= position )
+                      & ( ann_df.STRAND >= strand ) ]
 
-    assert len( idx ) == 1, \
-    'The chromosome and position is not matching exactly one gene!'
+    if len( idx ) != 1:
+        print( 'The chromosome and position is not matching exactly one gene at %s:%i!' % ( chrom, position ) )
 
     exon_starts = ann_df.at[ idx[ 0 ], 'EXON_START' ].split( ',' )
 
@@ -683,7 +768,9 @@ def create_rel_jn_use_tbl( pext_tbx,
                            pext_header,
                            chrom,
                            exon_bds,
-                           col_name = 'mean_proportion'
+                           col_name = 'mean_proportion',
+                           extend_search = 100,
+                           std_tol = 1e-10,
                         ):
 
     """
@@ -713,9 +800,49 @@ def create_rel_jn_use_tbl( pext_tbx,
         outtbl[ 'chrom' ].append( chrom )
         outtbl[ 'jn' ].append( pos )
 
-        for row in pext_tbx.fetch( chrom, pos - 1, pos ):
+        pext_scores = [ float( row.split( '\t' )[ col_idx ] ) for row in pext_tbx.fetch( chrom, pos - 1, pos ) ]
 
-            outtbl[ 'pext' ].append( float( row.split( '\t' )[ col_idx ] ) )
+        #checks if the pext entry is empty
+        if not pext_scores or np.isnan( pext_scores ).all():
+
+            print( 'Pext table is empty at position %i' % pos )
+
+            values = np.array( [ float( row.split( '\t' )[ col_idx ] )
+                                 for row in pext_tbx.fetch( chrom, pos - 1 - extend_search, pos + extend_search ) ] )
+
+            #there aren't any pext scores in the region - print a warning and use default masking values
+            if np.isnan( values ).all():
+
+                print( 'Pext table is empty at position %i after %i bp extension' % ( pos, extend_search ) )
+                outtbl[ 'pext' ].append( 1 )
+                #skip ahead - no need to check the standard deviation of missing values
+                continue
+
+            else:
+
+                outtbl[ 'pext' ].append( np.nanmean( values ) )
+
+            #checks if there is more than one mean value within range
+            if np.std( values ) > std_tol:
+
+                print( 'Standard deviation is non-zero for pext table extension at position %i' % pos )
+
+        #checks if there are duplicate pext scores
+        elif len( pext_scores ) > 1:
+
+            print( 'Pext table has duplicate entries at position %i' % pos )
+
+            outtbl[ 'pext' ].append( np.nanmean( pext_scores ) )
+
+            #checks if there is more than one mean value across the duplicated rows
+            if np.std( pext_scores ) > std_tol:
+
+                print( 'Standard deviation is non-zero for duplicate pext scores at position %i' % pos )
+
+        #there's only one pext score - just append it
+        else:
+
+            outtbl[ 'pext' ].append( pext_scores[ 0 ] )
 
     outdf = pd.DataFrame( outtbl )
 
@@ -819,7 +946,13 @@ def jnuse_score_variants(  models,
 
     for idx, refvarseq in enumerate( refvarseqs ):
 
+        #print( refvarseq )
+
         refseq, varseq = refvarseq
+
+        #print( center_var[ idx ] )
+        #print( len( refseq ) )
+        #print( len( varseq ) )
 
         x_ref = one_hot_encode( refseq )[ None, : ]
         y_ref = np.mean( [ models[ m ].predict( x_ref ) for m in range( 5 ) ], axis=0 )
@@ -860,7 +993,7 @@ def jnuse_score_variants(  models,
 
         for acc_jn in acc_jn_use.keys():
 
-            acc_wt[ acc_jn ] = acc_jn_use[ acc_jn ]
+            acc_wt[ scored_context + acc_jn ] = acc_jn_use[ acc_jn ]
 
         diff_acc = ( diff_acc > 0 ) * ( acc_wt ) * ( diff_acc ) \
                      + ( diff_acc < 0 ) * ( 1 - acc_wt ) * ( diff_acc )
@@ -869,7 +1002,7 @@ def jnuse_score_variants(  models,
 
         for don_jn in don_jn_use.keys():
 
-            don_wt[ don_jn ] = don_jn_use[ don_jn ]
+            don_wt[ scored_context + don_jn ] = don_jn_use[ don_jn ]
 
         diff_don = ( diff_don > 0 ) * ( don_wt ) * ( diff_don ) \
                      + ( diff_don < 0 ) * ( 1 - don_wt ) * ( diff_don )
@@ -892,6 +1025,7 @@ def jnuse_score_variants(  models,
 
         score_keys = [ 'DS_AGrw', 'DS_ALrw', 'DS_DGrw', 'DS_DLrw' ]
 
+        #print( outtbl )
         #first get the maximum probability across the difference scores
         outtbl[ 'DS_maxrw' ].append( max( outtbl[ key ][ -1 ] for key in score_keys ) )
         #then get the type of event that represents the maximum probability
@@ -918,7 +1052,9 @@ def custom_score_mult_variants_oneexon( annots_df,
                                         scored_context_pad = 10,
                                         unscored_context = 5000,
                                         rev_strand = False,
-                                        pext_col = 'mean_proportion' ):
+                                        pext_col = 'mean_proportion',
+                                        extend_pext_search = 200,
+                                        pext_std_tol = 1e-10, ):
     """
     Wrapper function to compute junction use weighted probabilities across one exon.
 
@@ -957,9 +1093,924 @@ def custom_score_mult_variants_oneexon( annots_df,
                                  and separate probabilities after masking
     """
 
+    strand = '-' if rev_strand else '+'
+
     exon_len = exon_cds[ 1 ] - exon_cds[ 0 ]
 
     scored_context = exon_len + scored_context_pad
+
+    flanks = scored_context + unscored_context
+
+    if not haplotypes:
+
+        haplotypes = [ [] for var in center_var ]
+
+    if not ref_vars:
+
+        ref_vars = [ [] for var in center_var ]
+
+    else:
+
+        for ref_var in ref_vars:
+
+            for p,r,a in ref_var:
+
+                ref_name += '+' + str( p ) + ':' + r + '>' + a
+
+    assert all( len(i) == len( center_var ) for i in [ haplotypes, ref_vars ] ), \
+    'Haplotypes and ref_vars input must be either missing or the same length as the center_var list'
+
+    #creates a giant list of ( reference seq, variant seq ) tuples
+    refvarseqs = [ create_input_seq( refseq,
+                                     center,
+                                     hapref[ 0 ],
+                                     hapref[ 1 ],
+                                     get_gene_bds( annots_df,
+                                                   chrom,
+                                                   center[ 0 ],
+                                                   strand,
+                                                   scored_context,
+                                                   unscored_context = unscored_context ),
+                                     scored_context,
+                                     rev_strand = rev_strand,
+                                     unscored_context = unscored_context )
+                  for center,hapref in zip( center_var, zip( haplotypes, ref_vars ) ) ]
+
+    #creates a giant list of lists of relative acceptor/donor use
+    rel_jn_use = [ get_relative_jn_use( create_rel_jn_use_tbl( pext_tbx,
+                                                               pext_header,
+                                                               chrom,
+                                                               get_allexon_bds( annots_df,
+                                                                                chrom,
+                                                                                center[ 0 ],
+                                                                                scored_context,
+                                                                                rev_strand = rev_strand
+                                                                                ),
+                                                               col_name = pext_col,
+                                                               extend_search = extend_pext_search,
+                                                               std_tol = pext_std_tol, ),
+                                        chrom,
+                                        center[ 0 ],
+                                        get_allexon_bds( annots_df,
+                                                         chrom,
+                                                         center[ 0 ],
+                                                         scored_context,
+                                                         rev_strand = rev_strand
+                                                        ), )
+                  for center in center_var ]
+
+    #this will fail if any of the other variants are indels...
+    #maybe I should add some functionality to the score_variant fn to handle this...
+    outdf = jnuse_score_variants(  models,
+                                    refvarseqs,
+                                    ref_name,
+                                    rel_jn_use,
+                                    chrom,
+                                    center_var,
+                                    haplotypes,
+                                    scored_context,
+                                    rev_strand = rev_strand,
+                                  )
+
+    return outdf
+
+def custom_score_indiv_variants_multexon( tbl_byvar,
+                                          annots_df,
+                                          pext_tbx,
+                                          pext_header,
+                                          models,
+                                          refseq_files,
+                                          ref_name,
+                                          scored_context_pad = 10,
+                                          unscored_context = 5000,
+                                          rev_strand = False,
+                                          pext_col = 'mean_proportion',
+                                          extend_pext_search = 100,
+                                          pext_std_tol = 1e-10, ):
+
+    tbv = tbl_byvar.sort_values( by = [ 'chrom', 'pos' ] ).copy()
+
+    outtbls = []
+
+    for chrom in tbv.chrom.unique().tolist():
+
+        print( chrom )
+
+        chr_seq = pp.get_refseq( refseq_files + chrom + '.fa' )[ 0 ]
+
+        tbv_chrom = tbv.loc[ tbv.chrom == chrom ].copy()
+        tbv_pos = tbv_chrom.loc[ tbv.strand == '+' ]
+        tbv_neg = tbv_chrom.loc[ tbv.strand == '-' ]
+
+        pos_snvs = [ ( pos, refalt[ 0 ], refalt[ 1 ] )
+                     for pos, refalt in zip( tbv_pos.pos, zip( tbv_pos.ref, tbv_pos.alt ) ) ]
+
+        if pos_snvs:
+
+            pos_df = pd.concat( [ custom_score_mult_variants_oneexon( annots_df,
+                                                                      pext_tbx,
+                                                                      pext_header,
+                                                                      models,
+                                                                      chr_seq,
+                                                                      'HG19',
+                                                                      ex_cd,
+                                                                      chrom,
+                                                                      [ pos_snvs[ i ] ],
+                                                                      scored_context_pad = scored_context_pad,
+                                                                      unscored_context = unscored_context,
+                                                                      pext_col = pext_col,
+                                                                      extend_pext_search = extend_pext_search,
+                                                                      pext_std_tol = pext_std_tol )
+                                  for i, ex_cd in enumerate( tbv_pos.exon_cds.tolist() ) ],
+                              ignore_index = True )
+
+        neg_snvs = [ ( pos, refalt[ 0 ], refalt[ 1 ] )
+                     for pos, refalt in zip( tbv_neg.pos, zip( tbv_neg.ref, tbv_neg.alt ) ) ]
+
+        if neg_snvs:
+
+            neg_df = pd.concat( [ custom_score_mult_variants_oneexon( annots_df,
+                                                                      pext_tbx,
+                                                                      pext_header,
+                                                                      models,
+                                                                      chr_seq,
+                                                                      'HG19',
+                                                                      ex_cd,
+                                                                      chrom,
+                                                                      [ neg_snvs[ i ] ],
+                                                                      rev_strand = True,
+                                                                      scored_context_pad = scored_context_pad,
+                                                                      unscored_context = unscored_context,
+                                                                      pext_col = pext_col,
+                                                                      extend_pext_search = extend_pext_search,
+                                                                      pext_std_tol = pext_std_tol )
+                                    for i, ex_cd in enumerate( tbv_neg.exon_cds.tolist() ) ],
+                                ignore_index = True )
+
+        if pos_snvs and neg_snvs:
+
+            outtbls.append( pd.concat( [ pos_df, neg_df ],
+                                         ignore_index = True ) )
+
+        elif pos_snvs:
+
+            outtbls.append( pos_df )
+
+        else:
+
+            outtbls.append( neg_df )
+
+    outdf = pd.concat( outtbls,
+                       ignore_index = True )
+
+    return outdf
+
+def nearest_exon_cds_bed( tbl_byvar,
+                          var_bed,
+                          exon_bed ):
+
+    tbv = tbl_byvar.copy()
+
+    cl = var_bed.closest( exon_bed, s = True, t = 'first', d = True )
+
+    closest = pd.read_table( cl.fn,
+                             names = [ 'chrom', 'var_start', 'pos', 'var_name', 'var_score', 'strand',
+                                       'ann_chrom', 'ann_start', 'ann_end', 'ann_name', 'ann_score', 'ann_strand',
+                                       'dist' ] )
+
+    closest = closest[ [ 'chrom', 'pos', 'strand', 'ann_chrom', 'ann_start', 'ann_end', 'ann_name', 'dist' ] ]
+
+    tbv = tbv.set_index( [ 'chrom', 'pos', 'strand' ] ).merge( closest.set_index( [ 'chrom', 'pos', 'strand' ] ),
+                                                               left_index = True,
+                                                               right_index = True ).reset_index()
+
+    return tbv
+
+def create_exon_table( exon_dict,
+                       annot,
+                       gene_name,
+                       UTR5_len = 0,
+                       rev_strand = False ):
+
+    outtbl = { 'num': [],
+               'len': [],
+               'gdna_start': [],
+               'gdna_end': [],
+               'seq': [] }
+
+    for exon, seq in exon_dict.items():
+
+        outtbl[ 'num' ].append( exon )
+        outtbl[ 'len' ].append( len( seq ) )
+        outtbl[ 'gdna_start' ].append( int( annot.loc[ annot[ '#NAME' ] == gene_name ].EXON_START.str.split( ',' ).tolist()[ 0 ][ exon - 1 ] )
+                                       if not rev_strand else
+                                       int( annot.loc[ annot[ '#NAME' ] == gene_name ].EXON_START.str.split( ',' ).tolist()[ 0 ][ -exon ] ) )
+        outtbl[ 'gdna_end' ].append( int( annot.loc[ annot[ '#NAME' ] == gene_name ].EXON_END.str.split( ',' ).tolist()[ 0 ][ exon - 1 ] )
+                                     if not rev_strand else
+                                     int( annot.loc[ annot[ '#NAME' ] == gene_name ].EXON_END.str.split( ',' ).tolist()[ 0 ][ -exon ] ) )
+        outtbl[ 'seq' ].append( seq if not rev_strand else rev_complement( seq ))
+
+    if sum( outtbl[ 'len' ] ) % 3 != 0:
+        print( 'Your exonic sequence is not divisible by 3 - did you make a mistake?' )
+
+    outdf = pd.DataFrame( outtbl )
+
+    outdf.sort_values( by = 'num' )
+
+    outdf[ 'ccds_start' ] = outdf.len.cumsum() - outdf.len
+
+    if not rev_strand:
+
+        outdf.at[ 0, 'gdna_start' ] += UTR5_len
+
+    else:
+
+        outdf.at[ 0, 'gdna_end' ] -= UTR5_len
+
+    return outdf
+
+def amino_acid_subs( exon_tbl,
+                     amino_seq,
+                     dna_to_amino,
+                     amino_to_dna,
+                     scored_context,
+                     unscored_context = 5000,
+                     rev_strand = False ):
+
+    exons = exon_tbl.copy()
+
+    flanks = scored_context + unscored_context
+
+    ccds_seq = ''.join( exons.seq.tolist() )
+
+    #account for 0 based numbering
+    gstart = exon_tbl.gdna_start.to_numpy() + 1 if not rev_strand else exon_tbl.gdna_end.to_numpy()
+    cstart = exon_tbl.ccds_start.to_numpy()
+
+    center_vars = []
+    haplotypes = []
+    ref_aa = []
+    alt_aa = []
+    aa_num = []
+
+    for i in range( 0, len( ccds_seq ), 3):
+
+        codon = ccds_seq[ i: i + 3 ].upper()
+
+        assert amino_seq[ int( i / 3 ) ] == dna_to_amino[ codon ], 'Your amino acid sequence does not match the coding sequence'
+
+        for res, sub_codons in amino_to_dna.items():
+
+            for sub_cod in sub_codons:
+
+                #if the current codon matches the substitution codon, move on
+                if sub_cod == codon:
+                    continue
+
+                #first lets locate the first mismatch and make that the center var
+                for j in range( 3 ):
+
+                    if sub_cod[ j ] != codon[ j ]:
+
+                        #gets current position starting from 0
+                        cur_ccds = i + j
+
+                        #figure out which exon you are at
+                        #then take the gdna positon of the start
+                        #and add however many bases you are past that
+                        gpos = gstart[ cstart <= cur_ccds ].max() + ( cur_ccds - cstart[ cstart <= cur_ccds ].max() ) if not rev_strand \
+                               else gstart[ cstart <= cur_ccds ].min() - ( cur_ccds - cstart[ cstart <= cur_ccds ].max() )
+
+                        center_vars.append( ( gpos, codon[ j ], sub_cod[ j ] )
+                                            if not rev_strand else
+                                            ( gpos, rev_complement( codon[ j ] ), rev_complement( sub_cod[ j ] ) ) )
+
+                        ref_aa.append( dna_to_amino[ codon ] )
+                        alt_aa.append( dna_to_amino[ sub_cod ] )
+                        aa_num.append( int( i / 3 ) + 1 )
+
+                        #we only want one center variant so lets exit the loop
+                        break
+
+                haplotypes.append( [] )
+
+                #if the first mismatch was at the final base, ext
+                if j == 2:
+
+                    continue
+
+                for k in range( j + 1, 3 ):
+
+                    if sub_cod[ k ] != codon[ k ]:
+
+                        #gets current position starting from 0
+                        cur_ccds = i + k
+
+                        gpos = gstart[ cstart <= cur_ccds ].max() + ( cur_ccds - cstart[ cstart <= cur_ccds ].max() ) if not rev_strand \
+                               else gstart[ cstart <= cur_ccds ].min() - ( cur_ccds - cstart[ cstart <= cur_ccds ].max() )
+
+                        #print( gpos )
+
+                        #we can't have variants outside the scored sequence
+                        #this is for rare, out of frame aminos spanning two exons
+                        if gpos < ( center_vars[ -1 ][ 0 ] + flanks ):
+
+                            #for this one go all the way through k
+                            haplotypes[ -1 ].append( ( gpos, codon[ k ], sub_cod[ k ] )
+                                                     if not rev_strand else
+                                                     ( gpos, rev_complement( codon[ k ] ), rev_complement( sub_cod[ k ] ) ) )
+
+                        else:
+
+                            haplotypes[ -1 ].append( 'skip' )
+
+    return center_vars, haplotypes, ref_aa, alt_aa, aa_num
+
+
+def compute_all_prob( models,
+                      refvarseq,
+                      ss_jn_use,
+                      center_var,
+                      haplotype,
+                      scored_context,
+                      rev_strand = False,
+                 ):
+
+    outd = {}
+
+    refseq, varseq = refvarseq
+
+    x_ref = one_hot_encode( refseq )[ None, : ]
+    y_ref = np.mean( [ models[ m ].predict( x_ref ) for m in range( 5 ) ], axis=0 )
+
+    x_var = one_hot_encode( varseq )[ None, : ]
+    y_var = np.mean( [ models[ m ].predict( x_var ) for m in range( 5 ) ], axis=0 )
+
+    #flips the results so the positions are relative to the forward strand
+    if rev_strand:
+            y_ref = y_ref[:, ::-1]
+            y_var = y_var[:, ::-1]
+
+    outd[ 'ref_acc' ] = y_ref[0, :, 1]
+    outd[ 'ref_don' ] = y_ref[0, :, 2]
+    outd[ 'var_acc' ] = y_var[0, :, 1]
+    outd[ 'var_don' ] = y_var[0, :, 2]
+
+    #transforms variants into sequence position coords
+    allvars_seqpos = [ ( scored_context + ( p - center_var[ 0 ] ), r, a )
+                           for p,r,a in [ center_var ] + haplotype ]
+
+    outd[ 'var_acc' ], outd[ 'var_don' ] = adjust_for_indels( outd[ 'var_acc' ],
+                                                                  outd[ 'var_don' ],
+                                                                  allvars_seqpos,
+                                                                )
+
+    outd[ 'diff_acc' ] = outd[ 'ref_acc' ] - outd[ 'var_acc' ]
+    outd[ 'diff_don' ] = outd[ 'ref_don' ] - outd[ 'var_don' ]
+
+    acc_jn_use, don_jn_use = ss_jn_use
+
+    acc_wtm = np.zeros( len( outd[ 'diff_acc' ] ) )
+    acc_wtrw = np.zeros( len( outd[ 'diff_acc' ] ) )
+
+    for acc_jn in acc_jn_use.keys():
+
+        seq_jn = scored_context + acc_jn
+
+        acc_wtm[ seq_jn ] = 1
+        acc_wtrw[ seq_jn ] = acc_jn_use[ acc_jn ]
+
+    outd[ 'diff_accm' ] = ( outd[ 'diff_acc' ] > 0 ) * ( acc_wtm ) * ( outd[ 'diff_acc' ] ) \
+                          + ( outd[ 'diff_acc' ] < 0 ) * ( 1 - acc_wtm ) * ( outd[ 'diff_acc' ] )
+
+    outd[ 'diff_accrw' ] = ( outd[ 'diff_acc' ] > 0 ) * ( acc_wtrw ) * ( outd[ 'diff_acc' ] ) \
+                          + ( outd[ 'diff_acc' ] < 0 ) * ( 1 - acc_wtrw ) * ( outd[ 'diff_acc' ] )
+
+    don_wtm = np.zeros( len( outd[ 'diff_acc' ] ) )
+    don_wtrw = np.zeros( len( outd[ 'diff_acc' ] ) )
+
+    for don_jn in don_jn_use.keys():
+
+        seq_jn = scored_context + don_jn
+
+        don_wtm[ seq_jn ] = 1
+        don_wtrw[ seq_jn ] = don_jn_use[ don_jn ]
+
+    outd[ 'diff_donm' ] = ( outd[ 'diff_don' ] > 0 ) * ( don_wtm ) * ( outd[ 'diff_don' ] ) \
+                          + ( outd[ 'diff_don' ] < 0 ) * ( 1 - don_wtm ) * ( outd[ 'diff_don' ] )
+
+    outd[ 'diff_donrw' ] = ( outd[ 'diff_don' ] > 0 ) * ( don_wtrw ) * ( outd[ 'diff_don' ] ) \
+                          + ( outd[ 'diff_don' ] < 0 ) * ( 1 - don_wtrw ) * ( outd[ 'diff_don' ] )
+
+    return outd
+
+def plot_prob_by_pos( probs_in,
+                      center_pos,
+                      key_names,
+                      colors,
+                      rev_strand = False,
+                      fig_size = ( 15, 4 ),
+                      title = '',
+                      x_label = 'Position',
+                      y_label = None,
+                      y_lim = None
+                      ):
+
+    probs = probs_in.copy()
+
+    plt.figure( figsize = fig_size )
+
+    scored_context = int( len( probs[ key_names[ 0 ] ] ) / 2 )
+
+    pos_array = list( np.arange( center_pos - scored_context,
+                           center_pos + scored_context + 1 ) )
+
+    for line, col in zip( key_names, colors ):
+
+        plt.scatter( pos_array,
+                  probs[ line ],
+                  color = col )
+
+    if rev_strand:
+        plt.gca().invert_xaxis()
+
+    plt.xticks( fontsize = 18, rotation = 'vertical' )
+
+    plt.xlabel( x_label, fontsize = 18 )
+
+    plt.yticks( fontsize = 18 )
+
+    if y_label:
+        plt.ylabel( y_label, fontsize = 18 )
+
+    if y_lim:
+        plt.ylim( y_lim )
+
+    plt.title( title, fontsize = 16 )
+
+    plt.show()
+
+def plot_allprobs_by_pos( annots_df,
+                          pext_tbx,
+                          pext_header,
+                          models,
+                          refseq,
+                          exon_cds,
+                          chrom,
+                          center_var,
+                          haplotype = [],
+                          ref_var = [],
+                          scored_context_pad = 10,
+                          unscored_context = 5000,
+                          rev_strand = False,
+                          fig_size = ( 15, 4 ),
+                          sharey = True,
+                          pext_col = 'mean_proportion',
+                          extend_pext_search = 200,
+                          pext_std_tol = 1e-10, ):
+
+    exon_len = exon_cds[ 1 ] - exon_cds[ 0 ]
+
+    strand = '-' if rev_strand else '+'
+
+    scored_context = exon_len + scored_context_pad
+
+    flanks = scored_context + unscored_context
+
+    #creates a giant list of ( reference seq, variant seq ) tuples
+    refvarseq = create_input_seq( refseq,
+                                  center_var,
+                                  haplotype,
+                                  ref_var,
+                                  get_gene_bds( annots_df,
+                                                chrom,
+                                                center_var[ 0 ],
+                                                strand,
+                                                scored_context,
+                                                unscored_context = unscored_context ),
+                                  scored_context,
+                                  rev_strand = rev_strand,
+                                  unscored_context = unscored_context )
+
+    #creates a giant list of lists of relative acceptor/donor use
+    rel_jn_use = get_relative_jn_use( create_rel_jn_use_tbl( pext_tbx,
+                                                                 pext_header,
+                                                                 chrom,
+                                                                 get_allexon_bds( annots_df,
+                                                                                  chrom,
+                                                                                  center_var[ 0 ],
+                                                                                  scored_context,
+                                                                                  rev_strand = rev_strand
+                                                                                ),
+                                                              col_name = pext_col,
+                                                               extend_search = extend_pext_search,
+                                                               std_tol = pext_std_tol ),
+                                          chrom,
+                                          center_var[ 0 ],
+                                          get_allexon_bds( annots_df,
+                                                               chrom,
+                                                               center_var[ 0 ],
+                                                               scored_context,
+                                                               rev_strand = rev_strand
+                                                         ) )
+
+    plotd = compute_all_prob( models,
+                              refvarseq,
+                              rel_jn_use,
+                              center_var,
+                              haplotype,
+                              scored_context,
+                              rev_strand = rev_strand,
+                            )
+
+    plot_prob_by_pos( plotd,
+                      center_var[ 0 ],
+                      [ 'ref_acc', 'var_acc' ],
+                      [ 'black', 'magenta' ],
+                      rev_strand = rev_strand,
+                      fig_size = fig_size,
+                      title = 'Acceptor probabilities for WT (black) and MUT (pink)',
+                      x_label = 'Position',
+                      y_label = 'Acceptor probabilities',
+                      y_lim = ( 0, 1 ) if sharey else None
+                      )
+
+    plot_prob_by_pos( plotd,
+                      center_var[ 0 ],
+                      [ 'ref_don', 'var_don' ],
+                      [ 'black', 'magenta' ],
+                      rev_strand = rev_strand,
+                      fig_size = fig_size,
+                      title = 'Donor probabilities for WT (black) and MUT (pink)',
+                      x_label = 'Position',
+                      y_label = 'Donor probabilities',
+                      y_lim = ( 0, 1 ) if sharey else None
+                      )
+
+    plot_prob_by_pos( plotd,
+                      center_var[ 0 ],
+                      [ 'diff_acc', 'diff_accm', 'diff_accrw', ],
+                      [ 'black', 'red', 'orange' ],
+                      rev_strand = rev_strand,
+                      fig_size = fig_size,
+                      title = 'Acceptor difference scores:\nRAW (black), MASKED (red), and REWEIGHTED (orange)',
+                      x_label = 'Position',
+                      y_label = 'Acceptor difference scores\n( REF - MUT )',
+                      y_lim = ( -1, 1 ) if sharey else None
+                    )
+
+    plot_prob_by_pos( plotd,
+                      center_var[ 0 ],
+                      [ 'diff_don', 'diff_donm', 'diff_donrw',  ],
+                      [ 'black', 'red', 'orange' ],
+                      rev_strand = rev_strand,
+                      fig_size = fig_size,
+                      title = 'Donor difference scores:\nRAW (black), MASKED (red), and REWEIGHTED (orange)',
+                      x_label = 'Position',
+                      y_label = 'Donor difference scores\n( REF - MUT )',
+                      y_lim = ( -1, 1 ) if sharey else None
+                    )
+
+def compare_annots( ucsc_annot,
+                    ucsc_gene,
+                    gencode_annot,
+                    gencode_gene,
+                    gencode_transcript ):
+
+    ucsc = ucsc_annot.loc[ ucsc_annot[ '#NAME' ] == ucsc_gene ].copy()
+
+    gencode = gencode_annot.copy()
+
+    gencode[ 'gene_id' ] = [ a.split( ' ' )[ 1 ].replace( '"', '' )
+                             for att in gencode.attribute
+                             for a in att.split( '; ' )
+                             if a.split( ' ' )[ 0 ] == 'gene_id' ]
+
+    gencode = gencode.loc[ gencode.gene_id == gencode_gene ].copy()
+
+    gencode.loc[ gencode.feature != 'gene', 'transcript_id' ] = [ a.split( ' ' )[ 1 ].replace( '"', '' )
+                                                                  for att in gencode.attribute
+                                                                  for a in att.split( '; ' )
+                                                                  if a.split( ' ' )[ 0 ] == 'transcript_id' ]
+
+    gencode = gencode.loc[ gencode.transcript_id == gencode_transcript ].copy()
+
+    gencode[ 'start' ] -= 1
+
+    if int( gencode.loc[ gencode.feature == 'transcript' ].start ) == int( ucsc.TX_START ) and \
+       int( gencode.loc[ gencode.feature == 'transcript' ].end ) == int( ucsc.TX_END ):
+
+        print( 'Transcription sites match' )
+
+    else:
+
+        print( 'Mismatched transcription sites for gencode transcript %s' % gencode_transcript )
+        print( 'UCSC: %i to %i' % ( int( ucsc.TX_START ), int( ucsc.TX_END ) ) )
+        print( 'GENCODE: %i to %i' % ( int( gencode.loc[ gencode.feature == 'transcript' ].start ),
+                                    int( gencode.loc[ gencode.feature == 'transcript' ].end ) ) )
+
+    gen_ex_start = gencode.loc[ gencode.feature == 'exon' ].start.tolist()
+    gen_ex_end = gencode.loc[ gencode.feature == 'exon' ].end.tolist()
+
+    ucsc_ex_start = [ int( s ) for s in ucsc.EXON_START.tolist()[ 0 ].split( ',' ) ]
+    ucsc_ex_end = [ int( s ) for s in ucsc.EXON_END.tolist()[ 0 ].split( ',' ) ]
+
+    #print( set( gen_ex_start ).difference( set( ucsc_ex_start ) ) )
+
+    if set( gen_ex_start ).difference( set( ucsc_ex_start ) ) or \
+       set( ucsc_ex_start ).difference( set( gen_ex_start ) ):
+
+        print( 'Mismatched exon start sites' )
+        print( 'In UCSC but not GENCODE', set( ucsc_ex_start ).difference( set( gen_ex_start ) ) )
+        print( 'In GENCODE but not UCSC', set( gen_ex_start ).difference( set( ucsc_ex_start ) ) )
+
+    else:
+
+        print( 'Exon starts match' )
+
+    if set( gen_ex_end ).difference( set( ucsc_ex_end ) ) or \
+       set( ucsc_ex_end ).difference( set( gen_ex_end ) ):
+
+        print( 'Mismatched exon end sites' )
+        print( 'In UCSC but not GENCODE', set( ucsc_ex_end ).difference( set( gen_ex_end ) ) )
+        print( 'In GENCODE but not UCSC', set( gen_ex_end ).difference( set( ucsc_ex_end ) ) )
+
+    else:
+
+        print( 'Exon ends match' )
+
+    return ucsc, gencode
+
+def gtf_to_splai_annot( gtf_file ):
+
+    gtf = gtf_file.copy()
+
+    outtbl = { '#NAME': [],
+               'CHROM': [],
+               'STRAND': [],
+               'TX_START': [],
+               'TX_END': [],
+               'EXON_START': [],
+               'EXON_END': [],
+               'TRANSCRIPT_ID': [] }
+
+    gtf[ 'gene_id' ] = [ a.split( ' ' )[ 1 ].replace( '"', '' )
+                         for att in gtf.attribute
+                         for a in att.split( '; ' )
+                         if a.split( ' ' )[ 0 ] == 'gene_id' ]
+
+    gtf.loc[ gtf.feature != 'gene', 'transcript_id' ] = [ a.split( ' ' )[ 1 ].replace( '"', '' )
+                                                              for att in gtf.attribute
+                                                              for a in att.split( '; ' )
+                                                              if a.split( ' ' )[ 0 ] == 'transcript_id' ]
+
+    gtf[ 'transcript_id' ] = gtf[ 'transcript_id' ].fillna( '' )
+
+    gtf[ 'start' ] -= 1
+
+    for tran in list( set( gtf.transcript_id ) ):
+
+        #gene rows are missing the transcript id - we want to skip these obviously
+        if not tran:
+            continue
+
+        trans = gtf.loc[ gtf.transcript_id == tran ].copy()
+
+        assert len( trans.gene_id.unique() ) == 1, 'Transcript %s is mapping to more than one gene' % tran
+
+        outtbl[ '#NAME' ].append( trans.gene_id.unique()[ 0 ] )
+        #this is also removing the 'chr' at the begginning of each chromosome
+        outtbl[ 'CHROM' ].append( trans.chrom.unique()[ 0 ][ 3: ] )
+        outtbl[ 'STRAND' ].append( trans.strand.unique()[ 0 ] )
+
+        tx_tbl = trans.loc[ ( trans.feature == 'transcript' ) ].copy()
+        outtbl[ 'TX_START' ].append( int( tx_tbl.start ) )
+        outtbl[ 'TX_END' ].append( int( tx_tbl.end ) )
+
+        ex_tbl = trans.loc[ trans.feature == 'exon' ].copy()
+        outtbl[ 'EXON_START' ].append( ','.join( ex_tbl.start.apply( str ).tolist() ) )
+        outtbl[ 'EXON_END' ].append( ','.join( ex_tbl.end.apply( str ).tolist() ) )
+
+        outtbl[ 'TRANSCRIPT_ID' ].append( tran )
+
+    outdf = pd.DataFrame( outtbl )
+
+    return outdf
+
+def gene_specific_gtf( gtf_file,
+                       gene_name,
+                       transcript_name ):
+
+    gtf = gtf_file.copy()
+
+    gtf[ 'gene_id' ] = [ a.split( ' ' )[ 1 ].replace( '"', '' )
+                         for att in gtf.attribute
+                         for a in att.split( '; ' )
+                         if a.split( ' ' )[ 0 ] == 'gene_id' ]
+
+    gene = gtf.loc[ gtf.gene_id.str.startswith( gene_name ) ].copy()
+
+    gene.loc[ gtf.feature != 'gene', 'transcript_id' ] = [ a.split( ' ' )[ 1 ].replace( '"', '' )
+                                                              for att in gene.attribute
+                                                              for a in att.split( '; ' )
+                                                              if a.split( ' ' )[ 0 ] == 'transcript_id' ]
+
+    assert len( gene.transcript_id.dropna().unique().tolist() ) == 1, \
+    'Gene %s has more than one transcript in the table' % ( gene_name )
+
+    assert gene.transcript_id.dropna().unique().tolist()[ 0 ].startswith( transcript_name ), \
+    'Transcript %s not in table - only transcript %s' % ( transcript_name, gene.transcript_id.dropna().unique().tolist()[ 0 ] )
+
+    gene = gene.drop( columns = [ 'gene_id', 'transcript_id' ] )
+
+    return gene
+
+def splai_score_wt_onegene( annots_df,
+                            models,
+                            refseq,
+                            ref_name,
+                            chrom,
+                            pos_l,
+                            scored_context = 50,
+                            unscored_context = 5000,
+                            rev_strand = False ):
+
+    strand = '-' if rev_strand else '+'
+
+    flanks = scored_context + unscored_context
+
+    centers = [ ( p, refseq[ p - 1 ].upper(), 'X' ) for p in pos_l ]
+
+    #creates a giant list of ( reference seq, variant seq ) tuples
+    refvarseqs = [ create_input_seq( refseq,
+                                         center,
+                                         [],
+                                         [],
+                                         get_gene_bds( annots_df,
+                                                           chrom,
+                                                           center[ 0 ],
+                                                           strand,
+                                                           scored_context = scored_context,
+                                                           unscored_context = unscored_context,
+                                                        ),
+                                         scored_context,
+                                         rev_strand = rev_strand,
+                                         unscored_context = unscored_context )
+                    for center in centers ]
+
+    #this will fail if any of the other variants are indels...
+    #maybe I should add some functionality to the splai_score_variant fn to handle this...
+    outdf = splai_score_wt( annots_df,
+                                  models,
+                                  refvarseqs,
+                                  ref_name,
+                                  chrom,
+                                  centers,
+                                  scored_context = scored_context,
+                                  rev_strand = rev_strand,
+                          )
+
+    return outdf
+
+def splai_score_wt( annots_df,
+                    models,
+                    refvarseqs,
+                    ref_name,
+                    chrom,
+                    centers,
+                    scored_context = 50,
+                    rev_strand = False,
+                ):
+
+    outtbl = { 'ref_name': [ ref_name ]*len( refvarseqs ),
+               'chrom': [ chrom ]*len( refvarseqs ),
+               'pos': [],
+               'ref': [],
+               'wt_acc_pr': [],
+               'wt_don_pr': [],
+             }
+
+    for idx, refvarseq in enumerate( refvarseqs ):
+
+        refseq, _ = refvarseq
+
+        x_ref = one_hot_encode( refseq )[ None, : ]
+        y_ref = np.mean( [ models[ m ].predict( x_ref ) for m in range( 5 ) ], axis=0 )
+
+        #flips the results so the positions are relative to the forward strand
+        if rev_strand:
+                y_ref = y_ref[:, ::-1]
+
+        ref_acc = y_ref[0, :, 1]
+        ref_don = y_ref[0, :, 2]
+
+        outtbl[ 'pos' ].append( centers[ idx ][ 0 ] )
+        outtbl[ 'ref' ].append( centers[ idx ][ 1 ] )
+        outtbl[ 'wt_acc_pr' ].append( ref_acc[ scored_context ] )
+        outtbl[ 'wt_don_pr' ].append( ref_don[ scored_context ] )
+
+    outdf = pd.DataFrame( outtbl )
+
+    return outdf
+
+def splai_compute_ss_prob( annots_df,
+                           models,
+                           refvarseqs,
+                           ref_name,
+                           chrom,
+                           center_var,
+                           haplotypes,
+                           ss_pos_l,
+                           scored_context = 50,
+                           rev_strand = False,
+                         ):
+
+    #NOW in custom_splai_scores!
+
+    outtbl = { 'ref_name': [ ref_name ]*len( refvarseqs ),
+               'chrom': [ chrom ]*len( refvarseqs ),
+               'pos': [],
+               'ref': [],
+               'alt': [],
+               'other_var': [],
+             }
+
+    outacc,outdon = np.empty( ( len( refvarseq ), scored_context ) ), np.empty( ( len( refvarseq ), scored_context ) )
+
+    for idx, refvarseq in enumerate( refvarseqs ):
+
+        refseq, varseq = refvarseq
+
+        x_var = one_hot_encode( varseq )[ None, : ]
+        y_var = np.mean( [ models[ m ].predict( x_var ) for m in range( 5 ) ], axis=0 )
+
+        #flips the results so the positions are relative to the forward strand
+        if rev_strand:
+                y_var = y_var[:, ::-1]
+
+        var_acc = y_var[0, :, 1]
+        var_don = y_var[0, :, 2]
+
+        #transforms variants into sequence position coords
+        allvars_seqpos = [ ( scored_context + ( p - center_var[ idx ][ 0 ] ), r, a )
+                           for p,r,a in [ center_var[ idx ] ] + haplotypes[ idx ] ]
+
+        var_acc, var_don = adjust_for_indels( var_acc,
+                                              var_don,
+                                              allvars_seqpos,
+                                             )
+
+        out_acc[ idx, : ] = var_acc
+        out_don[ idx, : ] = var_don
+
+        ss_seqpos = [ scored_context + ( p - center_var[ idx ][ 0 ] ) for p in ss_pos_l ]
+
+        outtbl[ 'pos' ].append( center_var[ idx ][ 0 ] )
+        outtbl[ 'ref' ].append( center_var[ idx ][ 1 ] )
+        outtbl[ 'alt' ].append( center_var[ idx ][ 2 ] )
+        outtbl[ 'other_var' ].append( ';'.join( [ ':'.join( [ str( p ), '>'.join( [ r, a ] ) ] )
+                                      for p,r,a in haplotypes[ idx ] ] ) )
+
+        for ss_gen,ss_seq in zip( ss_pos_l, ss_seqpos ):
+
+            if ss_seq >= 0 and ss_seq < 2*scored_context + 1:
+
+                outtbl[ 'ss_acc_prob_' + str( ss_gen ) ].append( var_acc[ ss_seq ] )
+                outtbl[ 'ss_don_prob_' + str( ss_gen ) ].append( var_don[ ss_seq ] )
+
+            else:
+
+                outtbl[ 'ss_acc_prob_' + str( ss_gen ) ].append( np.nan )
+                outtbl[ 'ss_don_prob_' + str( ss_gen ) ].append( np.nan )
+
+    outdf = pd.DataFrame( outtbl )
+    outacc = pd.DataFrame( out_acc )
+    outdon = pd.DataFrame( out_don )
+
+    outacc = pd.concat( [ outdf[ [ 'chrom', 'pos', 'ref', 'alt', 'other_var' ] + [ col for col in outtbl if 'acc' in col ] ], outacc ],
+                        axis = 1 )
+
+    outdon = pd.concat( [ outdf[ [ 'chrom', 'pos', 'ref', 'alt', 'other_var' ] + [ col for col in outtbl if 'don' in col ] ], outdon ],
+                        axis = 1 )
+
+    return outdf, outacc, outdon
+
+def splai_ss_prob_mult_variants_onegene( annots_df,
+                                      models,
+                                      refseq,
+                                      ref_name,
+                                      chrom,
+                                      center_var,
+                                      ss_pos_l,
+                                      haplotypes = None,
+                                      ref_vars = None,
+                                      scored_context = 50,
+                                      unscored_context = 5000,
+                                      rev_strand = False ):
+
+    #NOW in custom_splai_scores!
+
+    strand = '-' if rev_strand else '+'
 
     flanks = scored_context + unscored_context
 
@@ -988,45 +2039,27 @@ def custom_score_mult_variants_oneexon( annots_df,
                                      get_gene_bds( annots_df,
                                                    chrom,
                                                    center[ 0 ],
-                                                   scored_context,
-                                                   unscored_context = unscored_context ),
+                                                   strand,
+                                                   scored_context = scored_context,
+                                                   unscored_context = unscored_context,
+                                                    ),
                                      scored_context,
                                      rev_strand = rev_strand,
                                      unscored_context = unscored_context )
                   for center,hapref in zip( center_var, zip( haplotypes, ref_vars ) ) ]
 
-    #creates a giant list of lists of relative acceptor/donor use
-    rel_jn_use = [ get_relative_jn_use( create_rel_jn_use_tbl( pext_tbx,
-                                                               pext_header,
-                                                               chrom,
-                                                               get_allexon_bds( annots_df,
-                                                                                chrom,
-                                                                                center[ 0 ],
-                                                                                scored_context,
-                                                                                rev_strand = rev_strand
-                                                                                ),
-                                                               col_name = pext_col ),
-                                        chrom,
-                                        center[ 0 ],
-                                        get_allexon_bds( annots_df,
-                                                         chrom,
-                                                         center[ 0 ],
-                                                         scored_context,
-                                                         rev_strand = rev_strand
-                                                        ), )
-                  for center in center_var ]
-
     #this will fail if any of the other variants are indels...
-    #maybe I should add some functionality to the score_variant fn to handle this...
-    outdf = jnuse_score_variants(  models,
-                                    refvarseqs,
-                                    ref_name,
-                                    rel_jn_use,
-                                    chrom,
-                                    center_var,
-                                    haplotypes,
-                                    scored_context,
-                                    rev_strand = rev_strand,
-                                  )
+    #maybe I should add some functionality to the splai_score_variant fn to handle this...
+    outdf, outacc, outdon = splai_compute_ss_prob( annots_df,
+                                                   models,
+                                                   refvarseqs,
+                                                    ref_name,
+                                                    chrom,
+                                                    center_var,
+                                                    haplotypes,
+                                                    ss_pos_l,
+                                                    scored_context = scored_context,
+                                                    rev_strand = rev_strand,
+                                                    )
 
-    return outdf
+    return outdf, outacc, outdon

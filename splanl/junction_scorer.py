@@ -105,10 +105,10 @@ def adjust_junctions(pysam_align,
     outfile.close()
 
 
-def clean_jns(jns,
-            cnst_exons,
-            tol = 3,
-            min_matches = 120 ):
+def clean_jns( jns,
+               cnst_exons,
+               tol = 3,
+               min_matches = 120 ):
     """Removes any junctions within the constant exons,
     joins adjacent junctions,
     and removes the last junction if its <= 3 bp long
@@ -142,7 +142,7 @@ def clean_jns(jns,
             ds_cnst = True
 
         #changes to 1-based inclusive numbering
-        jn = (_jn[0]+1, _jn[1])
+        jn = ( _jn[0] + 1, _jn[1] )
 
         if jn[0] >= cnst_exons[0][1] and jn[1] < ( cnst_exons[1][0]+1 ):
             jns_joined.append(jn)
@@ -155,7 +155,7 @@ def clean_jns(jns,
 
     #removes the last junction if its less than 3 bp long
     #hard to align a so few reads accurately so ignore them
-    if len(jns_joined)>0 and ( jns_joined[-1][1] - jns_joined[-1][0] ) <= 3:
+    if len(jns_joined)>0 and ( jns_joined[-1][1] - jns_joined[-1][0] ) <= tol:
         jns_joined = jns_joined[:-1]
 
     jns_joined = tuple( jns_joined )
@@ -167,8 +167,116 @@ def clean_jns(jns,
 
     return jns_joined
 
-def get_all_isoforms(align_by_samp_dict,
-                    cnst_exons = None ):
+def clean_jns_pe( read1,
+                  read2,
+                  cnst_exons,
+                  spl_tol,
+                  indel_tol,
+                  min_matches_for,
+                  min_matches_rev ):
+
+    #would this be faster if I zipped two aligned files together?
+
+    if read1.get_blocks()[ 0 ][ 0 ] > read2.get_blocks()[ 0 ][ 0 ]:
+        temp_r1 = read1
+        read1 = read2
+        read2 = temp_r1
+
+    r12_jns = [ read1.get_blocks(),read2.get_blocks() ]
+    r12_cigs = [ read1.cigartuples, read2.cigartuples ]
+
+    #if one of the reads is unmapped skip the pair
+    if not all( r12_jns ):
+        return 'unmapped'
+
+    r12_jns = [ list( r12_jns[ 0 ] ), list( r12_jns[ 1 ] ) ]
+
+    us_cnst = ds_cnst = False
+
+    #screens out reads with too many bases soft_clipped
+    if sum( jn[ 1 ] - jn[ 0 ] + 1 for jn in r12_jns[ 0 ] ) < min_matches_for \
+    or sum( jn[ 1 ] - jn[ 0 ] + 1 for jn in r12_jns[ 1 ] ) < min_matches_rev:
+        return 'soft_clipped'
+
+    #this section will collapse any small indels
+    for i,r_cig in enumerate( r12_cigs ):
+
+        #there are no indels - all is well
+        if not any( c_o == 1 or c_o == 2  for c_o,c_l in r_cig ):
+            continue
+
+        ri_jn = []
+        j = 0
+        indel = False
+
+        for c_o,c_l in r_cig:
+
+            if indel:
+                indel = False
+                continue
+
+            #if its a match add to append jn
+            #don't add any very short alignments since those are unreliable
+            if c_o == 0 and c_l >= spl_tol:
+                ri_jn.append( r12_jns[ i ][ j ] )
+                j += 1
+            #if its an indel within tolerance, add it to previous junction
+            elif ri_jn and ( c_o == 1 or c_o == 2 ) and c_l <= indel_tol:
+                indel = True
+                ri_jn[ -1 ] = ( ri_jn[ -1 ][ 0 ], r12_jns[ i ][ j ][ 1 ] )
+                j += 1
+
+        r12_jns[ i ] = ri_jn
+
+    #this section combines the reads
+    #if the reads don't overlap combine them
+    #so ( 1267, 1312 ), ( 1480, 1512 ) becomes ( 1267, 1512 )
+    if r12_jns[ 0 ][ -1 ][ 1 ] < r12_jns[ 1 ][ 0 ][ 0 ]:
+        r12_jns[ 0 ][ -1 ] = ( r12_jns[ 0 ][ -1 ][ 0 ], r12_jns[ 1 ][ 0 ][ 1 ] )
+        r12_jns = tuple( sorted( r12_jns[ 0 ] + r12_jns[ 1 ][ 1: ] ) )
+
+    else:
+        r12_jns = tuple( sorted( r12_jns[ 0 ] + r12_jns[ 1 ] ) )
+
+    r12_jn_comb = []
+    for _jn in r12_jns:
+
+        #checks if read splices properly from upstream constant donor
+        if _jn[ 1 ] >= cnst_exons[ 0 ][ 1 ] - spl_tol and _jn[ 1 ] <= cnst_exons[ 0 ][ 1 ] + spl_tol:
+            us_cnst = True
+            continue
+
+        #checks if read splices properly into the downstream constant acceptor
+        if _jn[ 0 ] >= cnst_exons[ 1 ][ 0 ] - spl_tol and _jn[ 0 ] <= cnst_exons[ 1 ][ 0 ] + spl_tol:
+            ds_cnst = True
+            continue
+
+        #changes to 1-based inclusive numbering
+        jn = ( _jn[ 0 ] + 1, _jn[ 1 ] )
+
+        #if the jn is outside of the constant exons
+        if jn[ 0 ] >= cnst_exons[ 0 ][ 1 ] and jn[ 1 ] < cnst_exons[ 1 ][ 0 ] + 1:
+
+            if not r12_jn_comb or jn[ 0 ] > r12_jn_comb[ -1 ][ 1 ]:
+                r12_jn_comb.append( jn )
+            #if the forward and reverse reads cross - combine them
+            #so ( 1267, 1312 ), ( 1297, 1512 ) becomes ( 1267, 1512 )
+            else:
+                r12_jn_comb[ -1 ] = ( r12_jn_comb[ -1 ][ 0 ], jn[ 1 ] )
+
+    r12_jn_comb = tuple( r12_jn_comb )
+
+    if not ds_cnst:
+        r12_jn_comb = 'bad_ends'
+    elif not us_cnst:
+        r12_jn_comb = 'bad_starts'
+
+    return r12_jn_comb
+
+def get_all_isoforms( align_by_samp_dict,
+                      cnst_exons = None,
+                      tol = 3,
+                      min_matches = 120 ):
     """Gets all isoforms within a pysam alignment file
 
     Args:
@@ -186,7 +294,10 @@ def get_all_isoforms(align_by_samp_dict,
 
         if cnst_exons:
             #creates a counter object of all of the exon junctions
-            all_isos_cnt = Counter( [ clean_jns( read.get_blocks(), cnst_exons ) for read in align_by_samp_dict[ samp ] ] )
+            all_isos_cnt = Counter( [ clean_jns( read.get_blocks(),
+                                                 cnst_exons,
+                                                 tol,
+                                                 min_matches ) for read in align_by_samp_dict[ samp ] ] )
         else:
             all_isos_cnt = Counter( [ tuple( read.get_blocks() ) for read in align_by_samp_dict[ samp ] ] )
 
@@ -202,6 +313,66 @@ def get_all_isoforms(align_by_samp_dict,
         out_tbls[ samp ] = iso_df
 
     return( out_tbls )
+
+def get_all_isoforms_pe(  pysam_align_file,
+                          cnst_exons,
+                          spl_tol = 3,
+                          indel_tol = 20,
+                          min_matches_for = 70,
+                          min_matches_rev = 50 ):
+    """Gets all isoforms within a pysam alignment file
+
+    Args:
+        align_dict (dictionary): dictionary with sample names as keys and pysam alignment files as values
+
+    Returns:
+        out_tbls (dictionary): dictionary with sample names as keys and pandas dataframes with isoform tuples as the
+        index and number of reads representing each isoform as the only column
+    """
+
+    jns = []
+
+    for read in pysam_align_file:
+
+        if read.is_secondary or not read.is_paired or read.is_unmapped or read.mate_is_unmapped:
+            continue
+
+        if read.is_read2:
+            read2 = read
+        else:
+            read1 = read
+            read2 = None
+
+        if read1 and read2 and read1.query_name == read2.query_name:
+
+            jns.append( clean_jns_pe( read1,
+                                      read2,
+                                      cnst_exons,
+                                      spl_tol,
+                                      indel_tol,
+                                      min_matches_for,
+                                      min_matches_rev  ) )
+
+    all_isos_cnt = Counter( jns )
+
+    #removes None type from counter - reads with pair unmapped
+    #del all_isos_cnt[ -3 ]
+    #removes 0 from counter - represents reads with not enough matches
+    #del all_isos_cnt[ 0 ]
+    #removes None type from counter - represents reads not mapping to the downstream constant
+    #del all_isos_cnt[ -1 ]
+    #removes 0 from counter - - represents reads not mapping to the upstream constant
+    #del all_isos_cnt[ -2 ]
+
+    iso_df = pd.DataFrame.from_dict( all_isos_cnt,
+                                     orient = 'index' ).reset_index()
+
+    iso_df = iso_df.rename( columns = { 'index': 'isoform',
+                                         0: 'read_count' } ).sort_values( by = 'read_count',
+                                                                          ascending = False )
+    iso_df = iso_df.set_index( 'isoform' )
+
+    return iso_df
 
 def number_and_merge_isoforms( isodf_by_samp_dict,
                                 existing_iso_df = None ):
@@ -359,7 +530,7 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
                 if iso == None or iso == 0:
                     continue
 
-                r=list(reads)
+                r = list( reads )
 
                 isogrp = out_tbl.loc[out_tbl['isoform']==iso].index
 
@@ -503,6 +674,438 @@ def summarize_isos_by_var_bc(align_by_samp_dict,
 
     return(out_tbl)
 
+def summarize_isos_by_var_bc_pe( align_by_samp_dict,
+                                 cnst_exons,
+                                satbl,
+                                iso_df,
+                                unique_jns,
+                                canonical_isos,
+                                spl_tol = 3,
+                                min_matches_for = 70,
+                                min_matches_rev = 50,
+                                indel_tol = 20,
+                                exising_iso_stats_df=None,
+                                print_count=5,
+                                min_maxbc_count=100,
+                                tol = 10,
+                                min_cluster_size=3,
+                                clustered_bc_ave=3,
+                                min_bc_max_reads=(2,2),
+                                bc_tag = 'RX', ):
+    """Gets counts for number of variants and barcodes per isoform. Prints variants with the most number of barcodes.
+
+    Args:
+        pysam_align (PySam AlignmentFile): a tag sorted pysam alignment file with all of the reads for the sample
+        cnst_exons (list of tuples): coords of known constant exons
+        satbl (pandas dataframe): subassembly dataframe which maps barcodes to variants
+                                    Indexed on readgroupid
+        iso_df (pandas dataframe): dataframe of isoforms, isoform groups, and read counts created from get_all_isoforms
+                                    and create_isogrps
+                                    Indexed on isogrp
+        print_count (int): number of desired variants to print out per isoform - program will print the variants
+                            with the highest number of barcodes
+
+    Returns:
+        iso_df (pandas dataframe): Original iso_df with the addition of number of variants per isoform and number
+                                    of barcodes per isoform
+    """
+
+    if exising_iso_stats_df:
+        cur_df = exising_iso_stats_df.copy()
+
+    out_tbl = iso_df.copy()
+    satbl_c = satbl.copy()
+
+    satbl_c = satbl_c.dropna( subset = ['variant_list'] )
+
+    out_tbl_d = out_tbl.reset_index().set_index( 'isoform' ).to_dict( 'index' )
+
+    for samp in align_by_samp_dict:
+
+        print(samp)
+
+        unmapped = 0
+        unpaired = 0
+        secondary_reads = 0
+        soft_clipped = 0
+        bad_starts = 0
+        bad_ends = 0
+        bc_not_in_rna = 0
+        reads_non_rna_bc = 0
+
+        isogrp_to_bc = {}
+
+        bc_cnt, read_cnt = 0,0
+
+        for bc, _reads in itertools.groupby( align_by_samp_dict[ samp ], lambda _r: _r.get_tag( bc_tag ) ):
+
+            reads = list( _reads )
+
+            if bc not in satbl_c.index:
+                bc_not_in_rna += 1
+                reads_non_rna_bc += sum( 1 for r in reads ) / 2
+                continue
+
+            for read in reads:
+
+                if read.is_secondary:
+                    secondary_reads += 1
+                    continue
+
+                elif read.is_unmapped:
+                    unmapped += 1
+                    continue
+
+                elif not read.is_paired:
+                    unpaired += 1
+                    continue
+
+                if read.is_read2:
+                    read2 = read
+                else:
+                    read1 = read
+                    read2 = None
+
+                if read1 and read2 and read1.query_name == read2.query_name:
+
+                    iso = clean_jns_pe( read1,
+                                        read2,
+                                        cnst_exons,
+                                        spl_tol,
+                                        indel_tol,
+                                        min_matches_for,
+                                        min_matches_rev )
+
+                else:
+                    continue
+
+                #ignore read if it doesn't splice to downtstream constant or has too few matches
+                if iso == 'unmapped':
+                    unmapped += 1
+                    #continue
+                elif iso == 'bad_starts':
+                    bad_starts += 1
+                    #continue
+                elif iso == 'bad_ends':
+                    bad_ends += 1
+                    #continue
+                elif iso == 'soft_clipped':
+                    soft_clipped += 1
+                    #continue
+
+                isogrp = out_tbl_d[ iso ][ 'isonum' ]
+
+                #isogrp = out_tbl.loc[ out_tbl[ 'isoform' ] == iso ].index
+
+                #assert len( isogrp ) == 1, 'The isoform %s matches %i isogroups instead of the expected 1' % ( str( iso ),
+                                                                                                               #len( isogrp ) )
+
+                #isogrp = isogrp[ 0 ]
+
+                if isogrp not in isogrp_to_bc:
+                    isogrp_to_bc[ isogrp ] = {}
+
+                if bc not in isogrp_to_bc[ isogrp ]:
+                    isogrp_to_bc[ isogrp ][ bc ] = 1
+                else:
+                    isogrp_to_bc[ isogrp ][ bc ] += 1
+
+                read_cnt += 1
+
+            bc_cnt += 1
+
+            if bc_cnt % 1000 == 0:
+                print( 'Barcodes processed: %i\nReads processed: %i' % ( bc_cnt, read_cnt ) )
+
+        #takes 16 minutes to get here
+        isogrp_var_count = { isogrp: [ len( isogrp_to_bc[ isogrp ] ),
+                                    #should count number of variants
+                                    len( set( satbl_c.loc[ bc ].variant_list
+                                    for bc in isogrp_to_bc[ isogrp ] ) ),
+                                    max( isogrp_to_bc[ isogrp ].values() )
+                                  ]
+                        for isogrp in isogrp_to_bc
+                        }
+
+        chucked_bcs, chucked_reads = 0,0
+        missed_bcs, missed_reads = 0,0
+
+        for isogrp in isogrp_to_bc:
+
+            bcs = [ bc for bc in isogrp_to_bc[ isogrp ] ]
+
+            var_to_bc = {}
+            for bc in bcs:
+                var = satbl_c.loc[ bc ].variant_list
+                if var in var_to_bc:
+                    var_to_bc[ var ].add( bc )
+                else:
+                    var_to_bc[ var ] = { bc }
+
+            var_bc_counts = { var: len( var_to_bc[ var ] ) for var in var_to_bc }
+
+            var_bc_counts_sort = { var: count for var, count in sorted( var_bc_counts.items(), key = lambda item: -item[ 1 ] ) }
+
+            #get the variant with the highest number of barcodes
+            top_var = list( itertools.islice( var_bc_counts_sort.items(), 1 ) )[ 0 ]
+
+            #get max bcs from one variant for each isogrp
+            isogrp_var_count[ isogrp ].append( top_var[ 1 ] )
+
+            print( 'For isoform:', out_tbl.loc[ isogrp ].isoform )
+            print( 'The variants with the top', print_count, 'number of barcodes are:')
+            print( list( itertools.islice( var_bc_counts_sort.items(), print_count ) ) )
+
+            #this gets rid of the QC counts like unmapped
+            if ')' not in str( out_tbl.loc[ isogrp ].isoform ):
+                isogrp_var_count[ isogrp ].append( 0 )
+                continue
+
+            #get a list of all variants
+            var_list = [ v for var in var_bc_counts_sort for v in var.split(',') ]
+            var_list_unique = list( set( var_list ) )
+
+            #this gets the first position where the isoform differs from expected junctions
+            jn_diff = list( { jn for jns in out_tbl.loc[ isogrp ].isoform for jn in jns }
+                        - set( unique_jns ) )
+            if len( jn_diff )>1:
+                jn_diff = [ min( jn_diff ) ]
+
+            #lets keep the best isoforms
+            #first check if the isoform exactly matches an isoform we're expecting to see
+            if any( [ out_tbl.loc[ isogrp ].isoform == can_iso for can_iso in canonical_isos ] ):
+                isogrp_var_count[ isogrp ].append( 1 )
+            #then check if the max bc per isoform is greater than 100
+            elif top_var[ 1 ] >= min_maxbc_count:
+                isogrp_var_count[ isogrp ].append( 2 )
+            #requires the top variant to have at least x barcodes and the top barcode to have at least y reads
+            elif top_var[ 1 ] <= min_bc_max_reads[ 0 ] and isogrp_var_count[ isogrp ][ 2 ] <= min_bc_max_reads[ 1 ]:
+                chucked_bcs += isogrp_var_count[ isogrp ][ 0 ]
+                chucked_reads += out_tbl.loc[ isogrp ][ samp + '_read_count' ]
+                isogrp_var_count[ isogrp ].append( 0 )
+                continue
+            #check if the var with the max bc is within tolerance of the where the isoform differs
+            elif any( [ check_tolerance( int( var.split( ':' )[ 1 ] ),
+                                 jn_diff,
+                                 tol )
+                    for var in top_var[0].split( ',' ) ] ):
+                isogrp_var_count[ isogrp ].append( 3 )
+            #check if at least min_cluster_size of variants are within a tol of each other
+            elif cluster_vars(  var_bc_counts_sort,
+                                min_cluster_size,
+                                tol,
+                                clustered_bc_ave ):
+                isogrp_var_count[ isogrp ].append( 4 )
+            #check if a double variant is also listed as a single variant
+            elif len( var_list ) != len( var_list_unique ):
+                isogrp_var_count[ isogrp ].append( 5 )
+            else:
+                isogrp_var_count[ isogrp ].append( 0 )
+                missed_bcs += isogrp_var_count[ isogrp ][0]
+                missed_reads += out_tbl.loc[ isogrp ][ samp+'_read_count' ]
+
+        print('%i total barcodes in bam file' \
+            % ( ( sum( i[ 0 ] for i in isogrp_var_count.values() ) + bc_not_in_rna ) ) )
+        print('%i total reads in the bam file' \
+            % ( ( out_tbl[ samp+'_read_count' ].sum() + reads_non_rna_bc ) ) )
+        print('%i (%.2f%%) barcodes had no variant in the subassembly' \
+            % ( bc_not_in_rna, 100*( bc_not_in_rna / ( sum( i[ 0 ] for i in isogrp_var_count.values() ) + bc_not_in_rna ) ) ) )
+        print('%i (%.2f%%) reads were associated with barcodes without variants in the subassembly' \
+            % ( reads_non_rna_bc, 100*( reads_non_rna_bc / ( out_tbl[ samp+'_read_count' ].sum() + reads_non_rna_bc ) ) ) )
+        print( 'From the remaining barcodes/reads in the subassembly...')
+        print('%i (%.2f%%) barcodes failed the min_bc_max_reads filter' \
+            % ( chucked_bcs, 100*( chucked_bcs / sum( i[ 0 ] for i in isogrp_var_count.values() ) ) ) )
+        print('%i (%.2f%%) reads failed the min_bc_max_reads filter' \
+            % ( chucked_reads, 100*( chucked_reads / out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) barcodes did not fulfill any filter' \
+            % ( missed_bcs, 100*( missed_bcs / sum( i[ 0 ] for i in isogrp_var_count.values() ) ) ) )
+        print('%i (%.2f%%) reads did not fulfill any filter'\
+            % ( missed_reads, 100*(missed_reads/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) reads were unmapped'\
+            % ( unmapped, 100*(unmapped/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) reads were unpaired'\
+            % ( unpaired, 100*(unpaired/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) reads were secondary alignments'\
+            % ( secondary_reads, 100*(secondary_reads/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) reads were soft clipped'\
+            % ( soft_clipped, 100*(soft_clipped/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) reads were bad starts'\
+            % ( bad_starts, 100*(bad_starts/out_tbl[ samp+'_read_count' ].sum() ) ) )
+        print('%i (%.2f%%) reads were bad ends'\
+            % ( bad_ends, 100*(bad_ends/out_tbl[ samp+'_read_count' ].sum() ) ) )
+
+        cols = [ samp + suffix for suffix in ['_num_bcs','_num_vars','_max_reads_per_bc','_max_bc_per_var','_filter'] ]
+        iso_cnts = pd.DataFrame.from_dict( isogrp_var_count,
+                                           orient = 'index',
+                                           columns = cols )
+
+        out_tbl = pd.merge(out_tbl, iso_cnts, left_index=True, right_index=True, how="outer")
+
+        out_tbl.index.name = 'isonum'
+
+    #if iso_counts doesn't contain all the isoforms, the values will be null for those rows
+    #change to zeros
+    out_tbl = out_tbl.fillna( 0 )
+
+    #get totals across samples
+    for suffix in [ '_read_count', '_num_bcs', '_num_vars' ]:
+
+        #sum of each row across the columns
+        col = [ col for col in out_tbl.columns if suffix in col ]
+        out_tbl[ 'total' + suffix ] = out_tbl[ col ].sum( axis = 1 )
+
+    #counts number of samples passing filter for each isoform
+    #specifically, counting non zero filter values
+    filter_col = [ col for col in out_tbl.columns if 'filter' in col ]
+    out_tbl[ 'total_passfilt' ] = out_tbl[ filter_col ].astype( bool ).sum( axis = 1 )
+
+    if exising_iso_stats_df:
+        out_tbl = pd.merge( cur_df, out_tbl, left_index = True, right_index = True, how="outer" )
+        out_tbl = out_tbl.fillna( 0 )
+
+    return out_tbl
+
+def summarize_isos_wt_bc(align_by_samp_dict,
+                             cnst_exons,
+                                wt_bcs,
+                                iso_df,
+                                canonical_isos,
+                                exising_iso_stats_df=None,
+                                min_maxbc_count=100,
+                                min_bc_max_reads=(2,2)):
+    """Gets counts for number of variants and barcodes per isoform. Prints variants with the most number of barcodes.
+
+    Args:
+        pysam_align (PySam AlignmentFile): a tag sorted pysam alignment file with all of the reads for the sample
+        cnst_exons (list of tuples): coords of known constant exons
+        satbl (pandas dataframe): subassembly dataframe which maps barcodes to variants
+                                    Indexed on readgroupid
+        iso_df (pandas dataframe): dataframe of isoforms, isoform groups, and read counts created from get_all_isoforms
+                                    and create_isogrps
+                                    Indexed on isogrp
+        print_count (int): number of desired variants to print out per isoform - program will print the variants
+                            with the highest number of barcodes
+
+    Returns:
+        iso_df (pandas dataframe): Original iso_df with the addition of number of variants per isoform and number
+                                    of barcodes per isoform
+    """
+
+    if exising_iso_stats_df:
+        cur_df = exising_iso_stats_df.copy()
+
+    out_tbl = iso_df.copy()
+
+    for samp in align_by_samp_dict:
+
+        print(samp)
+
+        isogrp_to_bc = {}
+
+        bc_cnt, read_cnt = 0,0
+
+        for bc, _reads in itertools.groupby( align_by_samp_dict[ samp ], lambda _r: _r.get_tag( 'RX' ) ):
+
+            if bc not in wt_bcs:
+                continue
+
+            for iso, reads in itertools.groupby( _reads, lambda _r: clean_jns( _r.get_blocks(), cnst_exons ) ):
+
+                #ignore read if it doesn't splice to downtstream constant or has too few matches
+                if iso == None or iso == 0:
+                    continue
+
+                r=list(reads)
+
+                isogrp = out_tbl.loc[ out_tbl[ 'isoform' ] == iso ].index
+
+                assert len(isogrp)==1, 'The isoform matches '+str( len( isogrp ) )+' isogroups instead of the expected 1'
+
+                isogrp=isogrp[0]
+
+                if isogrp not in isogrp_to_bc:
+                    isogrp_to_bc[ isogrp ]={}
+
+                if bc not in isogrp_to_bc[ isogrp ]:
+                    isogrp_to_bc[ isogrp ][ bc ] = len(r)
+                else:
+                    isogrp_to_bc[ isogrp ][ bc ] += len(r)
+
+                read_cnt+=len(r)
+
+            bc_cnt+=1
+
+            if bc_cnt%10000==0:
+                print('Barcodes processed:',bc_cnt,'Reads processed:',read_cnt)
+
+    #takes 16 minutes to get here
+        isogrp_count = { isogrp: [ len( isogrp_to_bc[ isogrp ] ),
+                                    max( isogrp_to_bc[ isogrp ].values() )
+                                  ]
+                        for isogrp in isogrp_to_bc
+                        }
+
+        chucked_bcs, chucked_reads = 0,0
+
+        for isogrp in isogrp_to_bc:
+
+            bcs = [ bc for bc in isogrp_to_bc[ isogrp ] ]
+
+            bc_counts = len( bcs )
+
+            print( 'For isoform:', out_tbl.loc[ isogrp ].isoform )
+            print( 'There are', bc_counts, 'WT barcodes represented')
+
+            #lets keep the best isoforms
+            #first check if the isoform exactly matches an isoform we're expecting to see
+            if any( [ out_tbl.loc[ isogrp ].isoform == can_iso for can_iso in canonical_isos ] ):
+                isogrp_count[ isogrp ].append( 1 )
+            #then check if the max bc per isoform is greater than 100
+            elif bc_counts >= min_maxbc_count:
+                isogrp_count[ isogrp ].append( 2 )
+            #requires the top variant to have at least x barcodes and the top barcode to have at least y reads
+            elif bc_counts > min_bc_max_reads[ 0 ] and isogrp_count[ isogrp ][ 1 ] > min_bc_max_reads[ 1 ]:
+                isogrp_count[ isogrp ].append( 6 )
+            else:
+                isogrp_count[ isogrp ].append( 0 )
+                chucked_bcs += isogrp_count[ isogrp ][0]
+                chucked_reads += out_tbl.loc[ isogrp ][ samp+'_read_count' ]
+
+        print('%i (%.2f%%) barcodes did not fulfill any filter' \
+            % ( chucked_bcs, 100*(chucked_bcs/sum(i[0] for i in isogrp_count.values() ) ) ) )
+        print('%i (%.2f%%) reads did not fulfill any filter' \
+            % ( chucked_reads, 100*(chucked_reads/out_tbl[ samp+'_read_count' ].sum() ) ) )
+
+        cols = [ samp + suffix for suffix in ['_num_bcs','_max_reads_per_bc','_filter'] ]
+        iso_cnts = pd.DataFrame.from_dict(isogrp_count, orient='index',
+                                           columns=cols)
+
+        out_tbl = pd.merge( out_tbl, iso_cnts, left_index=True, right_index=True, how="outer")
+
+        out_tbl.index.name = 'isonum'
+
+    #if iso_counts doesn't contain all the isoforms, the values will be null for those rows
+    #change to zeros
+    out_tbl = out_tbl.fillna(0)
+
+    #get totals across samples
+    for suffix in [ '_read_count', '_num_bcs', ]:
+
+        #sum of each row across the columns
+        col = [ col for col in out_tbl.columns if suffix in col ]
+        out_tbl[ 'total'+suffix ] = out_tbl[ col ].sum( axis=1 )
+
+    #counts number of samples passing filter for each isoform
+    #specifically, counting non zero filter values
+    filter_col = [ col for col in out_tbl.columns if 'filter' in col ]
+    out_tbl[ 'total_passfilt' ] = out_tbl[ filter_col ].astype( bool ).sum( axis=1 )
+
+    if exising_iso_stats_df:
+        out_tbl = pd.merge( cur_df, out_tbl, left_index=True, right_index=True, how="outer" )
+        out_tbl = out_tbl.fillna(0)
+
+    return(out_tbl)
+
 def combine_isoforms(iso_df,
                     cryptic_exons,
                     data_from_csv = False):
@@ -569,6 +1172,15 @@ def combine_isoforms(iso_df,
 def create_iso_dict_no_cnst(iso_df):
 
     iso_df_c = iso_df.copy()
+
+    isogrpdict = {}
+
+    #for iso in iso_df_c.index:
+
+        #try:
+            #isogrpdict[ iso ] = literal_eval( iso_df_c.loc[ iso ].isoform )
+        #except:
+            #isogrpdict[ iso ] = iso_df_c.loc[ iso ].isoform
 
     #pandas hate tuples so this ensures any strings come out as tuples
     isogrpdict = { iso: literal_eval( iso_df_c.loc[ iso ].isoform )
@@ -821,6 +1433,163 @@ def compute_isoform_counts(
 
     return psidf
 
+def compute_isoform_counts_pe( bam,
+                                isogrpdict,
+                                cnst_exons,
+                                spl_tol = 3,
+                                indel_tol = 20,
+                                min_matches_for = 70,
+                                min_matches_rev = 50,
+                                tol_first_last=0,
+                                min_reads=1,
+                                count_otherisos=False,
+                                bc_tag = 'RX' ):
+    """
+    Create per-barcode counts of reads matching each isoform. Resulting dataset contains a count of total reads, unmapped
+    reads, reads with a bad start (greater than 5 (default) basepairs away from most common start), how many reads
+    match each isoform, and the psis for each isoform (matching reads/usable reads).
+
+    Args:
+        bam (pysam.AlignmentFile):  a barcode tag-grouped bam file of spliced alignments to reporter sequence
+        isogrpdict (dict): isoform compatbility group name --> list of exon start, end coodinates (1-based, inclusive)
+        read_start_coord (int): expected fixed read start position
+        tol_first_last (int): allow up to this many bases tolerance at the first and last exons
+        min_reads (int): require at least this many reads to be present per barcode group
+        count_otherisos (bool): should reads not matching any of the known isoforms be counted in the total?
+
+    Returns:
+        Pandas data frame with per-barcode read counts
+    """
+
+    rowList = []
+
+    ctr_bcs,ctr_reads = 0,0
+
+    isogrps = list( isogrpdict.keys() )
+    isoforms = list( isogrpdict.values() )
+
+    for bc, _reads in itertools.groupby( bam, lambda _r:_r.get_tag( bc_tag ) ):
+
+        bc_n_reads = 0
+
+        reads = list( _reads )
+
+        if len( reads ) < min_reads:
+            continue
+
+        n_unpaired = 0
+        n_secondary = 0
+        n_unmapped = 0
+        n_badstart = 0
+        n_badend = 0
+        n_softclip = 0
+        n_nomatch = 0
+        ln_matches = [ 0 ] * len( isogrpdict )
+
+        for read in reads:
+
+            if not read.is_paired:
+
+                n_unpaired += 1
+                bc_n_reads += 1
+                read1 = None
+                read2 = None
+                continue
+
+            elif read.is_read2:
+                read2 = read
+
+            else:
+                read1 = read
+                read2 = None
+
+            if read1 and read2 and read1.query_name == read2.query_name:
+
+                if read1.is_secondary:
+
+                    n_secondary += 1
+                    continue
+
+                bc_n_reads += 1
+
+                iso = clean_jns_pe( read1,
+                                    read2,
+                                    cnst_exons,
+                                    spl_tol,
+                                    indel_tol,
+                                    min_matches_for,
+                                    min_matches_rev )
+
+                if read1.is_unmapped or read2.is_unmapped:
+
+                    n_unmapped += 1
+                    continue
+
+                elif iso == -2:
+
+                    n_badstart += 1
+                    continue
+
+                elif iso == -1:
+
+                    n_badend += 1
+                    continue
+
+                elif iso == 0:
+
+                    n_softclip += 1
+                    continue
+
+                else:
+
+                    if iso in isoforms:
+
+                        ln_matches[ isoforms.index( iso ) ] += 1
+
+                    else:
+
+                        n_nomatch += 1
+                        continue
+
+        ctr_bcs += 1
+        ctr_reads += bc_n_reads
+        # for debugging only go through a few
+        # if ctr_bcs==10:break
+
+        if ctr_bcs % 1000 == 0 :
+            print( 'processed {} bcs, {} reads'.format( ctr_bcs, ctr_reads ) )
+
+        rowList.append( [ bc, bc_n_reads, n_unpaired, n_secondary, n_unmapped, n_badstart, n_badend, n_softclip, n_nomatch ] + ln_matches )
+
+    # from IPython.core.debugger import set_trace
+    # set_trace()
+
+    psidf = pd.DataFrame( rowList,
+                         columns = [ 'barcode', 'num_reads', 'unpaired_reads', 'secondary_reads', 'unmapped_reads', 'bad_starts', 'bad_ends', 'soft_clipped', 'other_isoform' ] + isogrps )
+
+    if not count_otherisos:
+
+        psidf[ 'usable_reads' ] = psidf.num_reads - ( psidf[ [ 'unpaired_reads', 'secondary_reads', 'unmapped_reads', 'bad_starts', 'bad_ends', 'soft_clipped', 'other_isoform' ] ].sum( axis = 1 ) )
+
+        #comment this out to save on memory
+        #for iso in isogrpdict:
+            #psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
+    else:
+
+        psidf[ 'usable_reads' ] = psidf.num_reads - ( psidf[ [ 'unpaired_reads', 'secondary_reads', 'unmapped_reads', 'bad_starts', 'bad_ends', 'soft_clipped' ] ].sum( axis = 1 ) )
+
+        #comment this out to save on memory
+        #for iso in isogrpdict:
+            #psidf[iso+'_psi'] = psidf[iso] / psidf.usable_reads
+
+        #psidf['other_isoform_psi'] = psidf['other_isoform'] / psidf.usable_reads
+
+    #sets psi to 0 instead of nan if none of the reads map to that isoform'((1201, 1266),)'
+    psidf = psidf.fillna( 0 )
+    psidf = psidf.set_index( 'barcode' )
+
+    return psidf
+
 # check coverage of exon and of junctions
 def check_junctions2( read, isogrpdict, cnst_exons, tol_first_last=0 ):
 
@@ -925,17 +1694,74 @@ def create_named_isogrps(iso_grp_dict,
 
     return(named_iso_grps)
 
-def combine_isogrps(
-    new_grpnames_to_old_grpnames,
-    jxnbybctbl
- ):
+def combine_isogrps( new_grpnames_to_old_grpnames,
+                     jxnbybctbl,
+                     keep_cols = ['num_reads','unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform','usable_reads'],
+                     ):
     """ combine barcode groups
     Arguments:
         new_grpnames_to_old_grpnames {[type]} -- [description]
     """
 
+    chg_cols = [ isocol for isocol_l in new_grpnames_to_old_grpnames.values()
+                        for isocol in isocol_l ]
+
+    other_cols = [ col for col in jxnbybctbl.columns
+                   if col not in chg_cols ]
+
+    if keep_cols != other_cols:
+
+        missing_cols = list( set( other_cols ).difference( set( keep_cols ) ) )
+
+        print( '%i columns will be removed during this process.\nColumns: ' % len( missing_cols ), missing_cols )
+
     newtbl = pd.DataFrame()
-    for c in ['num_reads','unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform','usable_reads']:
+    for c in keep_cols:
+        newtbl[c] = jxnbybctbl[c]
+
+    for newgrp in new_grpnames_to_old_grpnames:
+        oldgrp = new_grpnames_to_old_grpnames[ newgrp ]
+
+        if type(oldgrp)==str:
+            oldgrp=[oldgrp]
+        else:
+            assert type(oldgrp)==list
+
+        if len(oldgrp)==1:
+            newtbl[newgrp] = jxnbybctbl[oldgrp]
+        else:
+            newtbl[newgrp] = jxnbybctbl[oldgrp].sum(axis=1)
+
+    for newgrp in new_grpnames_to_old_grpnames:
+        newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
+
+    #fills in missing PSI values with 0 so we can create sparse datasets
+    newtbl = newtbl.fillna(0)
+
+    return newtbl
+
+def combine_isogrps_pe( new_grpnames_to_old_grpnames,
+                        jxnbybctbl,
+                        keep_cols = ['num_reads','secondary_reads', 'unpaired_reads', 'unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform','usable_reads'] ):
+    """ combine barcode groups
+    Arguments:
+        new_grpnames_to_old_grpnames {[type]} -- [description]
+    """
+
+    chg_cols = [ isocol for isocol_l in new_grpnames_to_old_grpnames.values()
+                        for isocol in isocol_l ]
+
+    other_cols = [ col for col in jxnbybctbl.columns
+                   if col not in chg_cols ]
+
+    if keep_cols != other_cols:
+
+        missing_cols = list( set( other_cols ).difference( set( keep_cols ) ) )
+
+        print( '%i columns will be removed during this process.\nColumns: ' % len( missing_cols ), missing_cols )
+
+    newtbl = pd.DataFrame()
+    for c in keep_cols:
         newtbl[c] = jxnbybctbl[c]
 
     for newgrp in new_grpnames_to_old_grpnames:

@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 import scipy.stats as ss
 import pysam
+import hgvs.parser
+import hgvs.dataproviders.uta
+import hgvs.assemblymapper
+import splanl.custom_splai_scores as css
 
 def get_refseq( fa_file ):
 
@@ -20,13 +24,12 @@ def get_kmers(seq,
 
 def acceptors_donors(refseq,
                     byvartbl,
-                    use_col,
-                    use_thresh
-                             ):
+                    sdv_col,
+                    out_col_suffix = '' ):
 
     tbv = byvartbl.copy()
 
-    assert use_col in tbv, '%s is not in the dataframe columns' % use_col
+    assert sdv_col in tbv, '%s is not in the dataframe columns' % sdv_col
 
     min_pos = tbv.pos.min()
     max_pos = tbv.pos.max()
@@ -56,8 +59,8 @@ def acceptors_donors(refseq,
         elif dnt.endswith( 'T' ):
             tbv.loc[ ( tbv.pos == ( p + min_pos ) ) & ( tbv.alt == 'G' ), 'psbl_snv_don' ] = True
 
-    tbv[ 'snv_acc' ] = ( tbv[ use_col ] >= use_thresh ) & ( tbv.psbl_snv_acc == True )
-    tbv[ 'snv_don' ] = ( tbv[ use_col ] >= use_thresh ) & ( tbv.psbl_snv_don == True )
+    tbv[ 'snv_acc' + out_col_suffix ] = ( tbv[ sdv_col ] ) & ( tbv.psbl_snv_acc )
+    tbv[ 'snv_don' + out_col_suffix ] = ( tbv[ sdv_col ] ) & ( tbv.psbl_snv_don )
 
     return tbv
 
@@ -198,17 +201,26 @@ def across_sample_stats(ltbls,
             out_tbl['n_bc'].append( int( lsamp_df.n_bc.sum() ) )
             out_tbl['n_bc_passfilt'].append( int( lsamp_df.n_bc_passfilt.sum() ) )
             out_tbl['n_unmapped'].append( int( lsamp_df.sum_unmapped_reads.sum() ) )
-            out_tbl['n_badstart'].append( int( lsamp_df.sum_badstart_reads.sum() ) )
-            out_tbl['n_badend'].append( int( lsamp_df.sum_badend_reads.sum() ) )
-            out_tbl['n_softclip'].append( int( lsamp_df.sum_softclipped_reads.sum() ) )
-            out_tbl['n_otheriso'].append( int( lsamp_df.sum_otheriso.sum() ) )
-            out_tbl['n_sdv'].append( int( lsamp_filt_df.sdv.sum() ) )
-            out_tbl['psbl_alt_acc'].append( int( lsamp_filt_df.psbl_snv_acc.sum() ) )
-            out_tbl['psbl_alt_don'].append( int( lsamp_filt_df.psbl_snv_don.sum() ) )
-            out_tbl['n_alt_acc'].append( int( lsamp_filt_df.snv_acc.sum() ) )
-            out_tbl['n_alt_don'].append( int( lsamp_filt_df.snv_don.sum() ) )
-            for col in med_col_names:
-                out_tbl['med_'+col].append( float( lsamp_df[ col ].median() ) )
+            out_tbl['n_badstart'].append( int( lsamp_df.sum_bad_starts.sum() ) )
+            out_tbl['n_badend'].append( int( lsamp_df.sum_bad_ends.sum() ) )
+            out_tbl['n_softclip'].append( int( lsamp_df.sum_soft_clipped.sum() ) )
+            out_tbl['n_otheriso'].append( int( lsamp_df.sum_other_isoform.sum() ) )
+
+            if 'sdv' in lsamp_filt_df.columns:
+                out_tbl['n_sdv'].append( int( lsamp_filt_df.sdv.sum() ) )
+            else:
+                out_tbl['n_sdv'].append( None )
+
+            if 'psbl_snv' in lsamp_filt_df.columns:
+                out_tbl['psbl_alt_acc'].append( int( lsamp_filt_df.psbl_snv_acc.sum() ) )
+                out_tbl['psbl_alt_don'].append( int( lsamp_filt_df.psbl_snv_don.sum() ) )
+                out_tbl['n_alt_acc'].append( int( lsamp_filt_df.snv_acc.sum() ) )
+                out_tbl['n_alt_don'].append( int( lsamp_filt_df.snv_don.sum() ) )
+            else:
+                out_tbl['psbl_alt_acc'].append( None )
+                out_tbl['psbl_alt_don'].append( None )
+                out_tbl['n_alt_acc'].append( None )
+                out_tbl['n_alt_don'].append( None )
 
             if 'var_type' in lsamp_filt_df.columns:
                 out_tbl['n_var_ex'].append( int( lsamp_filt_df.query( 'var_type != "Intronic"' ).shape[0] ) )
@@ -220,6 +232,10 @@ def across_sample_stats(ltbls,
                 out_tbl['n_var_in'].append( None )
                 out_tbl['n_sdv_ex'].append( None )
                 out_tbl['n_sdv_in'].append( None )
+
+            for col in med_col_names:
+                out_tbl['med_'+col].append( float( lsamp_df[ col ].median() ) )
+
         i+=1
 
     out_tbl = pd.DataFrame( out_tbl )
@@ -418,16 +434,17 @@ def sdv_by_var_type( vartbl ):
 
     return tbv
 
-def patient_var( vartbl,
-                 pat_pos_alt ):
+def identify_var( vartbl,
+                 pat_pos_alt,
+                 out_col ):
 
     tbv = vartbl.copy()
 
-    tbv[ 'patient_var' ] = False
+    tbv[ out_col ] = False
 
     for pos, alt in pat_pos_alt:
 
-        tbv.loc[ ( tbv.pos == pos ) & ( tbv.alt == alt ), 'patient_var' ] = True
+        tbv.loc[ ( tbv.pos == pos ) & ( tbv.alt == alt ), out_col ] = True
 
     return tbv
 
@@ -485,3 +502,395 @@ def frameshift( tbl_byvar,
     tbv.loc[ tbv[ acc_don_bool ], col ] = fs
 
     return tbv
+
+def bootstrap_null_distribution( n_bcs,
+                                 wt_bc_df,
+                                 byvar_df,
+                                 seed = 1687,
+                                 iso_names = None ):
+
+    wt_psi = wt_bc_df.copy()
+    tbv = byvar_df.copy()
+
+    assert all( n > 0 for n in n_bcs ), 'Inputting a sample with 0 barcodes will lead to division by 0 errors'
+
+    wt_bcs = wt_psi.index.tolist()
+
+    if not iso_names:
+
+        iso_names = [ col[:-4] for col in wt_psi if col.endswith( '_psi' ) ]
+
+        assert len( iso_names ) > 0, 'Could not infer isoform names - please input names to use'
+
+    np.random.seed( seed )
+
+    wt_dfs = [ wt_psi.loc[ np.random.choice( wt_bcs, int( n ) ) ] for n in n_bcs ]
+
+    for iso in iso_names:
+
+        wmeans = [ ( wt_df.usable_reads * wt_df[ iso + '_psi' ] ).sum() / wt_df.usable_reads.sum()
+                   for wt_df in wt_dfs ]
+
+        tbv[ 'wmean_bs_WT_' + iso ] = np.mean( wmeans )
+        tbv[ 'wstdev_bs_WT_' + iso ] = np.std( wmeans )
+
+    return tbv
+
+def compute_intron_null_allvar( tbl_byvar,
+                                exon_cds,
+                                intron_bds,
+                                pos_col = 'pos',
+                                iso_names = None
+                              ):
+
+    tbv = tbl_byvar.copy()
+
+    if not iso_names:
+
+        iso_names = [ col[ 6: ] for col in tbv if col.startswith( 'wmean_' ) ]
+
+        assert iso_names, 'Isoform names could not be inferred, please enter them directly'
+
+    introns = tbv.loc[ ( tbv[ pos_col ] < exon_cds[ 0 ] - intron_bds ) | ( tbv[ pos_col ] > exon_cds[ 1 ] + intron_bds ) ].copy()
+    exons = tbv.loc[ ( tbv[ pos_col ] >= exon_cds[ 0 ] - intron_bds ) | ( tbv[ pos_col ] <= exon_cds[ 1 ] + intron_bds ) ].copy()
+
+    for iso in iso_names:
+
+        tbv[ 'wmean_int_' + iso ] = introns[ 'wmean_' + iso ].mean()
+        tbv[ 'wstdev_int_' + iso ] = introns[ 'wmean_' + iso ].std()
+
+        tbv[ 'sq_inv_eff_' + iso ] = ( ( len( introns ) * len( exons ) ) * ( len( introns ) + len( exons ) - 2 ) ) \
+                                    / ( ( len( introns ) + len( exons ) ) \
+                                    * ( ( ( len( introns ) - 1 ) * introns[ 'wmean_' + iso ].std()**2 ) \
+                                    + ( ( len( exons ) - 1 ) * exons[ 'wmean_' + iso ].std()**2 ) ) )
+
+    return tbv
+
+def bootstrap_varsp_null_distribution( null_bc_df,
+                                       byvar_df,
+                                       seed = 1687,
+                                       iso_names = None,
+                                       bootstraps = 1000, ):
+
+    null_psi = null_bc_df.copy()
+    tbv = byvar_df.copy()
+
+    n_bcs = tbv.n_bc_passfilt.tolist()
+
+    assert all( n > 0 for n in n_bcs ), 'Inputting a sample with 0 barcodes will lead to division by 0 errors'
+
+    null_bcs = null_psi.index.tolist()
+
+    if not iso_names:
+
+        iso_names = [ col[ : -4 ] for col in null_psi if col.endswith( '_psi' ) ]
+
+        assert len( iso_names ) > 0, 'Could not infer isoform names - please input names to use'
+
+    usable_reads = null_psi.usable_reads.to_numpy()
+
+    sample_tbl = {}
+    null_iso = {}
+
+    for iso in iso_names:
+
+        sample_tbl[ 'wmean_bs_null_' + iso ] = []
+        sample_tbl[ 'wstdev_bs_null_' + iso ] = []
+
+        null_iso[ iso ] = null_psi[ iso + '_psi' ].to_numpy()
+
+    bcs_sampled = {}
+
+    for i,n_bc in enumerate( n_bcs ):
+
+        if n_bc in bcs_sampled:
+
+            idx = bcs_sampled[ n_bc ]
+
+            for iso in iso_names:
+
+                sample_tbl[ 'wmean_bs_null_' + iso ].append( sample_tbl[ 'wmean_bs_null_' + iso ][ idx ] )
+                sample_tbl[ 'wstdev_bs_null_' + iso ].append( sample_tbl[ 'wstdev_bs_null_' + iso ][ idx ] )
+
+            continue
+
+        bcs_sampled[ n_bc ] = i
+
+        np.random.seed( seed )
+
+        null_idx = np.random.randint( len( null_psi ), size = ( bootstraps, int( n_bc ) ) )
+
+        for iso in iso_names:
+
+            mus = ( usable_reads[ null_idx ] * null_iso[ iso ][ null_idx ] ).sum( axis = 1 ) / usable_reads[ null_idx ].sum( axis = 1 )
+
+            sample_tbl[ 'wmean_bs_null_' + iso ].append( np.mean( mus ) )
+            sample_tbl[ 'wstdev_bs_null_' + iso ].append( np.std( mus ) )
+
+    samp_df = pd.DataFrame( sample_tbl )
+
+    tbv = pd.concat( [ tbv.reset_index(), samp_df.reset_index() ],
+                      axis = 1, )
+
+    print( 'done' )
+
+    return tbv
+
+def compute_null_zscores( tbl_byvar,
+                          null_stem,
+                          iso_names ):
+
+    tbv = tbl_byvar.copy()
+
+    for iso in iso_names:
+
+        tbv[ '_'.join( [ 'zwmean', null_stem, iso ] ) ] = ( tbv[ 'wmean_' + iso ] \
+                                                           - tbv[ '_'.join( [ 'wmean', null_stem, iso ] ) ] ) \
+                                                           / tbv[ '_'.join( [ 'wstdev', null_stem, iso ] ) ]
+
+    return tbv
+
+def stouffers_z( tbl_byvar_wide,
+                 iso_names,
+                 zcol = 'zmean_',
+                 weight = False ):
+
+    tbv = tbl_byvar_wide.copy()
+
+    for iso in iso_names:
+
+        if not weight:
+
+            tbv[ zcol + iso ] = tbv[ [ col for col in tbv if col.endswith( zcol + iso ) ] ].sum( axis = 1 ) \
+                                / np.sqrt( tbv[ [ col for col in tbv if col.endswith( zcol + iso ) ] ].notnull().sum( axis = 1 ) )
+
+        else:
+
+            tbv[ zcol[ 1: ] + iso ] = ( tbv[ [ col for col in tbv if col.endswith( zcol[ :-2 ] + '_' + iso ) ] ] * weight[ iso ] ).sum( axis = 1 ) \
+                                / np.sqrt( ( weight[ iso ]**2 ).sum() )
+
+    return tbv
+
+def sdv_by_iso( tbl_byvar,
+                iso_names,
+                z_col_stem,
+                z_thresh,
+                fc_col_stem,
+                fc_thresh,
+                out_col_stem = 'sdv_',
+                abs_val = True ):
+
+    tbv = tbl_byvar.copy()
+
+    for iso in iso_names:
+
+        if abs_val:
+            tbv[ out_col_stem + iso ] = ( np.abs( tbv[ z_col_stem + iso ] ) >= z_thresh ) \
+                                        & ( tbv[ fc_col_stem + iso ] >= fc_thresh )
+        else:
+            tbv[ out_col_stem + iso ] = ( tbv[ z_col_stem + iso ] >= z_thresh ) \
+                                        & ( tbv[ fc_col_stem + iso ] >= fc_thresh )
+
+    return tbv
+
+def compute_fold_change( tbl_byvar,
+                         null_col_stem,
+                         test_col_stem,
+                         iso_names = None,
+                         out_col = 'fc_' ):
+
+    tbv = tbl_byvar.copy()
+
+    if not iso_names:
+
+        iso_names = [ col[ len( null_col_stem ): ] for col in tbv if col.startswith( null_col_stem ) ]
+
+        assert len( iso_names ) > 0, 'Cannot infer isoform names - please provide them directly'
+
+    for iso in iso_names:
+
+        tbv[ out_col + iso ] = tbv[ test_col_stem + iso ] / tbv[ null_col_stem + iso ]
+
+    return tbv
+
+def get_transcripts( variant,
+                     genome = 'GRCh37', ):
+
+    hp = hgvs.parser.Parser()
+    hdp = hgvs.dataproviders.uta.connect()
+    am = hgvs.assemblymapper.AssemblyMapper( hdp,
+                                             assembly_name = genome,
+                                             alt_aln_method='splign',
+                                             replace_reference=True )
+
+    parsed_variant = hp.parse_hgvs_variant( variant )
+
+    print( 'Variant', str( parsed_variant ) )
+
+    print( 'Transcripts', am.relevant_transcripts ( parsed_variant ) )
+
+def gDNA_to_protein( chrom_id,
+                     transcript_id,
+                      gdna_tbl,
+                      var_col,
+                      genome = 'GRCh37',
+                      hgvs_col = 'hgvs_var',
+                      protein_col = 'protein_var' ):
+
+    out_tbl = gdna_tbl.copy()
+
+    hp = hgvs.parser.Parser()
+    hdp = hgvs.dataproviders.uta.connect()
+    am = hgvs.assemblymapper.AssemblyMapper( hdp,
+                                             assembly_name = genome,
+                                             alt_aln_method='splign',
+                                             replace_reference=True )
+
+    out_tbl[ hgvs_col ] = [ str( am.g_to_c( hp.parse_hgvs_variant( ':'.join( [ chrom_id, var ] ) ), transcript_id ) ).split( ':' )[ 1 ]
+                              for var in out_tbl[ var_col ] ]
+
+    out_tbl[ protein_col ] = [ str( am.c_to_p( hp.parse_hgvs_variant( ':'.join( [ transcript_id, var ] ) ) ) ).split( ':' )[ 1 ]
+                                for var in out_tbl[ hgvs_col ] ]
+
+    return out_tbl
+
+def gDNA_to_cDNA( chrom_id,
+                  transcript_id,
+                  gdna_tbl,
+                  var_col,
+                  genome = 'GRCh37',
+                  hgvs_col = 'hgvs_var' ):
+
+    out_tbl = gdna_tbl.copy()
+
+    hp = hgvs.parser.Parser()
+    hdp = hgvs.dataproviders.uta.connect()
+    am = hgvs.assemblymapper.AssemblyMapper( hdp,
+                                             assembly_name = genome,
+                                             alt_aln_method='splign',
+                                             replace_reference=True )
+
+    out_tbl[ hgvs_col ] = [ str( am.g_to_c( hp.parse_hgvs_variant( ':'.join( [ chrom_id, var ] ) ), transcript_id ) ).split( ':' )[ 1 ]
+                              for var in out_tbl[ var_col ] ]
+
+    return out_tbl
+
+def possible_ss( tbl_by_var,
+                 refseq,
+                 out_cols = ( 'acceptor_created', 'donor_created' ),
+                 rev_strand = False ):
+
+    tbv = tbl_by_var.copy()
+
+    acc = []
+    don = []
+
+    for pos, ra in zip( tbv.hg19_pos, zip( tbv.ref, tbv.alt ) ):
+
+        ref,alt = ra
+
+        assert refseq[ pos -1: pos - 1 + len( ref ) ].upper() == ref, 'Reference does not match sequence at %i' % pos
+
+        if rev_strand:
+            alt = css.rev_complement( alt )
+
+        if alt == 'C':
+
+            acc.append( False )
+            don.append( False )
+
+        elif alt == 'A':
+
+            don.append( False )
+
+            if not rev_strand:
+
+                acc.append( refseq[ pos ].upper() == 'G' )
+
+            else:
+
+                acc.append( css.rev_complement( refseq[ pos - 2 ].upper() ) == 'G' )
+
+        elif alt == 'T':
+
+            acc.append( False )
+
+            if not rev_strand:
+
+                don.append( refseq[ pos - 2 ].upper() == 'G' )
+
+            else:
+
+                don.append( css.rev_complement( refseq[ pos ].upper() ) == 'G' )
+
+        elif alt == 'G':
+
+            if not rev_strand:
+
+                acc.append( refseq[ pos - 2 ].upper() == 'A' )
+                don.append( refseq[ pos ].upper() == 'T' )
+
+            else:
+
+                acc.append( css.rev_complement( refseq[ pos ].upper() ) == 'A' )
+                don.append( css.rev_complement( refseq[ pos - 2 ].upper() ) == 'T' )
+
+        else:
+
+            acc.append( False )
+            don.append( False )
+
+    tbv[ out_cols[ 0 ] ] = acc
+    tbv[ out_cols[ 1 ] ] = don
+
+    return tbv
+
+def saturate_variants( tbl_by_var,
+                       refseq,
+                       pos_col,
+                       exon_col,
+                       intron_dist = 100,
+                       rev_strand = False,
+                       add_missing_introns = False ):
+
+    tbv = tbl_by_var.copy()
+
+    exons = tbv.loc[ tbv[ exon_col ].notnull() ][ exon_col ].unique()
+
+    exon_bds = { int( ex ): ( int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].min() ) - intron_dist,
+                              int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].max() ) + intron_dist )
+                 for ex in exons }
+
+    by_ex_d = { int( ex ): tbv.loc[ ( tbv[ pos_col ] >= exon_bds[ int( ex ) ][ 0 ] )
+                                    & ( tbv[ pos_col ] <= exon_bds[ int( ex ) ][ 1 ] ) ].copy()
+                for ex in exons }
+
+    for ex in by_ex_d.keys():
+
+        if add_missing_introns:
+            min_bd = min( by_ex_d[ ex ][ pos_col ].min(), exon_bds[ ex ][ 0 ] )
+            max_bd = max( by_ex_d[ ex ][ pos_col ].max(), exon_bds[ ex ][ 1 ] )
+        else:
+            min_bd, max_bd = by_ex_d[ ex ][ pos_col ].min(), by_ex_d[ ex ][ pos_col ].max(),
+
+        merge_ex = pd.DataFrame( { pos_col: [ p for p in range( min_bd, max_bd + 1 ) for j in range( 3 ) ],
+                                   'alt': [ a for p in range( min_bd, max_bd + 1 )
+                                              for a in [ 'A', 'C', 'G', 'T' ] if a.upper() != refseq[ p - 1 ].upper() ],
+                                   'ref': [ refseq[ p - 1 ].upper() for p in range( min_bd, max_bd + 1 )
+                                            for j in range( 3 ) ] } )
+
+        if rev_strand:
+
+            merge_ex[ 'alt_c' ] = [ css.rev_complement( a ) for a in merge_ex.alt ]
+            merge_ex[ 'ref_c' ] = [ css.rev_complement( r ) for r in merge_ex.ref ]
+            #merge_ex[ 'pos' ] = -merge_ex[ pos_col ]
+
+
+        idx = merge_ex.columns.tolist()
+
+        by_ex_d[ int( ex ) ] = merge_ex.set_index( idx ).merge( by_ex_d[ int( ex ) ].set_index( idx ),
+                                                                how = 'outer',
+                                                                left_index = True,
+                                                                right_index = True ).reset_index()
+
+    return by_ex_d

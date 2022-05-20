@@ -208,6 +208,111 @@ def summarize_byvar_singlevaronly(
 
     return out_tbl
 
+def summarize_byvar_singlevaronly_pe( subasm_tbl,
+                                      rna_tbl,
+                                      exon_coords,
+                                      min_usable_reads_per_bc,
+                                      summary_cols,
+                                      isonames = None, ):
+    """
+    Summarize per-variant effects across associated barcodes.
+    Considers only single-variant clones; barcodes w/ ≥1 variants are ignored.
+
+    Args:
+        subasm_tbl (pd.DataFrame): subassembly results, indexed by barcode seq
+        rna_tbl (pd.DataFrame):  RNAseq results (e.g., psi values), indexed by barcode seq
+        exon_coords (list of int tuples): coordinates of cloned exons
+        min_usable_reads_per_bc (int): min # reads associated with barcode to be considered
+        isonames (list of str): names of isoforms; for each entry 'x', a column 'x_psi' should exist in rna_tbl
+
+    Returns:
+        pd.DataFrame with per-variant summary values;  mean_x, wmean_x, and median_x are the
+        across barcodes mean, read-count-weighted mean, and median psi values for each
+        isoform x
+    """
+
+    sa_filt = subasm_tbl.query( 'n_variants_passing==1' ).copy()
+
+    li_rna = rna_tbl.index.intersection( sa_filt.index )
+
+    rna_isect = rna_tbl.loc[ li_rna ].copy()
+
+    rna_isect_psi = compute_psi_values( rna_isect, iso_col = isonames )
+
+    if isonames is None:
+        isonames = [ cn[ :cn.rindex( '_' ) ] for cn in rna_isect_psi.columns if cn.endswith( 'psi' ) ]
+        assert len( isonames ) > 0, 'cant infer the isoform name columns; please specify them in parameter isonames'
+
+    rna_isect_psi[ 'varlist' ] = sa_filt.loc[ li_rna, 'variant_list' ]
+
+    out_tbl = blanktbl( ['chrom','pos','ref','alt','varlist','n_bc','n_bc_passfilt','sum_reads','sum_reads_passfilt', ] +
+                        [ 'sum_{}'.format( cn ) for cn in summary_cols ] +
+                        [ 'mean_{}'.format(cn) for cn in isonames ] +
+                        [ 'wmean_{}'.format(cn) for cn in isonames ] +
+                        [ 'median_{}'.format(cn) for cn in isonames ] )
+
+    for singlevar, subtbl in rna_isect_psi.groupby( 'varlist' ):
+
+        subtbl_filt = subtbl.loc[ subtbl.usable_reads > min_usable_reads_per_bc ].copy()
+
+        out_tbl['varlist'].append(singlevar)
+        out_tbl['chrom'].append(singlevar.split(':')[0])
+        out_tbl['pos'].append(int(singlevar.split(':')[1]))
+        out_tbl['ref'].append(singlevar.split(':')[2])
+        out_tbl['alt'].append(singlevar.split(':')[3])
+
+        out_tbl['n_bc'].append( subtbl.shape[0] )
+        out_tbl['n_bc_passfilt'].append( subtbl_filt.shape[0] )
+
+        out_tbl['sum_reads'].append( subtbl['num_reads'].sum() )
+
+        if subtbl_filt.shape[0]==0:
+            out_tbl['sum_reads_passfilt'].append( 0 )
+
+            for col in summary_cols:
+                out_tbl[ f'sum_{col}' ].append( 0 )
+
+            for iso in isonames:
+                out_tbl[ f'mean_{iso}' ].append( None )
+                out_tbl[ f'wmean_{iso}' ].append( None )
+                out_tbl[ f'median_{iso}' ].append( None )
+
+            continue
+        #this is tricky to think about
+        #currently set so that its counting reads after removing the barcodes not passing the filter
+        else:
+            out_tbl['sum_reads_passfilt'].append( subtbl_filt['num_reads'].sum() )
+
+            for col in summary_cols:
+                out_tbl[ f'sum_{col}' ].append( subtbl_filt[ col ].sum()  )
+
+            for iso in isonames:
+                # mean psi
+                out_tbl[ f'mean_{iso}' ].append( subtbl_filt[ f'{iso}_psi' ].mean() )
+                # mean psi, weighted by #usable reads
+                if subtbl_filt['usable_reads'].sum() != 0:
+                    out_tbl[ f'wmean_{iso}' ].append( ( subtbl_filt[ f'{iso}_psi' ] * subtbl_filt['usable_reads'] ).sum() / subtbl_filt['usable_reads'].sum() )
+                else:
+                    out_tbl[ f'wmean_{iso}' ].append( np.nan )
+                # median psi
+                out_tbl[ f'median_{iso}' ].append( subtbl_filt[ f'{iso}_psi' ].median() )
+
+    out_tbl = pd.DataFrame( out_tbl )
+
+    out_tbl = count_bcs_per_var_sa( out_tbl,
+                                    sa_filt )
+
+    #these two are have the total barcode/read count in the denominator
+    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+
+    #these columns are based of barcodes which are passing the filter
+    #so only reads from barcodes passing the filter are used in the denominator
+    for col in summary_cols:
+        out_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
+
+    return out_tbl
+
 def count_bcs_per_var_sa( rna_tbl,
                           satbl ):
 
@@ -227,15 +332,14 @@ def count_bcs_per_var_sa( rna_tbl,
 
     return out_tbl
 
-def summarize_byvar_WT(
-    subasm_tbl,
-    rna_tbl,
-    min_usable_reads_per_bc,
-    isonames=None ):
-
+def summarize_byvar_WT( rna_tbl,
+                        exon_coords,
+                        min_usable_reads_per_bc,
+                        chrom,
+                        isonames=None ):
     """
     Summarize per-variant effects across associated barcodes.
-    Considers only wild type clones; other barcodes are ignored.
+    Considers only single-variant clones; barcodes w/ ≥1 variants are ignored.
 
     Args:
         subasm_tbl (pd.DataFrame): subassembly results, indexed by barcode seq
@@ -250,51 +354,78 @@ def summarize_byvar_WT(
         isoform x
     """
 
-
-    sa_filt = subasm_tbl.query( 'status=="no_variants_input" & n_variants_passing==0' ).copy()
-
-    li_rna = rna_tbl.index.intersection( sa_filt.index )
-
-    rna_isect = rna_tbl.loc[ li_rna ].copy()
+    rna_psi = compute_psi_values( rna_tbl, iso_col = isonames )
 
     if isonames is None:
-        isonames = [ cn for cn in rna_isect.columns if cn.endswith('psi') ]
+        isonames = [ cn[ :cn.rindex('_') ] for cn in rna_psi.columns if cn.endswith('psi') ]
         assert len(isonames)>0, 'cant infer the isoform name columns; please specify them in parameter isonames'
-    out_tbl = blanktbl(
-        ['n_bc','n_bc_passfilt',
-         'sum_reads',
-         'sum_usable_reads',
-         'sum_unmapped_reads',
-         'sum_badstart_reads',
-         'sum_otheriso'] +
-         [ 'mean_{}'.format(cn) for cn in isonames ] +
-         [ 'wmean_{}'.format(cn) for cn in isonames ] +
-         [ 'median_{}'.format(cn) for cn in isonames ] +
-         [ 'std_{}'.format(cn) for cn in isonames ]
-    )
 
-    rna_isect_filt = rna_isect.loc[ rna_isect.usable_reads >= min_usable_reads_per_bc ].copy()
+    rna_psi_filt = rna_psi.loc[ rna_psi.usable_reads > min_usable_reads_per_bc ].copy()
 
-    out_tbl['n_bc'].append( rna_isect.shape[0] )
-    out_tbl['n_bc_passfilt'].append( rna_isect_filt.shape[0] )
+    out_tbl = {}
 
-    out_tbl['sum_reads'].append( rna_isect_filt['num_reads'].sum() )
-    out_tbl['sum_usable_reads'].append( rna_isect_filt['usable_reads'].sum()  )
-    out_tbl['sum_unmapped_reads'].append( rna_isect_filt['unmapped_reads'].sum()  )
-    out_tbl['sum_badstart_reads'].append( rna_isect_filt['bad_starts'].sum()  )
-    out_tbl['sum_otheriso'].append( rna_isect_filt['other_isoform'].sum()  )
+    out_tbl[ 'chrom' ] = [ chrom ]
+    out_tbl[ 'varlist' ] = [ 'WT' ]
 
-    for iso in isonames:
-        # mean psi
-        out_tbl[ f'mean_{iso}' ].append( rna_isect_filt[ f'{iso}_psi' ].mean() )
-        # mean psi, weighted by #usable reads
-        out_tbl[ f'wmean_{iso}' ].append( ( rna_isect_filt[ f'{iso}_psi' ] * rna_isect_filt['usable_reads'] ).sum() / rna_isect_filt['usable_reads'].sum() )
-        # median psi
-        out_tbl[ f'median_{iso}' ].append( rna_isect_filt[ f'{iso}_psi' ].median() )
-        # standard deviation psi
-        out_tbl[ f'std_{iso}' ].append( rna_isect_filt[ f'{iso}_psi' ].std() )
+    out_tbl[ 'n_bc' ] = [ rna_psi.shape[ 0 ] ]
+    out_tbl[ 'n_bc_passfilt' ] = [ rna_psi_filt.shape[ 0 ] ]
+
+    out_tbl[ 'sum_reads' ] = [ rna_psi.num_reads.sum() ]
+
+    if rna_psi_filt.shape[ 0 ] == 0:
+
+        out_tbl[ 'sum_reads_passfilt' ] = [ 0 ]
+        out_tbl[ 'sum_usable_reads' ] = [ 0 ]
+        out_tbl[ 'sum_unmapped_reads' ] = [ 0 ]
+        out_tbl[ 'sum_badstart_reads' ] = [ 0 ]
+        out_tbl[ 'sum_badend_reads' ] = [ 0 ]
+        out_tbl[ 'sum_softclipped_reads' ] = [ 0 ]
+        out_tbl[ 'sum_otheriso' ] = [ 0 ]
+
+        for iso in isonames:
+            out_tbl[ f'mean_{iso}' ] = [ None ]
+            out_tbl[ f'wmean_{iso}' ] = [ None ]
+            out_tbl[ f'median_{iso}' ] = [ None ]
+            out_tbl[ f'stdev_{iso}' ] = [ None ]
+
+    else:
+
+        out_tbl[ 'sum_reads_passfilt' ] = [ rna_psi_filt.num_reads.sum() ]
+        out_tbl[ 'sum_usable_reads' ] = [ rna_psi_filt.usable_reads.sum() ]
+        out_tbl[ 'sum_unmapped_reads' ] = [ rna_psi_filt.unmapped_reads.sum() ]
+        out_tbl[ 'sum_badstart_reads' ] = [ rna_psi_filt.bad_starts.sum() ]
+        out_tbl[ 'sum_badend_reads' ] = [ rna_psi_filt.bad_ends.sum() ]
+        out_tbl[ 'sum_softclipped_reads' ] = [ rna_psi_filt.soft_clipped.sum() ]
+        out_tbl[ 'sum_otheriso' ] = [ rna_psi_filt.other_isoform.sum() ]
+
+        for iso in isonames:
+            # mean psi
+            out_tbl[ f'mean_{iso}' ] = [ rna_psi_filt[ f'{iso}_psi' ].mean() ]
+            # mean psi, weighted by #usable reads
+            if rna_psi_filt.usable_reads.sum() != 0:
+                out_tbl[ f'wmean_{iso}' ] = [ ( rna_psi_filt[ f'{iso}_psi' ] * rna_psi_filt.usable_reads ).sum() / rna_psi_filt.usable_reads.sum() ]
+            else:
+                out_tbl[ f'wmean_{iso}' ] = [ np.nan ]
+                # median psi
+            out_tbl[ f'median_{iso}' ] = [ rna_psi_filt[ f'{iso}_psi' ].median() ]
+            out_tbl[ f'stdev_{iso}' ] = [ rna_psi_filt[ f'{iso}_psi' ].std() ]
+            out_tbl[ f'wstdev_{iso}' ] = [ np.sqrt( ( rna_psi_filt.usable_reads  * ( rna_psi_filt[ f'{iso}_psi' ] - out_tbl[ f'wmean_{iso}' ][ 0 ] )**2 ).sum() \
+                                                    / ( rna_psi_filt.usable_reads.sum() - 1 ) ) ]
 
     out_tbl = pd.DataFrame( out_tbl )
+
+    #these two are have the total barcode/read count in the denominator
+    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+
+    #these columns are based of barcodes which are passing the filter
+    #so only reads from barcodes passing the filter are used in the denominator
+    out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
 
     return out_tbl
 
@@ -347,6 +478,70 @@ def combine_rep_pervartbls_wide(
 
     return tblout
 
+def create_variables_across_samples( wide_tbl,
+                                     lsampnames,
+                                     median_cols = [],
+                                     mean_cols = [],
+                                     sum_cols = [],
+                                     max_cols = [] ):
+
+    wide = wide_tbl.copy()
+
+    if median_cols:
+
+        for col in median_cols:
+
+            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
+
+            wide[ col + '_med' ] = wide[ samp_cols ].median( axis = 1 )
+
+    if mean_cols:
+
+        for col in mean_cols:
+
+            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
+
+            wide[ col + '_mean' ] = wide[ samp_cols ].mean( axis = 1 )
+
+    if sum_cols:
+
+        for col in sum_cols:
+
+            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
+
+            wide[ col + '_sum' ] = wide[ samp_cols ].sum( axis = 1 )
+
+    if max_cols:
+
+        for col in max_cols:
+
+            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
+
+            wide[ col + '_max' ] = wide[ samp_cols ].max( axis = 1 )
+
+    return wide
+
+def compute_bc_weighted_psi( wide_tbl,
+                             lsampnames,
+                             isonames,
+                             bccount,
+                              ):
+
+    wide = wide_tbl.copy()
+
+    samp_bc_cols = [ '_'.join( [ samp, bccount ] ) for samp in lsampnames ]
+
+    for col in isonames:
+
+        #we tend to use the wmean more often so this is intentionally a mean of the wmeans
+        wide[ 'mean_' + col ] = wide[ [ '_'.join( [ samp, 'wmean', col ] ) for samp in lsampnames ] ].mean( axis = 1 )
+
+        #this probably would look better as a numpy array dot product but we survived
+        wide[ 'wmean_' + col ] = pd.DataFrame( ( wide[ '_'.join( [ samp, 'wmean', col ] ) ] * wide[ '_'.join( [ samp, bccount ] ) ]
+                                                   for samp in lsampnames ) ).T.sum( axis = 1) \
+                                             / wide[ samp_bc_cols ].sum( axis = 1 )
+
+    return wide
 
 def combine_rep_pervartbls_long(
     ltbls,

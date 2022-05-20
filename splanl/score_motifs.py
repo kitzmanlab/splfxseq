@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import zipfile as zp
 from maxentpy import maxent
+import scipy.stats as ss
+import splanl.custom_splai_scores as css
 
 def ImportFastA(fastafile):
     """Opens a fasta file, discards the header, and returns the sequence.
@@ -96,44 +98,88 @@ def score_motifs_max( refseq,
     return outdf
 
 def score_motifs_mean( refseq,
-                motif_df,
-               score_col,
-                vardf,
-                k,
-                col_stem):
+                       exon_coords,
+                       motif_df,
+                       vardf,
+                       k,
+                      col_stem = 'esrseq',
+                      score_col = 'score',
+                      rev_strand = False,
+                      var_merge_cols = [ 'pos', 'ref', 'alt' ] ):
 
     tbv = vardf.copy()
     mdf = motif_df.copy()
 
-    pos_min = tbv.pos.min()
+    if not rev_strand:
 
-    cloneseq = refseq[ pos_min - k: tbv.pos.max() + k ]
+        score_seq = refseq[ exon_coords[ 0 ] : exon_coords[ 1 ] ]
 
-    wt = { i + pos_min: np.mean( [ float( mdf.loc[ kseq, score_col ] ) if kseq in mdf.index else 0
-          for kseq in ExtractKmers( cloneseq[ i: i + ( 2*k - 1) ], k ) ] )
-          for i in range( len( cloneseq ) - 2*( k - 1 ) ) }
+    else:
 
-    wtdf = pd.DataFrame( list( wt.values() ), index = list( wt.keys() ), columns = [ col_stem + '_wtMEAN' ] )
+        score_seq = css.rev_complement( refseq[ exon_coords[ 0 ] - 1 : exon_coords[ 1 ] ] )
 
-    mut = { ( i + pos_min, alt ) : np.mean( [ float( mdf.loc[ kseq, score_col ] ) if kseq in mdf.index else 0
-             for kseq in ExtractKmers( cloneseq[ i: i + ( k - 1) ] + alt + cloneseq[ i + k : i + ( 2*k - 1) ], k ) ] )
-             for i in range( len( cloneseq ) - 2*( k - 1 ) )
-             for alt in [ 'A', 'C', 'G', 'T' ] if cloneseq[ i + k - 1 ] != alt
+    wt = { ( i, score_seq[ i + k - 1 ] ) :
+            np.mean( [ float( mdf.loc[ kseq, score_col ] ) if kseq in mdf.index else 0
+          for kseq in ExtractKmers( score_seq[ i: i + ( 2*k - 1) ], k ) ] )
+          for i in range( len( score_seq ) - 2*( k - 1 ) ) }
+
+    wtdf = pd.DataFrame( list( wt.values() ),
+                         index = pd.MultiIndex.from_tuples( wt ),
+                         columns = [ col_stem + '_wtMEAN' ] )
+    wtdf.index = wtdf.index.set_names( [ var_merge_cols[ 0 ], var_merge_cols[ 1 ] ] )
+    wtdf = wtdf.reset_index()
+
+    mut = { ( i, score_seq[ i + k - 1 ], alt ) : np.mean( [ float( mdf.loc[ kseq, score_col ] ) if kseq in mdf.index else 0
+             for kseq in ExtractKmers( score_seq[ i: i + ( k - 1) ] + alt + score_seq[ i + k : i + ( 2*k - 1) ], k ) ] )
+             for i in range( len( score_seq ) - 2*( k - 1 ) )
+             for alt in [ 'A', 'C', 'G', 'T' ] if score_seq[ i + k - 1 ] != alt
            }
 
-    mutdf = pd.DataFrame( list( mut.values() ), index=pd.MultiIndex.from_tuples( mut ), columns=[ col_stem+'_snvMEAN' ] )
-    mutdf.index = mutdf.index.set_names ( [ 'pos', 'alt' ] )
+    mutdf = pd.DataFrame( list( mut.values() ),
+                          index=pd.MultiIndex.from_tuples( mut ),
+                          columns=[ col_stem+'_snvMEAN' ] )
+    mutdf.index = mutdf.index.set_names ( var_merge_cols )
+    mutdf = mutdf.reset_index()
 
-    change = { ( p, a ): mut[ ( p, a ) ] - wt[ p ] for p,a in mutdf.index }
+    change = { ( p, score_seq[ p + k - 1 ], a ): mut[ ( p, score_seq[ p + k - 1 ],  a ) ] - wt[ ( p, score_seq[ p + k - 1 ] ) ]
+                for p, a in zip( mutdf[ var_merge_cols [ 0 ] ], mutdf[ var_merge_cols [ 2 ] ] ) }
 
     changedf = pd.DataFrame( list( change.values() ), index=pd.MultiIndex.from_tuples( change ), columns=[ col_stem+'_chgMEAN' ] )
-    changedf.index = changedf.index.set_names ( [ 'pos', 'alt' ] )
+    changedf.index = changedf.index.set_names ( var_merge_cols )
+    changedf = changedf.reset_index()
 
-    outdf = pd.merge( tbv, wtdf, how = 'left', left_on = 'pos', right_on = wtdf.index ).set_index( [ 'pos', 'alt' ] )
-    outdf = pd.merge( outdf, mutdf, how = 'left', left_index = True, right_index = True )
-    outdf = pd.merge( outdf, changedf, how = 'left', left_index = True, right_index = True ).reset_index()
-    firstCol = [ 'chrom', 'pos', 'ref', 'alt' ]
-    outdf = outdf[ firstCol + [ c for c in outdf.columns if c not in firstCol ] ]
+    outdf = wtdf.set_index( [ var_merge_cols[ 0 ], var_merge_cols[ 1 ] ] ).merge( mutdf.set_index( [ var_merge_cols[ 0 ], var_merge_cols[ 1 ] ] ),
+                        how = 'outer',
+                        left_index = True,
+                        right_index = True ).reset_index()
+
+    outdf = outdf.set_index( var_merge_cols ).merge( changedf.set_index( var_merge_cols ),
+                                                     how = 'outer',
+                                                     left_index = True,
+                                                     right_index = True ).reset_index()
+
+    if not rev_strand:
+
+        outdf[ var_merge_cols[ 0 ] ] += exon_coords[ 0 ] + ( k - 1 )
+
+    else:
+
+        outdf[ var_merge_cols[ 0 ] ] = [ exon_coords[ 1 ] - ( k - 1 ) - p for p in outdf[ var_merge_cols[ 0 ] ] ]
+
+    return outdf
+
+def merge_ke( tbl_by_var,
+              ke_scores,
+              index_cols = [ 'pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index_cols ).copy()
+
+    ke = ke_scores.set_index( index_cols ).copy()
+
+    outdf = tbv.merge( ke,
+                       how = 'left',
+                       left_index = True,
+                       right_index = True ).reset_index()
 
     return outdf
 
@@ -164,7 +210,8 @@ def WT_binding_df( refseq,
 def create_hal_input_df( varlist,
                          refseq,
                          exon_coords,
-                         wt_psi ):
+                         wt_psi,
+                         rev_strand = False ):
 
     out_dict = { 'var_name': [],
                  'refseq': [],
@@ -175,24 +222,35 @@ def create_hal_input_df( varlist,
 
         pos = int( var.split( ':' )[ 1 ] )
 
-        if exon_coords[ 1 ]>= pos >= exon_coords[ 0 ]:
+        if exon_coords[ 1 ] >= pos > exon_coords[ 0 ]:
 
             ref = var.split( ':' )[ 2 ]
             alt = var.split( ':' )[ 3 ]
 
             #adjust for 0 and 1 based numbering
-            assert refseq[ pos - 1 ] == ref, \
+            assert refseq[ pos - 1: pos - 1 + len( ref ) ].upper() == ref, \
             'Expected reference allele does not match sequence - check numbering'
 
             out_dict[ 'var_name' ].append( var )
-            #hal only works on exonic sequences and wants 6 downstream intronic bases in lowercase
-            out_dict[ 'refseq' ].append( refseq[ exon_coords[ 0 ] - 1: exon_coords[ 1 ] ] \
-                                         + refseq[ exon_coords[ 1 ]: exon_coords[ 1 ] + 6 ].lower() )
-            #adds in the alternate allele at the reference spot - only tested for SNVS
-            out_dict[ 'altseq' ].append( refseq[ exon_coords[ 0 ] - 1: pos - 1 ] \
-                                        + alt
-                                        + refseq[ pos: exon_coords[ 1 ] ]
-                                         + refseq[ exon_coords[ 1 ]: exon_coords[ 1 ] + 6 ].lower() )
+
+            if not rev_strand:
+                #hal only works on exonic sequences and wants 6 downstream intronic bases in lowercase
+                out_dict[ 'refseq' ].append( refseq[ exon_coords[ 0 ] : exon_coords[ 1 ] ].upper() \
+                                            + refseq[ exon_coords[ 1 ]: exon_coords[ 1 ] + 6 ].lower() )
+                #adds in the alternate allele at the reference spot - only tested for SNVS
+                out_dict[ 'altseq' ].append( refseq[ exon_coords[ 0 ] : pos - 1 ].upper() \
+                                            + alt
+                                            + refseq[ pos - 1 + len( ref ): exon_coords[ 1 ] ].upper()
+                                            + refseq[ exon_coords[ 1 ]: exon_coords[ 1 ] + 6 ].lower() )
+
+            else:
+                out_dict[ 'refseq' ].append( css.rev_complement( refseq[ exon_coords[ 0 ] - 6: exon_coords[ 0 ] ].lower() \
+                                                                 + refseq[ exon_coords[ 0 ] : exon_coords[ 1 ] ].upper() )  )
+                out_dict[ 'altseq' ].append( css.rev_complement( refseq[ exon_coords[ 0 ] - 6: exon_coords[ 0 ] ].lower() \
+                                                                 + refseq[ exon_coords[ 0 ] : pos - 1 ].upper() \
+                                                                 + alt \
+                                                                 + refseq[ pos - 1 + len( ref ): exon_coords[ 1 ] ].upper() )  )
+
             out_dict[ 'psi' ] = wt_psi
 
     out_tbl = pd.DataFrame( out_dict )
@@ -201,93 +259,394 @@ def create_hal_input_df( varlist,
 
 def merge_hal( var_df,
                hal_df,
-               index = [ 'varlist' ]):
+               index = [ 'varlist' ],
+               out_raw_col = 'hal_PSI',
+               out_chg_col = 'hal_chgPER',
+             ):
 
     tbv = var_df.copy().set_index( index )
 
     thal = hal_df.copy()
-    thal = thal.rename( columns = { 'VARIANT_NAME': 'varlist', 'DELTA_PSI': 'hal_chgPER' } )
-    thal = thal[ index + [ 'hal_chgPER' ] ].set_index( index )
+    thal = thal.rename( columns = { 'VARIANT_NAME': 'varlist', 'MUT_PSI': out_raw_col, 'DELTA_PSI': out_chg_col } )
+    thal = thal[ index + [ out_raw_col, out_chg_col ] ].set_index( index )
 
     out_tbl = pd.merge( tbv, thal, how = 'left', on = index ).reset_index()
 
     return out_tbl
 
-def get_spidex_scores( chrom,
-                       coords,
-                       spidex_dir,
-                       rev_strand = False ):
+def merge_squirls( tbl_by_var,
+                   squirls_df,
+                   transcript = None,
+                   out_score_col = 'squirls_score',
+                   out_sdv_col = 'squirls_sdv',
+                   index_cols = [ 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index_cols ).copy()
+
+    if transcript:
+
+        squirls_df = squirls_df.loc[ squirls_df.tx_accession.str.startswith( transcript ) ].copy()
+
+    squirls = squirls_df.rename( columns = { 'squirls_score': out_score_col,
+                                              'pos': index_cols[ 0 ] } ).set_index( index_cols ).copy()
+
+    assert len( squirls ) > 0, 'No data selected to merge - is the transcript in the table?'
+
+    squirls[ out_sdv_col ] = squirls.interpretation == 'pathogenic'
+
+    tbv = tbv.merge( squirls[ [ out_score_col, out_sdv_col ] ],
+                     how = 'left',
+                     left_index = True,
+                     right_index = True ).reset_index()
+
+    return tbv
+
+def get_spidex_scores_by_region( chrom,
+                                 coords,
+                                 spidex_dir,
+                                 rev_strand = False ):
+
+    print( 'Sit back and relax - it takes ~4 minutes to unzip the spidex file...' )
 
     if len( str( chrom ) ) > 2:
-        chrom = int( chrom[3:] )
-
-    if rev_strand:
-        trans_tbl = str.maketrans( 'ACGT', 'TGCA' )
-
-    out_dict = { 'chrom': [],
-                 'gdna_pos_hg19': [],
-                 'ref': [],
-                 'alt': [],
-                 'spanr_chgPER_tissue': [],
-                 'spanr_chgZPER': []
-               }
+        chrom = chrom[ 3: ]
 
     zf = zp.ZipFile( spidex_dir )
-    with zf.open( 'hg19_spidex.txt' ) as f:
 
-        first_line = True
+    spidex = pd.read_csv( zf.open( 'hg19_spidex.txt' ),
+                          sep = '\t',
+                          dtype = { '#Chr': str } )
 
-        for line in f:
+    zf.close()
 
-            if first_line:
+    out_df = spidex.loc[ ( spidex[ '#Chr' ] == chrom ) &
+                         ( spidex.Start > coords[ 0 ] ) &
+                         ( coords[ 1 ] >= spidex.End ) ].copy()
 
-                first_line = False
-                continue
+    out_df = out_df.drop( columns = 'End' )
 
-            else:
+    out_df = out_df.rename( columns = { '#Chr': 'chrom',
+                                        'Start': 'hg19_pos',
+                                        'Ref': 'ref',
+                                        'Alt': 'alt',
+                                        'dpsi_max_tissue': 'spanr_chgPER_tissue',
+                                        'dpsi_zscore': 'spanr_chgZPER' } )
 
-                row = line.decode('utf-8').strip().split( '\t' )
+    if rev_strand:
 
-                if int( row[ 0 ] ) != chrom:
-                    continue
+        trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
 
-                pos = int( row[1] )
+        out_df[ 'ref' ] = [ r.translate( trans_tbl ) for r in out_df.ref ]
+        out_df[ 'alt' ] = [ a.translate( trans_tbl ) for a in out_df.alt ]
 
-                if coords[ 0 ] <= pos <= coords[ 1 ]:
+    return out_df
 
-                    out_dict[ 'chrom' ].append( int( row[ 0 ] ) )
-                    out_dict[ 'gdna_pos_hg19' ].append( pos )
+def get_spidex_scores_by_variant( varlist,
+                                  spidex_dir,
+                                  rev_strand = False ):
 
-                    if rev_strand:
-                        out_dict[ 'ref' ].append( row[ 3 ].translate( trans_tbl ) )
-                        out_dict[ 'alt' ].append( row[ 4 ].translate( trans_tbl ) )
-                    else:
-                        out_dict[ 'ref' ].append( row[ 3 ] )
-                        out_dict[ 'alt' ].append( row[ 4 ] )
-                    out_dict[ 'spanr_chgPER_tissue' ].append( float( row[ 5 ] ) )
-                    out_dict[ 'spanr_chgZPER' ].append( float( row[ 6 ] ) )
+    print( 'Sit back and relax - it takes ~4 minutes to unzip the spidex file...' )
 
-                #trying to save some time since I'm not iterating efficiently here
-                elif pos > coords[ 1 ]:
+    zf = zp.ZipFile( spidex_dir )
 
-                    break
+    spidex = pd.read_csv( zf.open( 'hg19_spidex.txt' ),
+                          sep = '\t',
+                          dtype = { '#Chr': str } )
 
-    out_tbl = pd.DataFrame( out_dict )
+    zf.close()
 
-    return out_tbl
+    if rev_strand:
+
+        trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
+
+        spidex[ 'Ref' ] = [ r.translate( trans_tbl ) for r in spidex.Ref ]
+        spidex[ 'Alt' ] = [ a.translate( trans_tbl ) for a in spidex.Alt ]
+
+    spidex = spidex.set_index( [ '#Chr', 'Start', 'Ref', 'Alt' ] )
+
+    out_df = spidex.loc[ varlist ].reset_index().copy()
+
+    out_df = out_df.drop( columns = 'End' )
+
+    out_df = out_df.rename( columns = { '#Chr': 'chrom',
+                                        'Start': 'hg19_pos',
+                                        'Ref': 'ref',
+                                        'Alt': 'alt',
+                                        'dpsi_max_tissue': 'spanr_chgPER_tissue',
+                                        'dpsi_zscore': 'spanr_chgZPER' } )
+
+    return out_df
+
+def clean_tbx_spidex( spidex,
+                      rev_strand = False ):
+
+    spid = spidex.copy()
+
+    if rev_strand:
+
+        trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
+
+        spid[ 'Ref' ] = [ r.translate( trans_tbl ) for r in spid.Ref ]
+        spid[ 'Alt' ] = [ a.translate( trans_tbl ) for a in spid.Alt ]
+
+    spid = spid.rename( columns = { '#Chr': 'chrom',
+                                    'Start': 'hg19_pos',
+                                    'Ref': 'ref',
+                                    'Alt': 'alt',
+                                    'dpsi_max_tissue': 'spanr_chgPER_tissue',
+                                    'dpsi_zscore': 'spanr_chgZPER' } )
+
+    return spid
 
 def merge_spidex( var_df,
                   spidex_df,
-                  index = [ 'gdna_pos_hg19', 'ref', 'alt' ] ):
+                  index = [ 'hg19_pos', 'ref', 'alt' ] ):
 
     tbv = var_df.copy().set_index( index )
 
     tsp = spidex_df.copy().set_index( index )
-    tsp = tsp.drop( columns = 'chrom' )
+    tsp = tsp.drop( columns = [ 'chrom', 'End' ] )
 
     out_tbl = pd.merge( tbv, tsp, how = 'left', on = index ).reset_index()
 
     return out_tbl
+
+def get_scap_scores( scap_vcf,
+                     replace_common = np.nan ):
+
+    out_d = { 'chrom': [],
+              'hg19_pos': [],
+              'ref': [],
+              'alt': [],
+              'scap_type': [],
+              'scap_raw': [],
+              'scap_sens': [],
+              'scap_raw_dom': [],
+              'scap_sens_dom': [],
+              'scap_raw_rec': [],
+              'scap_sens_rec': [],}
+
+    for var in scap_vcf:
+
+        info_tup = var.info[ 'SCAP' ]
+
+        for idx, alt in enumerate( var.alts ):
+
+            out_d[ 'chrom' ].append( str( var.chrom ) )
+            out_d[ 'hg19_pos' ].append( var.pos )
+            out_d[ 'ref' ].append( var.ref )
+            out_d[ 'alt' ].append( alt )
+
+            info_cols = info_tup[ idx ].split( ':' )
+
+            out_d[ 'scap_type' ].append( info_cols[ 1 ] )
+            out_d[ 'scap_raw' ].append( info_cols[ 2 ] )
+            out_d[ 'scap_sens' ].append( info_cols[ 3 ] )
+            out_d[ 'scap_raw_dom' ].append( info_cols[ 4 ] )
+            out_d[ 'scap_sens_dom' ].append( info_cols[ 5 ] )
+            out_d[ 'scap_raw_rec' ].append( info_cols[ 6 ] )
+            out_d[ 'scap_sens_rec' ].append( info_cols[ 7 ] )
+
+    outdf = pd.DataFrame( out_d )
+
+    outdf = outdf.replace( '.', np.nan )
+    outdf = outdf.replace( 'COMMON', replace_common )
+
+    try:
+
+        score_cols = [ 'scap_raw', 'scap_sens', 'scap_raw_dom', 'scap_sens_dom', 'scap_raw_rec', 'scap_sens_rec', ]
+        outdf[ score_cols ] = outdf[ score_cols ].astype( float )
+
+    except:
+
+        print( 'Cannot coerce scap scores to float' )
+
+    outdf[ 'scap_raw_max' ] = outdf[ [ col for col in outdf if 'scap_raw' in col ] ].max( axis = 1 )
+    outdf[ 'scap_sens_min' ] = outdf[ [ col for col in outdf if 'scap_sens' in col ] ].min( axis = 1 )
+
+    return outdf
+
+def merge_scap( tbl_by_var,
+                scap_scores,
+              index_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index_cols ).copy()
+
+    scap = scap_scores.set_index( index_cols ).copy()
+
+    outdf = tbv.merge( scap,
+                       how = 'left',
+                       left_index = True,
+                       right_index = True ).reset_index()
+
+    return outdf
+
+def merge_splai( tbl_by_var,
+                 splai_scores,
+                 index_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index_cols ).copy()
+
+    splai = splai_scores.rename( columns = { 'pos': index_cols[ 1 ] } ).set_index( index_cols ).copy()
+
+    outdf = tbv.merge( splai,
+                       how = 'left',
+                       left_index = True,
+                       right_index = True ).reset_index()
+
+    return outdf
+
+def remove_training( tbl_by_var,
+                     train_df,
+                     score_cols,
+                     train_col,
+                     out_col_suff = '_not',
+                     index = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index ).copy()
+
+    train = train_df.set_index( index ).copy()
+
+    tbv[ train_col ] = False
+
+    in_train = train.index.intersection( tbv.index )
+
+    print( '%i of training data variants intersect with measured data' % len( in_train ) )
+
+    if len( in_train ) > 0:
+
+        tbv.loc[ in_train, train_col ] = True
+
+        for col in score_cols:
+
+            tbv[ col + out_col_suff ] = [ score if not in_t else np.nan
+                                                for score,in_t in zip( tbv[ col ], tbv[ train_col ] ) ]
+
+    tbv = tbv.reset_index()
+
+    return tbv
+
+def maxent_score_wt( refseq,
+                     pos_l,
+                     rev_strand = False ):
+
+    #NOW in score_motifs!
+
+    outtbl = {}
+
+    outtbl[ 'pos' ] = pos_l
+
+    outtbl[ 'ref' ] = [ refseq[ p - 1 ] for p in pos_l ]
+
+    if not rev_strand:
+
+        outtbl[ 'wt_acc_pr' ] = [ maxent.score3( refseq[ pos - 1 - 20: pos - 1 + 3 ] ) for pos in pos_l ]
+        outtbl[ 'wt_don_pr' ] = [ maxent.score5( refseq[ pos - 1 - 2: pos - 1 + 7 ] ) for pos in pos_l ]
+
+    else:
+
+        outtbl[ 'wt_acc_pr' ] = [ maxent.score3( css.rev_complement( refseq[ pos - 1 - 2: pos - 1 + 21 ] ) )
+                                  for pos in pos_l ]
+        outtbl[ 'wt_don_pr' ] = [ maxent.score5( css.rev_complement( refseq[ pos - 1 - 6: pos - 1 + 3 ] ) )
+                                  for pos in pos_l ]
+
+    outdf = pd.DataFrame( outtbl )
+
+    return outdf
+
+def maxent_score_donors( refseq,
+                         tbl_by_var,
+                         pos_col,
+                         ref_col,
+                         alt_col,
+                         donor_pos_l,
+                         rev_strand = False ):
+
+    #NOW in score_motifs!
+
+    tbv = tbl_by_var.copy()
+
+    if not rev_strand:
+
+        m_pos = { pos: ( pos - 1 - 2, pos - 1 + 7 ) for pos in donor_pos_l }
+
+    else:
+
+        m_pos = { pos: ( pos - 1 - 6, pos - 1 + 3 ) for pos in donor_pos_l }
+
+    maxent_scores = { pos: [] for pos in donor_pos_l }
+
+    for dpos in donor_pos_l:
+
+        for p,ra in zip( tbv[ pos_col ], zip( tbv[ ref_col ], tbv[ alt_col ] ) ):
+
+            p = p - 1
+            ref,alt = ra
+
+            if p < m_pos[ dpos ][ 0 ] or p >= m_pos[ dpos ][ 1 ]:
+
+                maxent_scores[ dpos ].append( np.nan )
+
+            else:
+
+                if not rev_strand:
+
+                    assert ref.upper() == refseq[ p ].upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    maxent_scores[ dpos ].append( maxent.score5( refseq[ m_pos[ dpos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ dpos ][ 1 ] ] ) )
+
+                else:
+
+                    assert ref.upper() == css.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    maxent_scores[ dpos ].append( maxent.score5( css.rev_complement( refseq[ m_pos[ dpos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ dpos ][ 1 ] ] ) ) )
+
+    return maxent_scores
+
+def maxent_score_acceptors( refseq,
+                            tbl_by_var,
+                            pos_col,
+                            ref_col,
+                            alt_col,
+                            acceptor_pos_l,
+                            rev_strand = False ):
+
+    #NOW in score_motifs!
+
+    tbv = tbl_by_var.copy()
+
+    if not rev_strand:
+
+        m_pos = { pos: ( pos - 1 - 20, pos - 1 + 3 ) for pos in acceptor_pos_l }
+
+    else:
+
+        m_pos = { pos: ( pos - 1 - 2, pos - 1 + 21 ) for pos in acceptor_pos_l }
+
+    maxent_scores = { pos: [] for pos in acceptor_pos_l }
+
+    for apos in acceptor_pos_l:
+
+        for p,ra in zip( tbv[ pos_col ], zip( tbv[ ref_col ], tbv[ alt_col ] ) ):
+
+            p = p - 1
+            ref,alt = ra
+
+            if p < m_pos[ apos ][ 0 ] or p >= m_pos[ apos ][ 1 ]:
+
+                maxent_scores[ apos ].append( np.nan )
+
+            else:
+
+                if not rev_strand:
+
+                    assert ref.upper() == refseq[ p ].upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    maxent_scores[ apos ].append( maxent.score3( refseq[ m_pos[ apos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ apos ][ 1 ] ] ) )
+
+                else:
+
+                    assert ref.upper() == css.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    maxent_scores[ apos ].append( maxent.score3( css.rev_complement( refseq[ m_pos[ apos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ apos ][ 1 ] ] ) ) )
+
+    return maxent_scores
 
 def compute_maxent_scores( byvartbl,
                            refseq,
@@ -386,6 +745,165 @@ def score_donor( pos,
 
     return score
 
+def score_maxent_allvar( tbl_by_var,
+                         refseq,
+                         out_col = ( 'maxent_3ss', 'maxent_5ss' ),
+                         rev_strand = False ):
+
+    tbv = tbl_by_var.copy()
+
+    trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
+
+    me3_mtx = maxent.load_matrix3()
+    me5_mtx = maxent.load_matrix5()
+
+    me3ss = []
+    me5ss = []
+
+    for p, ra in zip( tbv.pos, zip( tbv.ref, tbv.alt ) ):
+
+        ref, alt = ra
+
+        #print( p, ra )
+
+        assert refseq[ p - 1: p - 1 + len( ref ) ].upper() == ref.upper(), \
+        'Reference does not match for %i:%s>%s' % ( p, ref, alt )
+
+        if not rev_strand:
+
+            wt3 = np.array( [ maxent.score3( refseq[ p + i - 23 + len( ref ) - 1 : p + i + len( ref ) - 1 ],
+                                                     matrix = me3_mtx
+                                                   )
+                              for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
+
+            var3 = np.array( [ maxent.score3( refseq[ p + i - 23 + len( ref ) - 1 : p - 1 ] \
+                                                       + alt \
+                                                       + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ],
+                                                      matrix = me3_mtx
+                                                    )
+                               for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
+
+            wt5 = np.array( [ maxent.score5( refseq[ p + i - 9 + len( ref ) - 1 : p + i + len( ref ) - 1 ],
+                                                     matrix = me5_mtx
+                                                   )
+                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
+
+            var5 = np.array( [ maxent.score5( refseq[ p + i - 9 + len( ref ) - 1 : p - 1 ] \
+                                                       + alt \
+                                                       + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ],
+                                                      matrix = me5_mtx
+                                                    )
+                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
+
+        else:
+
+            wt3 = np.array( [ maxent.score3( refseq[ p + i - 23 + len( ref ) - 1 : p + i + len( ref ) - 1 ].translate( trans_tbl )[ ::-1 ],
+                                                     matrix = me3_mtx
+                                                   )
+                              for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
+
+            var3 = np.array( [ maxent.score3( ( refseq[ p + i - 23 + len( ref ) - 1 : p - 1 ] \
+                                                       + alt \
+                                                       + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ] ).translate( trans_tbl )[ ::-1 ],
+                                                      matrix = me3_mtx
+                                                    )
+                               for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
+
+            wt5 = np.array( [ maxent.score5( refseq[ p + i - 9 + len( ref ) - 1 : p + i + len( ref ) - 1 ].translate( trans_tbl )[ ::-1 ],
+                                                     matrix = me5_mtx
+                                                   )
+                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
+
+            var5 = np.array( [ maxent.score5( ( refseq[ p + i - 9 + len( ref ) - 1 : p - 1 ] \
+                                                        + alt \
+                                                        + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ] ).translate( trans_tbl )[ ::-1 ],
+                                                      matrix = me5_mtx
+                                                    )
+                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
+
+        ss3_diff = var3 - wt3
+        ss5_diff = var5 - wt5
+
+        if len( wt3 ) > 0:
+            me3ss.append( max( ss3_diff.max(), ss3_diff.min(), key = abs ) )
+        else:
+            print( 'No 3ss scores appended for %i:%s>%s' % ( p, ref, alt ) )
+            me3ss.append( np.nan )
+
+        if len( wt5 ) > 0:
+            me5ss.append( max( ss5_diff.max(), ss5_diff.min(), key = abs ) )
+        else:
+            print( 'No 5ss scores appended for %i:%s>%s' % ( p, ref, alt ) )
+            me5ss.append( np.nan )
+
+    tbv[ out_col[ 0 ] ] = me3ss
+    tbv[ out_col[ 1 ] ] = me5ss
+
+    return tbv
+
+def get_pangolin_scores( pangolin_vcf ):
+
+    out_d = { 'chrom': [],
+              'hg19_pos': [],
+              'ref': [],
+              'alt': [],
+              'pang_incr': [],
+              'pang_incr_pos': [],
+              'pang_decr': [],
+              'pang_decr_pos': [],
+              'pang_max': [],
+              'pang_max_type': [],
+              'pang_max_pos': [] }
+
+    for var in pangolin_vcf:
+
+        if 'Pangolin' not in var.info:
+
+            print( 'Variant %s:%s>%s was not scored' % ( var.pos, var.ref, var.alts[ 0 ] ) )
+            continue
+
+        out_d[ 'chrom' ].append( str( var.chrom ) )
+        out_d[ 'hg19_pos' ].append( var.pos )
+        out_d[ 'ref' ].append( var.ref )
+        out_d[ 'alt' ].append( var.alts[ 0 ] )
+
+        info_tup = var.info[ 'Pangolin' ]
+
+        out_d[ 'pang_incr' ].append( float( info_tup[ 0 ].split( '|' )[ 1 ].split( ':' )[ 1 ] ) )
+        out_d[ 'pang_incr_pos' ].append( int( info_tup[ 0 ].split( '|' )[ 1 ].split( ':' )[ 0 ] ) )
+        out_d[ 'pang_decr' ].append( float( info_tup[ 0 ].split( '|' )[ 2 ].split( ':' )[ 1 ] ) )
+        out_d[ 'pang_decr_pos' ].append( int( info_tup[ 0 ].split( '|' )[ 2 ].split( ':' )[ 0 ] ) )
+
+        score_keys = [ 'pang_incr', 'pang_decr' ]
+
+        #first get the maximum probability across the difference scores
+        out_d[ 'pang_max' ].append( max( [ out_d[ key ][ -1 ] for key in score_keys ], key = abs ) )
+
+        #then get the type of event that represents the maximum probability
+        out_d[ 'pang_max_type' ].append( [ key for key in score_keys
+                                          if out_d[ key ][ -1 ] == out_d[ 'pang_max' ][ -1 ] ][ 0 ] )
+        #finally, get the location of the event associated with the highest difference score
+        out_d[ 'pang_max_pos' ].append( out_d[ out_d[ 'pang_max_type' ][ -1 ] + '_pos' ][ -1 ] )
+
+    outdf = pd.DataFrame( out_d )
+
+    return outdf
+
+def merge_pangolin( tbl_by_var,
+                    pangolin_scores,
+                    index_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index_cols ).copy()
+
+    pang = pangolin_scores.set_index( index_cols ).copy()
+
+    outdf = tbv.merge( pang,
+                       how = 'left',
+                       left_index = True,
+                       right_index = True ).reset_index()
+
+    return outdf
+
 def score_RBP_motifs(refseq,
                      motifdf,
                      vardf,
@@ -448,14 +966,122 @@ def score_RBP_motifs(refseq,
 
 def merge_mmsplice( var_df,
                     mmsplice_df,
-                    index = [ 'gdna_pos_hg19', 'ref', 'alt' ] ):
+                    index = [ 'hg19_pos', 'ref', 'alt' ],
+                    transcript = None ):
 
     tbv = var_df.set_index( index ).copy()
 
     tmm = mmsplice_df.copy()
+
+    if transcript:
+
+        tmm = tmm.loc[ tmm.transcript_id.str.startswith( transcript ) ].copy()
+
     tmm = tmm.rename( columns = { 'delta_logit_psi': 'mmsplice_chgPERlogit' } )
-    tmm = tmm[ index + [ 'mmsplice_chgPERlogit' ] ].set_index( index )
+    tmm = tmm.rename( columns = { 'pathogenicity': 'mmsplice_pathogen' } )
+    tmm = tmm.rename( columns = { 'efficiency': 'mmsplice_eff' } )
+    tmm = tmm.rename( columns = { 'transcript_id': 'mmsplice_trans' } )
+    tmm = tmm[ index + [ 'mmsplice_chgPERlogit', 'mmsplice_pathogen', 'mmsplice_eff', 'mmsplice_trans' ] ].set_index( index )
+
+    if not tmm.index.is_unique:
+
+        tmm = tmm.reset_index().groupby( index + [ 'mmsplice_trans' ] )[ [ 'mmsplice_chgPERlogit', 'mmsplice_pathogen', 'mmsplice_eff' ] ].max()
 
     out_tbl = pd.merge( tbv, tmm, how = 'left', on = index ).reset_index()
+
+    return out_tbl
+
+def nom_RBPs( tbl_byvar,
+              rbp_info,
+              sdv_col,
+              region_cds,
+              wt_bind_thresh,
+              chg_thresh,
+              p_thresh,
+              rbp_suff = '_wtMAX', ):
+
+    tbv = tbl_byvar.loc[ ( tbl_byvar.pos >= region_cds[ 0 ] ) & ( tbl_byvar.pos <= region_cds[ 1 ] ) ].copy()
+    info = rbp_info.copy()
+
+    rbp_cols = [ col for col in tbv if col.endswith( rbp_suff ) ]
+
+    #counts number of sdvs
+    sdv = tbv[ sdv_col ].sum()
+
+    #counts total number of variants in region
+    total = len( tbv )
+
+    out_dict = {}
+
+    for motif_id in rbp_cols:
+
+        rbp_name = info[ ( info.Motif_ID == motif_id[ : -len( rbp_suff ) ] ) \
+                         & ( info.RBP_Species == 'Homo_sapiens') ].RBP_Name.tolist()
+
+        #some of the RBP aren't from humans - skip these
+        if len( rbp_name ) == 0:
+            continue
+
+        #gets the maximum WT binding 'affinity' to SDVs in the defined region
+        wtmax = ( tbv.loc[ ( tbv[ sdv_col ] ) ][ [ 'pos',  motif_id ] ]
+                .groupby( [ 'pos' ] )
+                .agg( np.nanmean ) ).max()[ 0 ]
+
+        #if it is below the set threshold, the protein doesn't bind there - move on
+        if wtmax < wt_bind_thresh:
+            continue
+
+        #counts the number of variants (not necessarily SDV) which break the motif
+        #counting the number of variants in the defined region with a change score lower than the threshold
+        snv_below =  ( tbv[ motif_id.replace( 'wt', 'chg' ) ] <= chg_thresh ).sum()
+
+        #if no variants break the motif, move on
+        if snv_below == 0:
+            continue
+
+        #counts number of sdv positions with WT binding above threshold
+        wt_above = ( ( tbv.loc[ ( tbv[ sdv_col ] ) ][ [ 'pos', motif_id ] ]
+                    .groupby( [ 'pos', ] )
+                    .agg( np.nanmean ) ) >= wt_bind_thresh ).sum()
+
+        #counts number of SDVs with a change score below threshold
+        sdv_snv_below = ( tbv.loc[ tbv[ sdv_col ] ]
+                         [ motif_id.replace( 'wt', 'chg' ) ] <= chg_thresh ).sum()
+
+        assert sdv_snv_below + ( sdv - sdv_snv_below ) + ( snv_below - sdv_snv_below ) + ( total - sdv ) - ( snv_below - sdv_snv_below ) == len( tbv )
+        #compares the number of variants breaking the motif between SDVs and neutral variants
+        odds, p = ss.fisher_exact( [ [ sdv_snv_below, sdv - sdv_snv_below ],
+                                       [ snv_below - sdv_snv_below, ( total - sdv ) - ( snv_below - sdv_snv_below ) ] ]
+                                   )
+
+        #checks that the relationship is significant, and in the right direction (odds ratio > 1)
+        if p < p_thresh and odds > 1:
+            out_dict[ '_'.join( rbp_name + [ motif_id[ : -len( rbp_suff ) ] ] ) ] = \
+                           ( wtmax,
+                             ss.fisher_exact( [ [ sdv_snv_below,
+                                                  sdv - sdv_snv_below ],
+                                                [ snv_below - sdv_snv_below,
+                                                ( total - sdv ) - ( snv_below - sdv_snv_below ) ] ] )
+                            )
+
+    return out_dict
+
+def merge_cadd( var_df,
+                cadd_df,
+                index = [ 'pos', 'ref', 'alt' ] ):
+
+    tbv = var_df.copy().set_index( index )
+
+    tcadd = cadd_df.copy()
+    tcadd = tcadd.rename( columns = { 'Pos': 'pos',
+                                      'Ref': 'ref',
+                                      'Alt': 'alt',
+                                      'RawScore': 'cadd_raw',
+                                      'PHRED': 'cadd_scaled' } )
+
+    #the annotations are creating duplicate rows - scores appear to be equal
+    tcadd = tcadd[ index + [ 'cadd_raw', 'cadd_scaled' ] ].groupby( index ).mean()
+
+    out_tbl = pd.merge( tbv, tcadd, how = 'left', on = index ).reset_index()
 
     return out_tbl
