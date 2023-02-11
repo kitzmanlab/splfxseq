@@ -4,11 +4,7 @@ import numpy as np
 
 def create_gnomad_df( gnomad_tbx,
                         chrom,
-                        coords,
-                        rev_strand = False ):
-
-    if rev_strand:
-        comp = str.maketrans( 'ACGT', 'TGCA' )
+                        coords, ):
 
     out_tbl = { 'chrom': [],
                 'gdna_pos_hg38': [],
@@ -27,12 +23,8 @@ def create_gnomad_df( gnomad_tbx,
         #add one to account for stupid 0 and 1 based indexing issues
         out_tbl[ 'gdna_pos_hg38' ].append( row.pos + 1 )
 
-        if rev_strand:
-            out_tbl[ 'ref' ].append( row.ref.translate( comp ) )
-            out_tbl[ 'alt' ].append( row.alt.translate( comp ) )
-        else:
-            out_tbl[ 'ref' ].append( row.ref )
-            out_tbl[ 'alt' ].append( row.alt )
+        out_tbl[ 'ref' ].append( row.ref )
+        out_tbl[ 'alt' ].append( row.alt )
 
         linfo = row.info.split(';')
         #turn it into a dictionary so we can grab based on key names

@@ -207,11 +207,12 @@ def WT_binding_df( refseq,
 
     return wt_df
 
-def create_hal_input_df( varlist,
-                         refseq,
-                         exon_coords,
-                         wt_psi,
-                         rev_strand = False ):
+def create_hal_skip_input_df( varlist,
+                              refseq,
+                              exon_coords,
+                              wt_psi,
+                              rev_strand = False ):
+#this was formerly known as create_hal_input_df - previous notebooks will use that function
 
     out_dict = { 'var_name': [],
                  'refseq': [],
@@ -224,8 +225,8 @@ def create_hal_input_df( varlist,
 
         if exon_coords[ 1 ] >= pos > exon_coords[ 0 ]:
 
-            ref = var.split( ':' )[ 2 ]
-            alt = var.split( ':' )[ 3 ]
+            ref = var.split( ':' )[ 2 ].upper()
+            alt = var.split( ':' )[ 3 ].upper()
 
             #adjust for 0 and 1 based numbering
             assert refseq[ pos - 1: pos - 1 + len( ref ) ].upper() == ref, \
@@ -252,6 +253,92 @@ def create_hal_input_df( varlist,
                                                                  + refseq[ pos - 1 + len( ref ): exon_coords[ 1 ] ].upper() )  )
 
             out_dict[ 'psi' ] = wt_psi
+
+    out_tbl = pd.DataFrame( out_dict )
+
+    return out_tbl
+
+def create_hal_5ss_input_df( varlist,
+                             refseq,
+                             acc_coords,
+                             don_coords,
+                             wt_psi,
+                             rev_strand = False ):
+
+    out_dict = { 'var_name': [],
+                 'refseq': [],
+                 'altseq': [],
+                 'psi': [] }
+
+    assert len( don_coords ) == 2, 'HAL only scores one alt donor at a time!'
+
+    assert don_coords[ 0 ] < don_coords[ 1 ], 'Please enter your donor coordinates from least to greatest value'
+
+    if not rev_strand:
+
+        for var in varlist:
+
+            pos = int( var.split( ':' )[ 1 ] )
+
+            if acc_coords >= pos > don_coords[ 1 ]:
+
+                ref = var.split( ':' )[ 2 ].upper()
+                alt = var.split( ':' )[ 3 ].upper()
+
+                #adjust for 0 and 1 based numbering
+                assert refseq[ pos - 1: pos - 1 + len( ref ) ].upper() == ref, \
+                'Expected reference allele does not match sequence - check numbering'
+
+                out_dict[ 'var_name' ].append( var )
+
+                out_dict[ 'refseq' ].append( refseq[ acc_coords : don_coords[ 0 ] ].upper() \
+                                            + refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower() )
+
+                if pos <= don_coords[ 0 ]:
+                    out_dict[ 'altseq' ].append( refseq[ acc_coords[ 0 ] : pos - 1 ].upper()
+                                                 + alt
+                                                 + refseq[ pos - 1 + len( ref ): don_coords[ 0 ] ].upper()
+                                                 + refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower() )
+                else:
+                    out_dict[ 'altseq' ].append( refseq[ acc_coords[ 0 ] : don_coords[ 0 ] ].upper()
+                                                 + refseq[ don_coords[ 0 ]: pos - 1 ].lower()
+                                                 + alt.lower()
+                                                 + refseq[ pos - 1 + len( ref ): don_coords[ 1 ] ].lower() )
+
+                out_dict[ 'psi' ].append( wt_psi )
+
+    else:
+
+        for var in varlist:
+
+            pos = int( var.split( ':' )[ 1 ] )
+
+            if don_coords[ 1 ] >= pos > acc_coords:
+
+                ref = var.split( ':' )[ 2 ].upper()
+                alt = var.split( ':' )[ 3 ].upper()
+
+                #adjust for 0 and 1 based numbering
+                assert refseq[ pos - 1: pos - 1 + len( ref ) ].upper() == ref, \
+                'Expected reference allele does not match sequence - check numbering'
+
+                out_dict[ 'var_name' ].append( var )
+
+                out_dict[ 'refseq' ].append( css.rev_complement( refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower()
+                                                                 + refseq[ don_coords[ 1 ] : acc_coords ].upper() ) )
+
+                if pos <= don_coords[ 1 ]:
+                    out_dict[ 'altseq' ].append( css.rev_complement( refseq[ don_coords[ 0 ]: pos - 1 ].lower()
+                                                                     + alt.lower()
+                                                                     + refseq[ pos - 1 + len( ref ): don_coords[ 1 ] ].lower()
+                                                                     + refseq[ don_coords[ 1 ] : acc_coords ].upper() ) )
+                else:
+                    out_dict[ 'altseq' ].append( css.rev_complement( refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower()
+                                                                     + refseq[ don_coords[ 1 ] : pos - 1 ].upper()
+                                                                     + alt
+                                                                     + refseq[ pos - 1 + len( ref ): acc_coords ].upper() ) )
+
+                out_dict[ 'psi' ].append( wt_psi )
 
     out_tbl = pd.DataFrame( out_dict )
 
@@ -528,13 +615,12 @@ def remove_training( tbl_by_var,
 
 def maxent_score_wt( refseq,
                      pos_l,
-                     rev_strand = False ):
-
-    #NOW in score_motifs!
+                     rev_strand = False,
+                     pos_out_col = 'pos' ):
 
     outtbl = {}
 
-    outtbl[ 'pos' ] = pos_l
+    outtbl[ pos_out_col  ] = pos_l
 
     outtbl[ 'ref' ] = [ refseq[ p - 1 ] for p in pos_l ]
 
@@ -1085,3 +1171,263 @@ def merge_cadd( var_df,
     out_tbl = pd.merge( tbv, tcadd, how = 'left', on = index ).reset_index()
 
     return out_tbl
+
+def branchpointer_ds_scores( branchpointer_df ):
+
+    bp = branchpointer_df.copy()
+
+    bp_ref = bp.loc[ bp.status == 'REF' ].copy()
+
+    bp_alt = bp.loc[ bp.status == 'ALT' ].copy()
+
+    #to3primepoint is the key column to compare the probabilities
+    idx_cols = [ 'seqnames', 'start', 'end', 'width', 'strand', 'id', 'ref_allele', 'alt_allele', 'to_3prime',
+                 'to_5prime', 'same_gene', 'exon_3prime', 'exon_5prime', 'to_3prime_point', 'to_5prime_point',
+                  'test_site', ]
+    bp_m = bp_ref.set_index( idx_cols ).merge( bp_alt.set_index( idx_cols ),
+                                               how = 'outer',
+                                               left_index = True,
+                                               right_index = True,
+                                               suffixes = ( '_ref', '_alt' ) ).reset_index()
+
+
+    bp_m[ 'DBP' ] = bp_m.branchpoint_prob_alt - bp_m.branchpoint_prob_ref
+
+    return bp_m
+
+def branchpointer_ds_max( branchpointer_ds_df ):
+
+    bp = branchpointer_ds_df.copy()
+
+    bp[ 'DBP_abs' ] = bp.DBP.abs()
+
+    ds_max = bp.groupby( [ 'id', 'start', 'ref_allele', 'alt_allele' ] ).DBP_abs.max().reset_index().copy()
+
+    ds_sign = bp.loc[ bp.groupby( [ 'id', 'start', 'ref_allele', 'alt_allele' ] ).DBP.apply( lambda x: x.abs().idxmax() ) ][ [ 'id', 'start', 'ref_allele', 'alt_allele', 'DBP' ] ].copy()
+
+    ds_sign = ds_sign.rename( columns = { 'DBP': 'DBP_max_signed' } )
+    ds_sign[ 'DBP_event' ] = [ 'GAIN' if dbp > 0 else 'LOSS' for dbp in ds_sign.DBP_max_signed ]
+
+    pos_max = bp.loc[ bp.groupby( [ 'id', 'start', 'ref_allele', 'alt_allele' ] ).DBP.apply( lambda x: x.abs().idxmax() ) ][ [ 'id', 'start', 'ref_allele', 'alt_allele', 'test_site' ] ].copy()
+
+    pos_max[ 'DBP_POS_max' ] = pos_max.test_site - pos_max.start
+
+    idx_cols = [ 'id', 'start', 'ref_allele', 'alt_allele' ]
+    outdf = ds_max.set_index( idx_cols )[ [ 'DBP_abs' ] ].merge( ds_sign.set_index( idx_cols )[ [ 'DBP_event' ] ],
+                                                                 how = 'outer',
+                                                                 left_index = True,
+                                                                 right_index = True )
+    outdf = outdf.merge( pos_max.set_index( idx_cols )[ [ 'DBP_POS_max' ] ],
+                         how = 'outer',
+                         left_index = True,
+                         right_index = True ).reset_index()
+
+    outdf = outdf.rename( columns = { 'start': 'hg19_pos',
+                                      'ref_allele': 'ref',
+                                      'alt_allele': 'alt',
+                                      'DBP_abs': 'DBP_max' } )
+
+    return outdf
+
+def merge_branchpointer( tbl_by_var,
+                         branchpointer_max_df,
+                         idx_cols = [ 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.copy()
+    bp = branchpointer_max_df.copy()
+
+    outdf = tbv.set_index( idx_cols ).merge( bp.set_index( idx_cols )[ [ 'DBP_max', 'DBP_event', 'DBP_POS_max' ] ],
+                                             how = 'outer',
+                                             left_index = True,
+                                             right_index = True ).reset_index()
+
+    return outdf
+
+def comb_bpp_scores( bpp_fn,
+                     bpp_wt,
+                     rev_strand = False ):
+
+    merged_files = []
+
+    idx_cols = [ 'bp_pos' ]
+
+    for bpp_df in bpp_fn.values():
+
+        bpp_df[ 'hg19_pos' ] = bpp_df[ '#id' ].apply( lambda x: int( x[ 1: ].split( ':' )[ 0 ] ) )
+        bpp_df[ 'ref' + rev_strand*'_c' ] = bpp_df[ '#id' ].apply( lambda x: x.split( ':' )[ 1 ].split( '>' )[ 0 ] )
+        bpp_df[ 'alt' + rev_strand*'_c' ] = bpp_df[ '#id' ].apply( lambda x: x.split( ':' )[ 1 ].split( '>' )[ 1 ] )
+
+        merged_files.append( bpp_df.set_index( idx_cols ).merge( bpp_wt.set_index( idx_cols )[ [ 'sc_bps', 'sc_ppt', 'sc', 'zsc_bps', 'zsc_ppt', 'zsc' ] ],
+                                                                 left_index = True,
+                                                                 right_index = True,
+                                                                 how = 'outer',
+                                                                 suffixes = ( '', '_wt' ) ).reset_index() )
+
+    allvar_bpp = pd.concat( merged_files,
+                             ignore_index = True )
+
+    for col in [ 'zsc_bps', 'zsc_ppt', 'zsc' ]:
+
+        allvar_bpp[ 'DS_' + col ] = allvar_bpp[ col ] - allvar_bpp[ col + '_wt' ]
+
+    return allvar_bpp
+
+def bpp_ds_max( bpp_ds_df,
+                first_ex_bp,
+                zcols = [ 'DS_zsc_bps', 'DS_zsc_ppt', 'DS_zsc' ],
+                rev_strand = False ):
+
+    bpp = bpp_ds_df.copy()
+
+    idx_cols = [ '#id', 'ref' + rev_strand*'_c', 'alt' + rev_strand*'_c' ]
+
+    for col in zcols:
+
+        bpp[ col + '_abs' ] = bpp[ col ].abs()
+
+    ds_max = bpp.groupby( idx_cols + [ 'hg19_pos' ] )[ [ col + '_abs' for col in zcols ] ].max().reset_index().copy()
+
+    ds_sign = bpp.groupby( idx_cols )[ zcols ].apply( lambda x: x.abs().idxmax() ).reset_index().copy()
+
+    for col in zcols:
+
+        ds_sign[ col + '_max' ] = bpp.loc[ ds_sign[ col ], col ].tolist()
+
+    pos_max = bpp.groupby( idx_cols )[ zcols ].apply( lambda x: x.abs().idxmax() ).reset_index().copy()
+
+    for col in zcols:
+
+        pos_max[ col + 'bp_pos' ] = bpp.loc[ pos_max[ col ] ].bp_pos.tolist()
+        pos_max[ col + 'hg19_pos' ] = bpp.loc[ pos_max[ col ] ].hg19_pos.tolist()
+
+        pos_max[ col + '_POS_max' ] = ( first_ex_bp - ( 1 + -2*rev_strand )*pos_max[ col + 'bp_pos' ] ) - pos_max[ col + 'hg19_pos' ]
+
+
+    outdf = ds_max.set_index( idx_cols )[ [ 'hg19_pos' ] ].merge( ds_sign.set_index( idx_cols )[ [ col + '_max' for col in zcols ] ],
+                                                                  how = 'outer',
+                                                                  left_index = True,
+                                                                  right_index = True )
+
+    outdf = outdf.merge( pos_max.set_index( idx_cols )[ [ col + '_POS_max' for col in zcols ] ],
+                         how = 'outer',
+                         left_index = True,
+                         right_index = True ).reset_index()
+
+    return outdf
+
+def merge_bpp( tbl_by_var,
+               bpp_max_df,
+               rev_strand = False,
+               idx_cols = [ 'hg19_pos' ] ):
+
+    tbv = tbl_by_var.copy()
+    bpp = bpp_max_df.copy()
+
+    idx_cols = [ col for col in idx_cols ] + [ 'ref' + rev_strand*'_c', 'alt' + rev_strand*'_c' ]
+
+    outdf = tbv.set_index( idx_cols ).merge( bpp.set_index( idx_cols )[ [ col for col in bpp if col.startswith( 'DS_' ) ] ],
+                                             how = 'outer',
+                                             left_index = True,
+                                             right_index = True ).reset_index()
+
+    return outdf
+
+def merge_wt_branchpointer( tbl_by_var,
+                            bp_wt,
+                            tbl_by_var_merge_cols = [ 'hg19_pos' ] ):
+
+    tbv = tbl_by_var.copy()
+
+    bp = bp_wt.copy()
+
+    bp = bp.rename( columns = { 'test_site': 'hg19_pos',
+                                'branchpoint_prob': 'bp_wt_prob' } )
+
+    tbv = tbv.set_index( tbl_by_var_merge_cols ).merge( bp.set_index( tbl_by_var_merge_cols )[ [ 'bp_wt_prob' ] ],
+                                                        left_index = True,
+                                                        right_index = True,
+                                                        how = 'left' ).reset_index()
+
+    return tbv
+
+def merge_bpp_wt( tbl_by_var,
+                  bpp_wt,
+                  first_ex_bp,
+                  merge_pos_col = 'hg19_pos',
+                  rev_strand = False ):
+
+    tbv = tbl_by_var.copy()
+
+    bpp = bpp_wt.copy()
+
+    bpp[ merge_pos_col ] = first_ex_bp - ( 1 + -2*rev_strand )*bpp.bp_pos
+
+    bpp = bpp.rename( columns = { 'zsc_bps': 'zbpp_wt_bps',
+                                  'zsc_ppt': 'zbpp_wt_ppt',
+                                  'zsc': 'zbpp_wt' } )
+
+    tbv = tbv.set_index( merge_pos_col ).merge( bpp.set_index( merge_pos_col )[ [ 'zbpp_wt_bps','zbpp_wt_ppt','zbpp_wt' ] ],
+                                                left_index = True,
+                                                right_index = True,
+                                                how = 'outer' ).reset_index()
+
+    return tbv
+
+def get_consplice_scores( pysam_vcf,
+                          hg19_liftover_bed,
+                          hg38_liftover_bed ):
+
+    hg19b = hg19_liftover_bed.copy()
+    hg38b = hg38_liftover_bed.copy()
+
+    assert len( hg19b ) == len( hg38b ), 'Bedfiles are of different lengths!'
+
+    hg38tohg19_lift = { chrom: { hg38:hg19
+                                 for hg38, hg19 in zip( hg38b.loc[ hg38b.chrom == chrom ].hg38_pos, hg19b.loc[ hg19b.chrom == chrom ].hg19_pos ) }
+                         for chrom in hg38b.chrom.unique() }
+
+    outd = { 'chrom': [],
+             'hg38_pos': [],
+             'hg19_pos': [],
+             'ref': [],
+             'alt': [],
+             'consplice': [],
+             'conspliceml': [] }
+
+    for rec in pysam_vcf:
+
+        outd[ 'chrom' ].append( rec.chrom )
+        outd[ 'hg38_pos' ].append( rec.pos )
+        if outd[ 'chrom' ][ -1 ] not in hg38tohg19_lift:
+            if outd[ 'chrom' ][ -1 ].startswith( 'chr' ):
+                outd[ 'hg19_pos' ].append( hg38tohg19_lift[ outd[ 'chrom' ][ -1 ][ 3: ] ][ outd[ 'hg38_pos' ][ -1 ] ] )
+            else:
+                outd[ 'hg19_pos' ].append( hg38tohg19_lift[ 'chr' + str( outd[ 'chrom' ][ -1 ] ) ][ outd[ 'hg38_pos' ][ -1 ] ] )
+        else:
+            outd[ 'hg19_pos' ].append( hg38tohg19_lift[ outd[ 'chrom' ][ -1 ] ][ outd[ 'hg38_pos' ][ -1 ] ] )
+        outd[ 'ref' ].append( rec.ref )
+        outd[ 'alt' ].append( rec.alts[ 0 ] )
+        outd[ 'consplice' ].append( float( rec.info[ 'ConSplice' ][ 0 ].split( '|' )[ -1 ] ) )
+        outd[ 'conspliceml' ].append( float( rec.info[ 'ConSpliceML' ][ 0 ].split( '|' )[ -1 ] ) )
+
+    pysam_vcf.close()
+
+    outdf = pd.DataFrame( outd )
+
+    return outdf
+
+def merge_consplice( tbl_by_var,
+                     consplice_df,
+                     idx_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.copy()
+    conspl = consplice_df.copy()
+
+    assert 'hg38_pos' not in tbv.columns or 'hg38_pos' in idx_cols, 'Add hg38_pos to idx_cols if its already in tbl_by_var!'
+
+    outdf = tbv.set_index( idx_cols ).merge( conspl.set_index( idx_cols ),
+                                             how = 'left',
+                                             left_index = True,
+                                             right_index = True ).reset_index()
+
+    return outdf

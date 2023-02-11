@@ -11,9 +11,10 @@ def get_refseq( fa_file ):
 
     refseq = []
 
-    with pysam.FastxFile(fa_file) as fa:
-        for entry in fa:
-            refseq.append( entry.sequence )
+    with pysam.FastxFile( fa_file, 'r' ) as fa:
+        refseq = { entry.name: entry.sequence for entry in fa }
+        #for entry in fa:
+            #refseq.append( entry.sequence )
 
     return refseq
 
@@ -627,10 +628,15 @@ def bootstrap_varsp_null_distribution( null_bc_df,
             sample_tbl[ 'wmean_bs_null_' + iso ].append( np.mean( mus ) )
             sample_tbl[ 'wstdev_bs_null_' + iso ].append( np.std( mus ) )
 
-    samp_df = pd.DataFrame( sample_tbl )
+    #samp_df = pd.DataFrame( sample_tbl )
 
-    tbv = pd.concat( [ tbv.reset_index(), samp_df.reset_index() ],
-                      axis = 1, )
+    for iso in iso_names:
+
+        tbv[ 'wmean_bs_null_' + iso ] = sample_tbl[ 'wmean_bs_null_' + iso ]
+        tbv[ 'wstdev_bs_null_' + iso ] = sample_tbl[ 'wstdev_bs_null_' + iso ]
+
+    #tbv = pd.concat( [ tbv.reset_index(), samp_df.reset_index() ],
+                      #axis = 1, )
 
     print( 'done' )
 
@@ -677,19 +683,41 @@ def sdv_by_iso( tbl_byvar,
                 z_thresh,
                 fc_col_stem,
                 fc_thresh,
+                chg_null_col_stem = None,
+                chg_meas_col_stem = None,
+                chg_thresh = None,
                 out_col_stem = 'sdv_',
-                abs_val = True ):
+                bi_directional = True ):
 
     tbv = tbl_byvar.copy()
 
+    if chg_null_col_stem or chg_meas_col_stem:
+
+        assert chg_thresh, 'To test for change in PSI please specify null column, measured column, and change in PSI threshold'
+
     for iso in iso_names:
 
-        if abs_val:
-            tbv[ out_col_stem + iso ] = ( np.abs( tbv[ z_col_stem + iso ] ) >= z_thresh ) \
-                                        & ( tbv[ fc_col_stem + iso ] >= fc_thresh )
+        if not chg_thresh:
+
+            if bi_directional:
+                tbv[ out_col_stem + iso ] = ( np.abs( tbv[ z_col_stem + iso ] ) >= z_thresh ) \
+                                            & ( ( tbv[ fc_col_stem + iso ] >= fc_thresh ) | ( tbv[ fc_col_stem + iso ] <= 1/fc_thresh ) )
+            else:
+                tbv[ out_col_stem + iso ] = ( tbv[ z_col_stem + iso ] >= z_thresh ) \
+                                            & ( tbv[ fc_col_stem + iso ] >= fc_thresh )
+
         else:
-            tbv[ out_col_stem + iso ] = ( tbv[ z_col_stem + iso ] >= z_thresh ) \
-                                        & ( tbv[ fc_col_stem + iso ] >= fc_thresh )
+
+            assert chg_null_col_stem and chg_meas_col_stem, 'To test for change in PSI please specify null column, measured column, and change in PSI threshold'
+
+            if bi_directional:
+                tbv[ out_col_stem + iso ] = ( np.abs( tbv[ z_col_stem + iso ] ) >= z_thresh ) \
+                                            & ( ( tbv[ fc_col_stem + iso ] >= fc_thresh ) | ( tbv[ fc_col_stem + iso ] <= 1/fc_thresh ) ) \
+                                            & ( np.abs( tbv[ chg_meas_col_stem + iso ] - tbv[ chg_null_col_stem + iso ] ) >= chg_thresh )
+            else:
+                tbv[ out_col_stem + iso ] = ( tbv[ z_col_stem + iso ] >= z_thresh ) \
+                                            & ( tbv[ fc_col_stem + iso ] >= fc_thresh ) \
+                                            & ( ( tbv[ chg_meas_col_stem + iso ] - tbv[ chg_null_col_stem + iso ] ) >= chg_thresh )
 
     return tbv
 
@@ -894,3 +922,143 @@ def saturate_variants( tbl_by_var,
                                                                 right_index = True ).reset_index()
 
     return by_ex_d
+
+def merge_clinvar( tbl_by_var,
+                   clinvar,
+                   index_cols = [ 'hg19_pos', 'ref', 'alt' ] ):
+
+    tbv = tbl_by_var.set_index( index_cols ).copy()
+    cv = clinvar.set_index( index_cols ).copy()
+
+    tbv = tbv.merge( cv,
+                     how = 'left',
+                     left_index = True,
+                     right_index = True ).reset_index()
+
+    tbv[ 'clinvar' ] = tbv[ 'clinvar_interp' ].notnull()
+
+    return tbv
+
+def get_transcriptome_per( transcriptome_df,
+                           tbl_by_var,
+                           pred_cols ):
+
+    tbv = tbl_by_var.copy()
+    trans = transcriptome_df.copy()
+
+    for col in pred_cols:
+
+        tool_df = trans.loc[ trans[ col ].notnull() ][ col ].copy()
+
+        col_name = '_'.join( [ col.split( '_' )[ 0 ].lower(), 'per' ] )
+
+        if col_name in tbv:
+
+            tbv = tbv.drop( columns = col_name )
+
+        tbv[ col_name ] = [ ss.percentileofscore( tool_df,
+                                                  score,
+                                                  'mean' )
+                            for score in tbv[ col ] ]
+
+    return tbv
+
+def compute_sens_spec( tbl_by_var,
+                       sdv_col,
+                       tool_d ):
+
+    tbv = tbl_by_var.loc[ tbl_by_var[ sdv_col ].notnull() ].copy()
+
+    sdv = tbv[ sdv_col ].sum()
+
+    print( '%i of %i (%.1f%%) variants are disruptive' % ( sdv, len( tbv ), 100*( sdv / len( tbv ) ) ) )
+
+    outd = { 'Sensitivity': [],
+             'Specificity': [] }
+
+    for tool_col, thresh_compare in tool_d.items():
+
+        thresh, compare = thresh_compare
+
+        print( '%i missing values in column %s' % ( tbv[ tool_col ].isnull().sum(), tool_col ) )
+
+        tbv_tool = tbv.loc[ tbv[ tool_col ].notnull() ].copy()
+
+        if len( tbv_tool ) == 0:
+
+            outd[ 'Sensitivity' ].append( np.nan )
+            outd[ 'Specificity' ].append( np.nan )
+            continue
+
+        sdv_t = tbv_tool[ sdv_col ].sum()
+        neut_t = ( tbv_tool[ sdv_col ] == False ).sum()
+
+        if compare == 'gt':
+
+            outd[ 'Sensitivity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] ][ tool_col ] > thresh ).sum() / sdv_t ) )
+            outd[ 'Specificity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] == False ][ tool_col ] <= thresh ).sum() / neut_t ) )
+
+        elif compare == 'ge':
+
+            outd[ 'Sensitivity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] ][ tool_col ] >= thresh ).sum() / sdv_t ) )
+            outd[ 'Specificity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] == False ][ tool_col ] < thresh ).sum() / neut_t ) )
+
+        elif compare == 'lt':
+
+            outd[ 'Sensitivity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] ][ tool_col ] < thresh ).sum() / sdv_t ) )
+            outd[ 'Specificity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] == False ][ tool_col ] >= thresh ).sum() / neut_t ) )
+
+        elif compare == 'le':
+
+            outd[ 'Sensitivity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] ][ tool_col ] <= thresh ).sum() / sdv_t ) )
+            outd[ 'Specificity' ].append( 100*( ( tbv_tool.loc[ tbv_tool[ sdv_col ] == False ][ tool_col ] > thresh ).sum() / neut_t ) )
+
+    outdf = pd.DataFrame( outd,
+                          index = [ tool.split( '_' )[ 0 ] for tool in tool_d.keys() ] )
+
+    return outdf
+
+def aucs_wide( aucs_df,
+               tools, ):
+
+    aucs = aucs_df.copy()
+
+    aucs = aucs.rename( columns = { 'group': 'region',
+                                    'pr_auc_ub': 'pr_AUBC_95CI_UB',
+                                    'pr_auc_lb': 'pr_AUBC_95CI_LB' } )
+
+    cols = [ 'pr_AUBC_95CI_UB', 'pr_AUBC_95CI_LB' ]
+
+    aucs_w = { '_'.join( [ t, c ] ): [] for t in tools for c in cols }
+
+    aucs_w[ 'dataset' ] = []
+    aucs_w[ 'region' ] = []
+
+    for d in aucs.data.unique():
+
+        for r in aucs.region.unique():
+
+            aucs_w[ 'dataset' ].append( d )
+            aucs_w[ 'region' ].append( r )
+
+            dr_aucs = aucs.loc[ ( aucs.data == d ) & ( aucs.region == r ) ].copy()
+
+            for t in tools:
+
+                for c in cols:
+
+                    aucs_w[ '_'.join( [ t, c ] ) ].append( float( dr_aucs.loc[ dr_aucs.tool == t ][ c ] ) )
+
+    aucs_wide = pd.DataFrame( aucs_w )
+
+    return aucs_wide
+
+def compute_ecdf( data ):
+
+    cdf = np.array( data )
+
+    x = np.sort( cdf[ ~np.isnan( cdf ) ] )
+    n = x.size
+    y = np.arange( 1, n + 1 ) / n
+
+    return x,y

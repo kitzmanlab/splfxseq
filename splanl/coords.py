@@ -1,3 +1,5 @@
+import pandas as pd
+
 def pos_to_hgvspos(
     lvecpos,
     vec_corange_cloned,
@@ -82,3 +84,24 @@ def vpos_to_gpos(
     else:
         out_pos = [ gdna_crange[ 0 ] + ( pos - vec_crange[ 0 ] ) for pos in vec_pos ]
     return(out_pos)
+
+def create_liftover_bed( chrom,
+                         start,
+                         end,
+                         coords = 'hg19' ):
+
+    assert chrom.startswith( 'c' ), 'Please enter your chromosome starting with chr'
+
+    out_d = { 'chrom': [],
+              coords + '_pos': [],
+              'end': [] }
+
+    for pos in range( start, end + 1 ):
+
+        out_d[ 'chrom' ].append( chrom )
+        out_d[ coords + '_pos' ].append( pos )
+        out_d[ 'end' ].append( pos + 1 )
+
+    outdf = pd.DataFrame( out_d )
+
+    return outdf

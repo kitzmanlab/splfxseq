@@ -4,7 +4,7 @@ import numpy as np
 import scipy.stats as ss
 
 from collections import OrderedDict as odict  # default is for keys to come back out in order after I think python 3.7
-
+from collections import Counter
 import splanl.coords as cds
 
 
@@ -86,7 +86,6 @@ def compute_psi_values(
 def summarize_byvar_singlevaronly(
     subasm_tbl,
     rna_tbl,
-    exon_coords,
     min_usable_reads_per_bc,
     isonames=None ):
     """
@@ -96,7 +95,6 @@ def summarize_byvar_singlevaronly(
     Args:
         subasm_tbl (pd.DataFrame): subassembly results, indexed by barcode seq
         rna_tbl (pd.DataFrame):  RNAseq results (e.g., psi values), indexed by barcode seq
-        exon_coords (list of int tuples): coordinates of cloned exons
         min_usable_reads_per_bc (int): min # reads associated with barcode to be considered
         isonames (list of str): names of isoforms; for each entry 'x', a column 'x_psi' should exist in rna_tbl
 
@@ -210,7 +208,6 @@ def summarize_byvar_singlevaronly(
 
 def summarize_byvar_singlevaronly_pe( subasm_tbl,
                                       rna_tbl,
-                                      exon_coords,
                                       min_usable_reads_per_bc,
                                       summary_cols,
                                       isonames = None, ):
@@ -221,7 +218,6 @@ def summarize_byvar_singlevaronly_pe( subasm_tbl,
     Args:
         subasm_tbl (pd.DataFrame): subassembly results, indexed by barcode seq
         rna_tbl (pd.DataFrame):  RNAseq results (e.g., psi values), indexed by barcode seq
-        exon_coords (list of int tuples): coordinates of cloned exons
         min_usable_reads_per_bc (int): min # reads associated with barcode to be considered
         isonames (list of str): names of isoforms; for each entry 'x', a column 'x_psi' should exist in rna_tbl
 
@@ -628,10 +624,10 @@ def combine_rep_perbctbls_long(
 
 
 def combine_allisos_pervartbls_long(
-    ltbls,
-    lsampnames,
-    indexcols=['chrom','pos','ref','alt','varlist'],
-):
+                                    ltbls,
+                                    lsampnames,
+                                    indexcols=['chrom','pos','ref','alt','varlist'],
+                                    ):
 
     """
     Combine replicate variant effect tables with all isoforms (not necessarily matching column names) in long format
@@ -648,7 +644,7 @@ def combine_allisos_pervartbls_long(
 
     lcolnames = list( set( [ col for tbl in ltbls for col in tbl ] ) )
 
-    ltbls_ixd = [ tbl.set_index(indexcols).copy() for tbl in ltbls ]
+    ltbls_ixd = [ tbl.set_index( indexcols ).copy() for tbl in ltbls ]
 
     for (tbl,sampname) in zip(ltbls_ixd,lsampnames):
 
@@ -660,7 +656,7 @@ def combine_allisos_pervartbls_long(
 
     tblout = ltbls_ixd[0].append( ltbls_ixd[1:], sort = True)
 
-    tblout = tblout.reset_index()[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames] ]
+    tblout = tblout[ ['sample_grp' if 'sample' in lcolnames else 'sample']+[cn for cn in lcolnames if cn not in indexcols ] ].reset_index()
 
     return tblout
 

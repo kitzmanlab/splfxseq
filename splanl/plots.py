@@ -4,6 +4,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.transforms as tfrms
+import matplotlib.patches as patches
 from matplotlib.artist import Artist as art
 from matplotlib import gridspec
 from collections import Counter
@@ -1125,17 +1126,17 @@ def bal_pr_curves( var_df,
             auc_std = np.nanstd( auc_vals[ -1 ] )
 
             #sometimes with smaller datasets we get missing values
-            nonmissing = np.count_nonzero( ~np.isnan( auc_d[ 'pr_auc' ][ -1 ] ) )
+            nonmissing = np.count_nonzero( ~np.isnan( auc_vals[ -1 ] ) )
 
             auc_ci = ( auc_mean - 1.96*auc_std / np.sqrt( nonmissing ), auc_mean + 1.96*auc_std / np.sqrt( nonmissing ) )
 
-            leg_label = column.split( '_' )[ 0 ] + ' prAUC = %0.3f; 95%% CI = ( %0.3f, %0.3f )' % ( auc_mean, auc_ci[ 0 ], auc_ci[ 1 ] )
+            leg_label = column.split( '_' )[ 0 ] + ' prAUBC = %0.3f; 95%% CI = ( %0.3f, %0.3f )' % ( auc_mean, auc_ci[ 0 ], auc_ci[ 1 ] )
 
         else:
 
             auc_vals.append( auc( recall, precision ) )
 
-            leg_label = column.split( '_' )[ 0 ] + ' prAUC = %0.3f' % auc_d[ 'pr_auc' ][ -1 ]
+            leg_label = column.split( '_' )[ 0 ] + ' prAUBC = %0.3f' % auc_vals[ -1 ]
 
         plt.plot( 100*recall,
                   100*precision,
@@ -1217,19 +1218,22 @@ def bal_pr_curves_subplot( datasets,
 
     auc_d = { 'data': [],
               'group': [],
+              'tool': [],
                'pr_auc': [] }
+
+    if bootstraps:
+
+        auc_d[ 'pr_auc_ub' ] = []
+        auc_d[ 'pr_auc_lb' ] = []
 
     for i, name in enumerate( data.keys() ):
 
-        ax[ i ][ 0 ].set_ylabel( '%s Precision\n(%%)' % name,
+        ax[ i ][ 0 ].set_ylabel( name,
                                  fontsize = 20 )
 
         df = data[ name ]
 
         for j, cat in enumerate( categories ):
-
-            auc_d[ 'data' ].append( name )
-            auc_d[ 'group' ].append( cat )
 
             if cat != 'Transcriptome':
 
@@ -1244,19 +1248,44 @@ def bal_pr_curves_subplot( datasets,
                 print( 'Unable to plot category %s for dataset %s' % ( cat, name ) )
                 ax[ i ][ j ].set_visible( False )
 
-                for k in range( len( pred_cols ) ):
+                for col in pred_cols:
+
+                    auc_d[ 'data' ].append( name )
+                    auc_d[ 'group' ].append( cat )
+                    auc_d[ 'tool' ].append( col.split( '_' )[ 0 ] )
                     auc_d[ 'pr_auc' ].append( np.nan )
+
+                    if bootstraps:
+
+                        auc_d[ 'pr_auc_ub' ].append( np.nan )
+                        auc_d[ 'pr_auc_lb' ].append( np.nan )
+
                 continue
 
             if cat_df[ truth_col ].sum() < 2 or ( ~( cat_df[ truth_col ] ) ).sum() < 2:
 
                 print( 'Unable to plot category %s for dataset %s' % ( cat, name ) )
                 ax[ i ][ j ].set_visible( False )
-                for k in range( len( pred_cols ) ):
+
+                for col in pred_cols:
+
+                    auc_d[ 'data' ].append( name )
+                    auc_d[ 'group' ].append( cat )
+                    auc_d[ 'tool' ].append( col.split( '_' )[ 0 ] )
                     auc_d[ 'pr_auc' ].append( np.nan )
+
+                    if bootstraps:
+
+                        auc_d[ 'pr_auc_ub' ].append( np.nan )
+                        auc_d[ 'pr_auc_lb' ].append( np.nan )
+
                 continue
 
             for k, col in enumerate( pred_cols ):
+
+                auc_d[ 'data' ].append( name )
+                auc_d[ 'group' ].append( cat )
+                auc_d[ 'tool' ].append( col.split( '_' )[ 0 ] )
 
                 col_df = cat_df.dropna( subset = [ col ] ).copy()
 
@@ -1271,6 +1300,12 @@ def bal_pr_curves_subplot( datasets,
                     print( 'No non-missing values in %s column for dataset %s in category %s - skipping...' \
                            % ( col, name, cat ) )
                     auc_d[ 'pr_auc' ].append( np.nan )
+
+                    if bootstraps:
+
+                        auc_d[ 'pr_auc_ub' ].append( np.nan )
+                        auc_d[ 'pr_auc_lb' ].append( np.nan )
+
                     continue
 
                 if col_df[ truth_col ].sum() < 2 or ( ~( col_df[ truth_col ] ) ).sum() < 2:
@@ -1278,6 +1313,12 @@ def bal_pr_curves_subplot( datasets,
                     print( 'Only one event in %s column for dataset %s in category %s - skipping...' \
                            % ( col, name, cat ) )
                     auc_d[ 'pr_auc' ].append( np.nan )
+
+                    if bootstraps:
+
+                        auc_d[ 'pr_auc_ub' ].append( np.nan )
+                        auc_d[ 'pr_auc_lb' ].append( np.nan )
+
                     continue
 
                 prior = col_df[ truth_col ].sum() / len( col_df )
@@ -1291,27 +1332,31 @@ def bal_pr_curves_subplot( datasets,
 
                     random.seed( seed )
 
-                    idx_l = [ i for i in range( len( col_df ) ) ]
+                    idx_l = [ c for c in range( len( col_df ) ) ]
 
-                    boot_dfs = [ col_df.iloc[ random.choices( idx_l, k = len( col_df ) ) ].copy() for i in range( bootstraps ) ]
+                    boot_dfs = [ col_df.iloc[ random.choices( idx_l, k = len( col_df ) ) ].copy() for b in range( bootstraps ) ]
 
-                    pr_vals = [ precision_recall_curve( boot_dfs[ i ][ truth_col ],
-                                                        boot_dfs[ i ][ col ] )
-                                for i in range( bootstraps ) ]
+                    pr_vals = [ precision_recall_curve( boot_dfs[ b ][ truth_col ],
+                                                        boot_dfs[ b ][ col ] )
+                                for b in range( bootstraps ) ]
 
                     pr_vals = [ ( p*( 1- prior ) / ( p*( 1 - prior ) + ( 1 - p )*prior ), r, _ ) for p,r,_ in pr_vals ]
 
                     auc_d[ 'pr_auc' ].append( np.array( [ auc( pr[ 1 ], pr[ 0 ] ) for pr in pr_vals ] ) )
 
-                    auc_mean = np.nanmean( auc_vals[ -1 ] )
-                    auc_std = np.nanstd( auc_vals[ -1 ] )
+                    auc_mean = np.nanmean( auc_d[ 'pr_auc' ][ -1 ] )
+                    auc_std = np.nanstd( auc_d[ 'pr_auc' ][ -1 ] )
 
                     #sometimes with smaller datasets we get missing values
-                    nonmissing = np.count_nonzero( ~np.isnan( auc_vals[ -1 ] ) )
+                    nonmissing = np.count_nonzero( ~np.isnan( auc_d[ 'pr_auc' ][ -1 ] ) )
 
                     auc_ci = ( auc_mean - 1.96*auc_std / np.sqrt( nonmissing ), auc_mean + 1.96*auc_std / np.sqrt( nonmissing ) )
 
-                    leg_label = col.split( '_' )[ 0 ] + ' prAUC = %0.3f\n95%% CI = ( %0.3f, %0.3f )' % ( auc_mean, auc_ci[ 0 ], auc_ci[ 1 ] )
+                    auc_d[ 'pr_auc_ub' ].append( auc_ci[ 0 ] )
+                    auc_d[ 'pr_auc_lb' ].append( auc_ci[ 1 ] )
+
+
+                    leg_label = col.split( '_' )[ 0 ] + ' prAUBC = %0.3f\n95%% CI = ( %0.3f, %0.3f )' % ( auc_mean, auc_ci[ 0 ], auc_ci[ 1 ] )
 
                 else:
 
@@ -1319,11 +1364,11 @@ def bal_pr_curves_subplot( datasets,
 
                     if col.split( '_' )[ 0 ] != 'DS':
 
-                        leg_label = col.split( '_' )[ 0 ] + ' prAUC = %0.3f' % auc_vals[ -1 ]
+                        leg_label = col.split( '_' )[ 0 ] + ' prAUBC = %0.3f' % auc_d[ 'pr_auc' ][ -1 ]
 
                     else:
 
-                        leg_label = 'SpliceAI prAUC = %0.3f' % auc_vals[ -1 ]
+                        leg_label = 'SpliceAI prAUBC = %0.3f' % auc_d[ 'pr_auc' ][ -1 ]
 
                 ax[ i ][ j ].plot( 100*recall,
                                    100*precision,
@@ -1331,8 +1376,10 @@ def bal_pr_curves_subplot( datasets,
                                    label = leg_label,
                                    **kwargs )
 
-            ax[ i ][ j ].set_xlabel( 'Recall\n(%)', fontsize = 12 )
-            ax[ 0 ][ j ].set_title( cat, fontsize = 24 )
+            ax[ len( data ) - 1 ][ j ].set_xlabel( 'Recall\n(%)', fontsize = 20 )
+            ax[ 0 ][ j ].set_title( cat, fontsize = 22 )
+
+            ax[ i ][ j ].tick_params( axis = 'both', labelsize = 16 )
 
             ax[ i ][ j ].set_ylim( ( 0, 100 ) )
             ax[ i ][ j ].set_xlim( ( 0, 100 ) )
@@ -1345,6 +1392,9 @@ def bal_pr_curves_subplot( datasets,
             else:
 
                 ax[ i ][ j ].legend()
+
+    ax[ int( np.floor( len( data ) / 2 ) ) ][ 0 ].set_ylabel( 'Precision\n(%)',
+                                                              fontsize = 22 )
 
     plt.tight_layout()
 
@@ -1470,6 +1520,156 @@ def roc_curves( var_df,
     return max_scores
 
 def roc_curve_subplot( datasets,
+                       truth_col,
+                       pred_cols,
+                       cmap,
+                       figsize = ( 15, 15 ),
+                       sharex = True,
+                       sharey = True,
+                       savefile = None,
+                       print_auc = True,
+                       **kwargs ):
+
+    data = { name: datasets[ name ].loc[ datasets[ name ][ truth_col ].notnull() ].copy() for name in datasets.keys() }
+
+    for name in data.keys():
+
+        if len( data[ name ] ) != len( datasets[ name ] ):
+
+            missing = len( datasets[ name ] ) - len( data[ name ] )
+
+            print( '%i missing values in %s in dataset %s' % ( missing, truth_col, name ) )
+
+    sub_size = int( np.ceil( np.sqrt( len( datasets ) ) ) )
+
+    fig, ax = plt.subplots( sub_size,
+                            sub_size,
+                            figsize = figsize,
+                            sharex = sharex,
+                            sharey = sharey )
+
+    youden_j = np.empty( ( len( pred_cols ), len( data.keys() ) ) )
+    youden_j[:] = np.nan
+
+    for d, name in enumerate( data.keys() ):
+
+        i,j = ( d // sub_size, d % sub_size )
+
+        ax[ i ][ j ].set_ylabel( name,
+                                 fontsize = 20 )
+
+        df = data[ name ]
+
+        if len( df[ truth_col ].unique() ) == 1:
+
+            print( 'Unable to plot dataset %s' % ( name ) )
+            ax[ i ][ j ].set_visible( False )
+            continue
+
+        if df[ truth_col ].sum() < 2 or ( ~( df[ truth_col ] ) ).sum() < 2:
+
+            print( 'Unable to dataset %s' % ( name ) )
+            ax[ i ][ j ].set_visible( False )
+            continue
+
+        for k, col in enumerate( pred_cols ):
+
+            col_df = df.dropna( subset = [ col ] ).copy()
+
+            if len( df ) != len( col_df ):
+
+                missing = len( df ) - len( col_df )
+                print( '%i missing values in %s column for dataset %s.' \
+                           % ( missing, col, name, ) )
+
+            if len( col_df ) == 0:
+
+                print( 'No non-missing values in %s column for dataset %s - skipping...' \
+                           % ( col, name, ) )
+                continue
+
+            if col_df[ truth_col ].sum() < 2 or ( ~( col_df[ truth_col ] ) ).sum() < 2:
+
+                print( 'Only one event in %s column for dataset %s - skipping...' \
+                           % ( col, name, ) )
+                continue
+
+            fpr, tpr, thresh = roc_curve( col_df[ truth_col ], col_df[ col ] )
+            auc_val = auc( fpr, tpr )
+
+            youden_j[ k ][ d ] = thresh[ np.argmax( tpr - fpr ) ]
+
+            if print_auc:
+
+                label = col.split( '_' )[ 0 ] + " AUC = %0.3f" % ( auc_val )
+
+            else:
+
+                label = col.split( '_' )[ 0 ]
+
+            ax[ i ][ j ].plot( 100*fpr,
+                               100*tpr,
+                               color = cmap( k ),
+                               label = label,
+                               **kwargs )
+
+        ax[ i ][ j ].plot( np.arange( 0, 100 ),
+                            np.arange( 0, 100 ),
+                            color = 'black',
+                            ls = 'dashed' )
+
+        ax[ sub_size - 1 ][ j ].set_xlabel( 'False Positive Rate\n(%)', fontsize = 16 )
+
+        ax[ i ][ j ].set_ylim( ( 0, 100 ) )
+        ax[ i ][ j ].set_xlim( ( 0, 100 ) )
+
+        ax[ i ][ j ].legend()
+
+    if i < sub_size:
+
+        for k in range( j + 1, sub_size ):
+
+            ax[ i ][ k ].set_visible( False )
+            ax[ i - 1 ][ k ].set_xlabel( 'False Positive Rate\n(%)', fontsize = 16 )
+            ax[ i - 1 ][ k ].tick_params( labelbottom = True )
+
+        for k in range( i + 1, sub_size ):
+
+            for l in range( sub_size ):
+
+                ax[ k ][ l ].set_visible( False )
+
+                if l <= j:
+
+                    ax[ k - 1 ][ l ].set_xlabel( 'False Positive Rate\n(%)', fontsize = 16 )
+                    ax[ k - 1 ][ l ].tick_params( labelbottom = True )
+
+    elif j < sub_size:
+
+        for k in range( j + 1, sub_size ):
+
+            ax[ i ][ k ].set_visible( False )
+            ax[ i - 1 ][ k ].set_xlabel( 'False Positive Rate\n(%)', fontsize = 16 )
+            ax[ i - 1 ][ k ].tick_params( labelbottom = True )
+
+    plt.tight_layout()
+
+    if savefile:
+        plt.savefig( savefile,
+                     dpi = 300,
+                     #bbox_inches = 'tight'
+                   )
+
+    plt.show()
+
+    youden_df = pd.DataFrame( youden_j,
+                              index = [ col.split( '_' )[ 0 ] for col in pred_cols ],
+                              columns = list( data.keys() ),
+                            )
+
+    return youden_df
+
+def roc_curve_subplot_cats( datasets,
                        categories,
                        truth_col,
                        pred_cols,
@@ -1594,12 +1794,14 @@ def roc_curve_subplot( datasets,
     return youden_df
 
 def youden_subplot( youdens_df,
-                    tool_col,
-                    data_col,
-                    cat_cols,
-                    stat = 'mean',
-                    error_bars = False,
-                    figsize = ( 12, 11 ),
+                    measured_cols,
+                    lit_cols,
+                    rec_col,
+                    measured_cmap,
+                    lit_cmap,
+                    rec_color,
+                    ylim,
+                    figsize = ( 15, 5 ),
                     sharex = False,
                     sharey = False,
                     savefile = None,
@@ -1607,91 +1809,70 @@ def youden_subplot( youdens_df,
 
     youden = youdens_df.copy()
 
-    sub_size = int( np.ceil( np.sqrt( len( youden[ tool_col ].unique() ) ) ) )
+    sub_size = int( np.ceil( np.sqrt( len( youden ) ) ) )
 
-    fig, ax = plt.subplots( sub_size,
-                            sub_size,
+    fig, ax = plt.subplots( 1,
+                            len( youden.index ),
                             figsize = figsize,
                             sharex = sharex,
                             sharey = sharey )
 
-    for t, tool in enumerate( youden[ tool_col ].unique() ):
+    for t,tool in enumerate( youden.index ):
 
-        tool_df = youden.loc[ ( youden[ tool_col ] == tool ) & ( youden[ data_col ] != 'standard' ) ].copy()
+        tool_df = youden.loc[ tool ].copy()
 
-        tool_df = tool_df.append( pd.Series( tool_df[ cat_cols ].mean( skipna = True,  ),
-                                             name = 'mean' ) )
+        ax[ t ].set_title( tool,
+                                fontsize = 16 )
 
-        tool_df =  tool_df.append( pd.Series( tool_df[ cat_cols ].median( skipna = True,  ),
-                                               name = 'median' ) )
+        for m,mcol in enumerate( measured_cols ):
 
-        tool_df = tool_df.append( pd.Series( tool_df[ cat_cols ].std( skipna = True,  ),
-                                               name = 'std' ) )
+            ax[ t ].scatter( ( m - 2 )*.06,
+                                  tool_df[ mcol ],
+                                  color = measured_cmap( ( m + 2 )*35 ),
+                                  label = mcol,
+                                  **kwargs
+                                )
 
-        tool_df = tool_df.append( pd.Series( tool_df[ cat_cols ].isnull().sum(),
-                                               name = 'n' ) )
+        ax[ t ].scatter( 0,
+                              tool_df[ measured_cols ].median(),
+                              marker = '_',
+                              s = 500,
+                              color = 'dodgerblue',
+                              label = 'Median' )
 
-        #print( np.sqrt( tool_df.loc[ 'n', cat_cols ] ) )
+        for l,lcol in enumerate( lit_cols ):
 
-        tool_df = tool_df.append( pd.Series( tool_df.loc[ 'std', cat_cols ] / np.sqrt( len( tool_df ) ),
-                                             name = 'error' ) )
+            ax[ t ].scatter(  1 + ( l - 2 )*.06,
+                                   tool_df[ lcol ],
+                                   color = lit_cmap( ( l + 3 )*25 ),
+                                   label = lcol,
+                                    **kwargs
+                                )
 
-        i,j = ( t // sub_size, t % sub_size )
+        ax[ t ].axhline( tool_df[ rec_col ],
+                              color = rec_color,
+                              ls = '--',
+                              label = rec_col )
 
-        if not error_bars:
+        start, end = ax[ t ].get_xlim()
+        ax[ t ].xaxis.set_ticks( [ 0, 1 ] )
 
-            ax[ i ][ j ].scatter( cat_cols,
-                                  tool_df.loc[ stat, cat_cols ],
-                                  label = 'Optimal measured threshold',
-                                  **kwargs )
 
-            standard_df = youden.loc[ ( youden[ tool_col ] == tool ) & ( youden[ data_col ] == 'standard' ) ].copy()
+        ax[ 0 ].set_ylabel( "Youden's J Treshold",
+                                 fontsize = 16 )
+        ax[ t ].set_ylim( ylim[ t ] )
+        ax[ t ].tick_params( axis = 'y', labelsize = 14 )
+        ax[ t ].set_xticklabels( [ 'Current', 'Previous' ],
+                                                 rotation = 90,
+                                                 fontsize = 14 )
 
-            ax[ i ][ j ].scatter( cat_cols,
-                                    standard_df[ cat_cols ],
-                                    label = 'Recommended threshold' )
+        ax[ t ].set_xlim( ( -.3, 1.3 ) )
 
-        else:
+    ax[ int( np.floor( len( youden.index ) / 2 ) ) ].set_xlabel( 'Benchmarking Results',
+                                                             fontsize = 16 )
 
-            ax[ i ][ j ].errorbar( cat_cols,
-                                  tool_df.loc[ stat, cat_cols ],
-                                  yerr = tool_df.loc[ 'error', cat_cols ],
-                                  fmt = 'o',
-                                  label = 'Optimal measured threshold',
-                                  **kwargs )
-
-            standard_df = youden.loc[ ( youden[ tool_col ] == tool ) & ( youden[ data_col ] == 'standard' ) ].copy()
-
-            ax[ i ][ j ].errorbar( cat_cols,
-                                    standard_df[ cat_cols ].T,
-                                    fmt = 'o',
-                                    label = 'Recommended threshold' )
-
-        ax[ i ][ j ].set_ylabel( "%s Youden's J Treshold %s" % ( tool, stat ) )
-
-        ax[ i ][ j ].set_xlabel( 'Variant Category' )
-        ax[ i ][ j ].set_xticklabels( [ c if c != 'Transcriptome' else 'All variants' for c in cat_cols ], rotation = 90 )
-
-        if tool_df.loc[ stat, cat_cols ].min() < 0 and tool_df.loc[ stat, cat_cols ].max() > 0:
-
-            continue
-
-        elif tool_df.loc[ stat, cat_cols ].min() < 0:
-
-            ax[ i ][ j ].set_ylim( None, 0 )
-
-        elif tool_df.loc[ stat, cat_cols ].max() > 0:
-
-            ax[ i ][ j ].set_ylim( 0, None )
-
-    ax[ 1 ][ 2 ].legend( loc = 'center left',
+    ax[ len( youden.index ) - 1 ].legend( loc = 'center left',
                          bbox_to_anchor = ( 1.1, .5 ) )
-
-    if j < sub_size:
-
-        for k in range( j + 1, sub_size ):
-
-            ax[ i ][ k ].set_visible( False )
 
     plt.tight_layout()
 
@@ -2826,6 +3007,7 @@ def sat_subplot_psi_by_alt(   var_df,
                           ax = None,
                           tick_spacing = 10,
                           darken_bars = None,
+                          darken_bars2 = None,
                           labels_legend = False,
                           labels_legend_title = '',
                           labels_legend_loc = 'best',
@@ -2833,11 +3015,23 @@ def sat_subplot_psi_by_alt(   var_df,
                           y_ax_lim = None,
                           y_ax_title='',
                           x_ax_title = '',
+                          x_tick_fontsize = 42,
+                          x_label_fontsize = 42,
+                          y_tick_fontsize = 42,
                           legend = True,
                           legend_title = '',
                           legend_loc = 'best',
                           legend_labels = None,
-                          tight = True, ):
+                          ref_labels = None,
+                          colors_ref = None,
+                          y_ref_cds = -3,
+                          ref_font_size = 40,
+                          ref_rect_ht = 50,
+                          bar_labels = None,
+                          hatch_missing = False,
+                          hlines = None,
+                          tight = True,
+                          save_margin = .1 ):
 
     tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).reset_index( drop = True ).copy()
 
@@ -2857,35 +3051,145 @@ def sat_subplot_psi_by_alt(   var_df,
                  align = 'center',
                  width = 1, )
 
+    if hlines:
+
+        ax.axhline( y = hlines[ 0 ], color = hlines[ 1 ], linestyle = hlines[ 2 ], zorder = 1 )
+
+    if hatch_missing:
+
+        missing_cds = tbv.loc[ tbv[ hatch_missing[ 0 ] ].isnull() ].index.tolist()
+
+        if y_ax_lim:
+
+            y_min,y_max = y_ax_lim
+
+        else:
+
+            y_min,y_max = ax.get_ylim()
+
+        for cds in missing_cds:
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - .5, y_min ),
+                                                1,
+                                                y_max - y_min,
+                                                fill = True,
+                                                facecolor = 'white',
+                                                hatch = hatch_missing[ 1 ],
+                                                linewidth = 0,
+                                                zorder = 2 ), )
+
     if darken_bars:
 
-        for dbars in darken_bars:
+        column, colors2 = darken_bars
 
-            column, colors2 = dbars
+        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
 
-            color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+        for alt in sorted( tbv[ color_col ].unique() ):
 
-            for alt in sorted( tbv[ color_col ].unique() ):
+            ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
+                    tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
+                    label = alt,
+                    color = color_d2[ alt ],
+                    align = 'center',
+                    width = 1, )
 
-                ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
-                         tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
-                         label = alt,
-                         color = color_d2[ alt ],
-                         align = 'center',
-                         width = 1, )
+    if darken_bars2:
+
+        column, colors2 = darken_bars2
+
+        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+        for alt in sorted( tbv[ color_col ].unique() ):
+
+            ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
+                    tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
+                    label = alt,
+                    color = color_d2[ alt ],
+                    align = 'center',
+                    width = 1, )
 
     plt.title( title, fontsize = 24 )
 
     ax.set_ylabel( y_ax_title, fontsize = 18 )
-    ax.tick_params( axis = 'y', which='major', labelsize = 36 )
+    ax.tick_params( axis = 'y', which='major', labelsize = y_tick_fontsize )
 
     ax.set_xlim( ( -.5, len( tbv ) - .5 ) )
 
-    plt.xlabel( x_ax_title, fontsize = 36 )
+    plt.xlabel( x_ax_title, fontsize = x_label_fontsize )
     plt.xticks( [ 3*idx + 1 for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
                 [ tbv.iloc[ 3*idx + 1 ][ pos_col ] for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
-                fontsize=36,
-                rotation='vertical' )
+                fontsize = x_tick_fontsize,
+                rotation = 'vertical' )
+
+    if ref_labels:
+
+        assert tick_spacing == 1, 'If your tick_spacing is not set to 1, the ref bases will be wrong!'
+
+        if tight:
+            print( 'Are your rectangles not positioned right? Turn off tight!')
+
+        ref_bases = list( tbv.groupby( 'pos' ).ref.apply( lambda x: x.unique()[ 0 ] ) )
+
+        if colors_ref:
+
+            colors_ref_d = { ref: colors_ref[ idx ] for idx,ref in enumerate( sorted( list( set( ref_bases ) ) ) ) }
+
+        else:
+
+            colors_ref_d = { ref: 'white' for ref in ref_bases.unique() }
+
+        x_coords = ax.get_xticks()
+
+        for base,cds in zip( ref_bases, x_coords ):
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - 1.5, y_ref_cds ),
+                                                3,
+                                                ref_rect_ht,
+                                                color = colors_ref_d[ base ],
+                                                clip_on = False, ) )
+
+            ax.text( cds,
+                     y_ref_cds + ( ref_rect_ht / 2 ),
+                     base,
+                     ha = 'center',
+                     va = 'center',
+                     fontsize = ref_font_size, )
+                     #bbox = { 'facecolor': colors_ref_d[ base ], 'pad': 40 } )
+
+            #ax.add_patch(  )
+
+            #p = patches.Rectangle( ( cds - 1.5, y_ref_cds ), 3, 1, color = colors_ref_d[ base ] )
+            #ax.add_artist(p)
+
+            #plt.text( cds, -.5, base, horizontalalignment = 'center', verticalalignment = 'center', fontsize=40, color='black')
+
+    if bar_labels:
+
+        print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
+
+        if save_margin <= .1:
+
+            print( 'If your labels are not in the pdf, increase save_margin parameter!' )
+
+        x_coords = ax.get_xticks()
+
+        x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
+
+        for label_col, marker_d, y_coords, in bar_labels:
+
+            for val in marker_d:
+
+                marker, color, edgecolor, linewidth, size = marker_d[ val ]
+
+                ax.scatter( x_coords_per_bp,
+                            [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
+                            marker = marker,
+                            color = color,
+                            edgecolor = edgecolor,
+                            linewidth = linewidth,
+                            s = size,
+                            zorder = 100,
+                            clip_on = False )
 
     if legend:
 
@@ -2938,6 +3242,7 @@ def sat_subplots_wrapper( var_df,
                      zoom=None,
                      tick_spacing = 10,
                      darken_bars = None,
+                     darken_bars2 = None,
                      labels_legend = False,
                      labels_legend_title = '',
                      labels_legend_loc = 'best',
@@ -2945,12 +3250,24 @@ def sat_subplots_wrapper( var_df,
                      y_ax_title='',
                      y_ax_lim = None,
                      x_ax_title = '',
+                     x_tick_fontsize = 42,
+                     y_tick_fontsize = 42,
+                     x_label_fontsize = 42,
                      legend = True,
                      legend_title = '',
                      legend_loc = 'best',
                      legend_labels = None,
+                     ref_labels = None,
+                     y_ref_cds = -3,
+                     colors_ref = None,
+                     ref_font_size = 40,
+                     ref_rect_ht = 50,
+                     bar_labels = None,
+                     hatch_missing = False,
+                     hlines = None,
                      tight = True,
                      savefile = None,
+                     save_margin = .1,
                      ):
 
     tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).copy()
@@ -2978,6 +3295,15 @@ def sat_subplots_wrapper( var_df,
     else:
         print( 'Something is wrong with how you entered the darken bars argument!' )
 
+    if not darken_bars2:
+        dbar_dict2 = { i: None for i in range( len( y_cols) ) }
+    elif len( darken_bars2 ) == 1:
+        dbar_dict2 = { i: darken_bars2[ 0 ] for i in range( len( y_cols) ) }
+    elif len( darken_bars2 ) == len( y_cols ):
+        dbar_dict2 = { i: darken_bars2[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the darken bars2 argument!' )
+
     if not y_ax_lim:
         ylim_dict = { i: None for i in range( len( y_cols) ) }
     elif len( y_ax_lim ) == 1:
@@ -2989,12 +3315,30 @@ def sat_subplots_wrapper( var_df,
     else:
         print( 'Something is wrong with how you entered the y axis limits argument!' )
 
+    if not hatch_missing:
+        hatch_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( hatch_missing ) == 1:
+        hatch_dict = { i: hatch_missing[ 0 ] for i in range( len( y_cols) ) }
+    elif len( hatch_missing ) == len( y_cols ):
+        hatch_dict = { i: hatch_missing[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the hatch missing argument!' )
+
+    if not hlines:
+        hline_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( hlines ) == 1:
+        hline_dict = { i: hlines[ 0 ] for i in range( len( y_cols) ) }
+    elif len( hlines ) == len( y_cols ):
+        hline_dict = { i: hlines[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the hlines argument!' )
+
     #this whole loop is basically to give each its own y axis labels
     #and to only have the legend & scale bar on the top plot
     #and to only have wt labels on the bottom plot
     for idx, col in enumerate( y_cols ):
 
-        if idx == 0:
+        if idx == 0 and len( y_cols ) == 1:
             sat_subplot_psi_by_alt(   tbv_filt,
                                   col,
                                   pos_col,
@@ -3002,18 +3346,62 @@ def sat_subplots_wrapper( var_df,
                                   ax = axes[ idx ],
                                   color_col = color_col,
                                  tick_spacing = tick_spacing,
-                                   darken_bars = darken_bars,
+                                   darken_bars = dbar_dict[ idx ],
+                                 darken_bars2 = dbar_dict2[ idx ],
                                  labels_legend = labels_legend,
                                  labels_legend_title = labels_legend_title,
                                  labels_legend_loc = labels_legend_loc,
                                  title = title,
                                  y_ax_lim = ylim_dict[ idx ],
                                  y_ax_title = y_ax_title[ idx ],
+                                 x_ax_title = x_ax_title,
+                                 x_tick_fontsize = x_tick_fontsize,
+                                 y_tick_fontsize = y_tick_fontsize,
+                                 x_label_fontsize = x_label_fontsize,
                                  legend = legend,
                                  legend_title = legend_title,
                                  legend_loc = legend_loc,
                                  legend_labels = legend_labels,
-                                 tight = tight, )
+                                 ref_labels = ref_labels,
+                                 y_ref_cds = y_ref_cds,
+                                 colors_ref = colors_ref,
+                                 ref_font_size = ref_font_size,
+                                 ref_rect_ht = ref_rect_ht,
+                                 bar_labels = bar_labels,
+                                 hatch_missing = hatch_dict[ idx ],
+                                 hlines = hline_dict[ idx ],
+                                 tight = tight,
+                                 save_margin = save_margin )
+
+        elif idx == 0:
+            sat_subplot_psi_by_alt(   tbv_filt,
+                                  col,
+                                  pos_col,
+                                  colors,
+                                  ax = axes[ idx ],
+                                  color_col = color_col,
+                                 tick_spacing = tick_spacing,
+                                   darken_bars = dbar_dict[ idx ],
+                                 darken_bars2 = dbar_dict2[ idx ],
+                                 labels_legend = labels_legend,
+                                 labels_legend_title = labels_legend_title,
+                                 labels_legend_loc = labels_legend_loc,
+                                 title = title,
+                                 y_ax_lim = ylim_dict[ idx ],
+                                 y_ax_title = y_ax_title[ idx ],
+                                 x_tick_fontsize = x_tick_fontsize,
+                                 y_tick_fontsize = y_tick_fontsize,
+                                 x_label_fontsize = x_label_fontsize,
+                                 legend = legend,
+                                 legend_title = legend_title,
+                                 legend_loc = legend_loc,
+                                 legend_labels = legend_labels,
+                                 bar_labels = bar_labels,
+                                 hatch_missing = hatch_dict[ idx ],
+                                 hlines = hline_dict[ idx ],
+                                 tight = tight,
+                                 save_margin = save_margin )
+
         elif idx == ( len( y_cols ) - 1 ):
             sat_subplot_psi_by_alt(   tbv_filt,
                                   col,
@@ -3022,10 +3410,21 @@ def sat_subplots_wrapper( var_df,
                                   ax = axes[ idx ],
                                   color_col = color_col,
                                  tick_spacing = tick_spacing,
-                                   darken_bars = darken_bars,
+                                   darken_bars = dbar_dict[ idx ],
+                                 darken_bars2 = dbar_dict2[ idx ],
                                  legend = False,
                                  y_ax_lim = ylim_dict[ idx ],
                                  y_ax_title = y_ax_title[ idx ],
+                                 x_tick_fontsize = x_tick_fontsize,
+                                 y_tick_fontsize = y_tick_fontsize,
+                                 x_label_fontsize = x_label_fontsize,
+                                 ref_labels = ref_labels,
+                                 y_ref_cds = y_ref_cds,
+                                 colors_ref = colors_ref,
+                                 ref_font_size = ref_font_size,
+                                 ref_rect_ht = ref_rect_ht,
+                                 hatch_missing = hatch_dict[ idx ],
+                                 hlines = hline_dict[ idx ],
                                  tight = tight,
                                  x_ax_title = x_ax_title, )
         else:
@@ -3036,16 +3435,23 @@ def sat_subplots_wrapper( var_df,
                                   ax = axes[ idx ],
                                   color_col = color_col,
                                  tick_spacing = tick_spacing,
-                                 darken_bars = darken_bars,
+                                 darken_bars = dbar_dict[ idx ],
+                                 darken_bars2 = dbar_dict2[ idx ],
                                  y_ax_lim = ylim_dict[ idx ],
+                                 x_tick_fontsize = x_tick_fontsize,
+                                 y_tick_fontsize = y_tick_fontsize,
+                                 x_label_fontsize = x_label_fontsize,
                                  legend = False,
                                  y_ax_title = y_ax_title[ idx ],
+                                 hatch_missing = hatch_dict[ idx ],
+                                 hlines = hline_dict[ idx ],
                                  tight = tight, )
 
     if savefile:
         plt.savefig( savefile,
                      #dpi = 300,
-                     bbox_inches = 'tight'
+                     bbox_inches = 'tight',
+                     pad_inches = save_margin,
                    )
 
     plt.show()
@@ -3927,45 +4333,1370 @@ def plot_stacked_bar(     var_df,
 
     plt.show()
 
-def scatter_truth_pred( tbl_by_var,
+def scatter_truth_pred( datasets,
                         measured_col,
                         pred_cols,
-                        color_bcols,
+                        sdv_col,
+                        xlim_l,
                         cmap,
-                        figsize = ( 10, 20 ),
-                        sharex = True,
-                        sharey = 'row',
-                        xlim = None,
+                        back_data,
+                        figsize = ( 15, 20 ),
+                        sharex = 'row',
+                        sharey = 'col',
+                        ylim_l = None,
+                        savefile = False,
                         **kwargs ):
 
-    tbv = tbl_by_var.copy()
+    data = { name: df.copy() for name, df in datasets.items() }
+
+    back_df = back_data.copy()
 
     fig, ax = plt.subplots( len( pred_cols ),
-                            len( color_bcols ),
+                            len( data.keys() ),
                             figsize = figsize,
                             sharex = sharex,
                             sharey = sharey )
 
-    for cidx, ccol in enumerate( color_bcols ):
+    mid = int( len( data ) / 2 )
 
-        ax[ 0 ][ cidx ].set_title( ccol )
+    for j, name_data in enumerate( data.items() ):
 
-        for pidx, pcol in enumerate( pred_cols ):
+        name, df_j = name_data
 
-            colors = [ 'gray' if not c else cmap( pidx ) for c in tbv[ ccol ] ]
+        ax[ 0 ][ j ].set_title( name )
 
-            ax[ pidx ][ cidx ].scatter( tbv[ measured_col ],
-                                        tbv[ pcol ],
-                                        c = colors,
-                                        **kwargs )
+        for i, col in enumerate( pred_cols ):
 
-            ax[ pidx ][ 0 ].set_ylabel( pcol )
+            ax_y2 = ax[ i ][ j ].twinx()
 
-            if xlim:
-                ax[ pidx ][ cidx ].set_xlim( xlim )
+            y2_x = np.linspace( xlim_l[ i ][ 0 ],
+                                xlim_l[ i ][ 1 ],
+                                100 )
 
-    mid = int( cidx / 2 )
+            bcol_df = back_df.loc[ back_df[ col ].notnull() ].copy()
 
-    ax[ len( pred_cols ) - 1 ][ mid ].set_xlabel( measured_col )
+            bcol_n = len( bcol_df )
+
+            ax_y2.plot( y2_x,
+                        [ 100 * ( ( bcol_df[ col ] >= x ).sum() / bcol_n ) for x in y2_x ],
+                        c = 'gray' )
+
+            if j == len( data ) - 1:
+
+                ax_y2.set_ylabel( '% Transcriptome SDV',
+                                  fontsize = 16 )
+                ax_y2.tick_params( axis = 'y', which = 'major', labelsize = 12 )
+
+            else:
+
+                ax_y2.tick_params( labelright = False )
+
+            colors = [ 'gray' if not c else cmap( i ) for c in df_j[ sdv_col ] ]
+
+            ax[ i ][ j ].scatter( df_j[ col ],
+                                  df_j[ measured_col ],
+                                  c = colors,
+                                  **kwargs )
+
+            ax[ i ][ 0 ].set_ylabel( measured_col,
+                                     fontsize = 16 )
+
+            ax[ i ][ j ].set_xlim( xlim_l[ i ] )
+
+            if ylim_l:
+
+                ax[ i ][ j ].set_ylim( ylim_l[ j ] )
+
+            ax[ i ][ j ].set_xlabel( col.split( '_' )[ 0 ],
+                                     fontsize = 16 )
+
+            ax[ i ] [ j ].tick_params( axis = 'both', which = 'major', labelsize = 12 )
+
+    plt.tight_layout()
+
+    if savefile:
+        plt.savefig( savefile,
+                     dpi = 300,
+                     #bbox_inches = 'tight'
+                   )
+
+    plt.show()
+
+def scatter_by_sdv_alt_interp( tbl_by_var,
+                               interp_col,
+                               x_col,
+                               y_col,
+                               cmap,
+                               marker_by_interp,
+                               alt_col = 'alt',
+                               sdv_col = 'sdv',
+                               intmed_col = None,
+                               intmed_cmap = None,
+                               null_color = '.85',
+                               marker_size = 5,
+                               xlabel = '',
+                               ylabel = '',
+                               xlim = None,
+                               ylim = None,
+                               savefig = None ):
+
+    tbv = tbl_by_var.copy()
+
+    #we want the SDV variants on top so loop through twice for maximum control
+    for interp in tbv[ interp_col ].unique():
+
+        lit_null = tbv.loc[ ~( tbv[ sdv_col ] ) & ( tbv[ interp_col ] == interp ) ].copy()
+
+        if len( lit_null ) > 0:
+
+            plt.scatter( lit_null[ x_col ],
+                         lit_null[ y_col ],
+                         marker = marker_by_interp[ interp ],
+                         c = null_color,
+                         s = marker_size )
+
+    if intmed_col:
+
+        for interp in tbv[ interp_col ].unique():
+
+            lit_intmed = tbv.loc[ ( tbv[ intmed_col ] ) & ( tbv[ interp_col ] == interp ) ].copy()
+
+            if len( lit_intmed ) > 0:
+
+                plt.scatter( lit_intmed[ x_col ],
+                             lit_intmed[ y_col ],
+                             marker = marker_by_interp[ interp ],
+                             c = [ 0 if a.upper() == 'A' \
+                                   else 1 if a.upper() == 'C' \
+                                   else 2 if a.upper() == 'G' \
+                                   else 3 for a in lit_intmed[ alt_col ] ],
+                             cmap = intmed_cmap,
+                             s = 2*marker_size )
+
+    for interp in tbv[ interp_col ].unique():
+
+        lit_sdv = tbv.loc[ ( tbv[ sdv_col ] ) & ( tbv[ interp_col ] == interp ) ].copy()
+
+        if len( lit_sdv ) > 0:
+
+            plt.scatter( lit_sdv[ x_col ],
+                         lit_sdv[ y_col ],
+                         marker = marker_by_interp[ interp ],
+                         c = [ 0 if a.upper() == 'A' \
+                               else 1 if a.upper() == 'C' \
+                               else 2 if a.upper() == 'G' \
+                               else 3 for a in lit_sdv[ alt_col ] ],
+                         cmap = cmap,
+                         s = 2*marker_size )
+
+    plt.xlabel( xlabel )
+    plt.ylabel( ylabel )
+
+    if xlim:
+        plt.xlim( xlim )
+    if ylim:
+        plt.ylim( ylim )
+
+    if savefig:
+        plt.savefig( savefig,
+                     dpi = 300,
+                     bbox_inches = 'tight' )
+
+    plt.show()
+
+def scatter_by_interp( tbl_by_var,
+                               interp_col,
+                               x_col,
+                               y_col,
+                               marker_by_interp,
+                               cmap,
+                               null_color = '.85',
+                               marker_size = 5,
+                               xlabel = '',
+                               ylabel = '',
+                               xlim = None,
+                               ylim = None,
+                               savefig = None ):
+
+    tbv = tbl_by_var.copy()
+
+    lit_null = tbv.loc[ ( tbv[ interp_col ].isnull() ) | ( tbv[ interp_col ] == '' ) ].copy()
+
+    if len( lit_null ) > 0:
+
+        plt.scatter( lit_null[ x_col ],
+                     lit_null[ y_col ],
+                     marker = marker_by_interp[ '' ],
+                     c = null_color,
+                     s = marker_size )
+
+    #we want the lit variants on top so plot these second for maximum control
+    for i,interp in enumerate( tbv[ interp_col ].unique() ):
+
+        #I want to allow the interp to be null here instead of just '' but its so difficult w strings
+        if interp == '':
+            continue
+
+        lit_interp = tbv.loc[ ( tbv[ interp_col ] == interp ) ].copy()
+
+        if len( lit_interp ) > 0:
+
+            plt.scatter( lit_interp[ x_col ],
+                         lit_interp[ y_col ],
+                         marker = marker_by_interp[ interp ],
+                         color = cmap( i - 1 ),
+                         s = 2*marker_size )
+
+    plt.xlabel( xlabel )
+    plt.ylabel( ylabel )
+
+    if xlim:
+        plt.xlim( xlim )
+    if ylim:
+        plt.ylim( ylim )
+
+    if savefig:
+        plt.savefig( savefig,
+                     dpi = 300,
+                     bbox_inches = 'tight' )
+
+    plt.show()
+
+def plot_iso_stats( iso_df_stats,
+                    sa_col_stem = '_sum_sa_reads',
+                    read_col_stem = '_read_count',
+                    iso_rows = [ 'secondary', 'unmapped', 'unpaired', 'bad_starts', 'bad_ends', 'soft_clipped' ] ):
+
+    iso_df = iso_df_stats.copy()
+
+    plot_dfs = [ iso_df[ [ col for col in iso_df if read_col_stem in col and 'total' not in col ] ].sum() ]
+    plot_dfs[ -1 ].index = [ idx.replace( read_col_stem, '' ) for idx in plot_dfs[ -1 ].index ]
+
+    plot_dfs.append( iso_df[ [ col for col in iso_df if sa_col_stem in col and 'total' not in col ] ].sum() )
+    plot_dfs[ -1 ].index = [ idx.replace( sa_col_stem, '' ) for idx in plot_dfs[ -1 ].index ]
+
+    used_isos = []
+    for iso in iso_rows:
+
+        if iso in iso_df.isoform.tolist():
+
+            used_isos.append( iso )
+            plot_dfs.append( iso_df.loc[ iso_df.isoform == iso ][ [ col for col in iso_df if read_col_stem in col and 'total' not in col ] ].T )
+            plot_dfs[ -1 ].index = [ idx.replace( read_col_stem, '' ) for idx in plot_dfs[ -1 ].index ]
+
+    all_cnts = pd.concat( plot_dfs,
+                          axis = 1 )
+
+    all_cnts.columns = [ 'total_reads', 'sa_reads' ] + [ 'total_' + str( iso ) for iso in used_isos ]
+
+    print( 'Raw counts\n' )
+
+    for col in all_cnts:
+
+        print( col )
+
+        all_cnts[ col ].plot.bar()
+
+        plt.ylabel( col )
+
+        plt.show()
+
+    print( 'Percentages\n' )
+    for col in all_cnts:
+
+        if col == 'total_reads':
+            continue
+
+        print( col )
+
+        all_cnts[ 'per_' + col ] = all_cnts[ col ] / all_cnts.total_reads
+
+        all_cnts[ 'per_' + col ].plot.bar()
+
+        plt.ylim( ( 0, 1 ) )
+
+        plt.ylabel( col + ' percent of total' )
+
+        plt.show()
+
+    all_cnts.index.name = 'sample'
+
+    all_cnts = all_cnts.reset_index()
+
+    return all_cnts
+
+def plot_waterfall_bysamp( cutoff_df,
+                           x_samp_col = 'sample',
+                           y_cols = [ '_x_log10', '_y' ],
+                           cutoffs = ( 75, 95 ),
+                           ylabels = [ 'Log10 BC Rank', '# of reads/BC' ] ):
+
+    cut = cutoff_df.copy()
+
+    assert len( y_cols ) == len( ylabels ), 'You did not provide enough y axis labels to match your y columns'
+
+    fig,ax = plt.subplots( len( y_cols ),
+                           len( cutoffs ),
+                           sharey = 'row',
+                           sharex = True,
+                           figsize = ( 12, 10 ) )
+
+    for i,y in enumerate( y_cols ):
+
+        for j,val in enumerate( cutoffs ):
+
+            ax[ i ][ j ].scatter( cut[ x_samp_col ],
+                                  cut[ str( val ) + y ] )
+
+            if j == 0:
+
+                ax[ i ][ j ].set_ylabel( ylabels[ i ] )
+
+            if i == 0:
+
+                ax[ i ][ j ].set_title( '%ith Percentile' % val )
+
+            if i == len( y_cols ) - 1:
+
+                ax[ i ][ j ].tick_params( axis='x', labelrotation = 90 )
+
+    plt.show()
+
+def plot_clinvar_by_interp( tbl_by_var,
+                            yaxis_cols,
+                            markers,
+                            colors,
+                            interp_col = 'lit_interp',
+                            sort_col = 'pos',
+                            plot_pos_col = 'hgvs_var',
+                            figsize = ( 8, 3 ),
+                            sharex = 'col',
+                            sharey = 'row',
+                            marker_size = 100,
+                            row_label = False,
+                            col_label = False, ):
+
+    tbv = tbl_by_var.loc[ tbl_by_var[ interp_col ] != '' ].copy()
+
+    assert len( markers ) == len( tbv[ interp_col ].unique() ), \
+    'Number of markers does not match the number of unique values for interpretation column!'
+
+    fig,ax = plt.subplots( len( yaxis_cols ), len( tbv[ interp_col ].unique() ),
+                           gridspec_kw = { 'width_ratios' : [ len( tbv.loc[ tbv[ interp_col ] == l ] ) for l in tbv[ interp_col ].unique() ] },
+                           sharex = sharex,
+                           sharey = sharey,
+                           figsize = figsize )
+
+    for i,interp in enumerate( tbv[ interp_col ].unique() ):
+
+        interp_df = tbv.loc[ tbv[ interp_col ] == interp ].sort_values( by = sort_col ).reset_index().copy()
+
+        if col_label:
+
+            ax[ 0 ][ i ].set_title( interp )
+
+        for j,ycol in enumerate( yaxis_cols ):
+
+            ax[ j ][ i ].scatter( interp_df.index,
+                                  interp_df[ ycol ],
+                                  marker = markers[ i ],
+                                  color = colors( i ),
+                                  s = marker_size )
+
+            if row_label:
+
+                ax[ j ][ 0 ].set_ylabel( ycol )
+
+            #my stupid markers keep getting cut off
+            x_l,x_r = ax[ j ][ i ].get_xlim()
+
+            ax[ j ][ i ].set_xlim( ( x_l - .5, x_r + .5 ) )
+
+        ax[ j ][ i ].set_xticks(  interp_df.index )
+
+        ax[ j ][ i ].set_xticklabels( interp_df[ plot_pos_col ],
+                                      fontsize=12,
+                                      rotation='vertical' )
+
+    plt.show()
+
+def sat_lollipop_subplot_psi_by_alt(  var_df,
+                                      y_col,
+                                      pos_col,
+                                      colors,
+                                      color_col = 'alt',
+                                      ax = None,
+                                      tick_spacing = 10,
+                                      lollipop_size = 10,
+                                      linewidth = 5,
+                                      darken_bars = None,
+                                      darken_bars2 = None,
+                                      labels_legend = False,
+                                      labels_legend_title = '',
+                                      labels_legend_loc = 'best',
+                                      title = '',
+                                      y_ax_lim = None,
+                                      y_ax_title='',
+                                      x_ax_title = '',
+                                      x_tick_fontsize = 42,
+                                      x_label_fontsize = 42,
+                                      y_tick_fontsize = 42,
+                                      y_label_fontsize = 18,
+                                      y_label_rotation = 90,
+                                      legend = True,
+                                      legend_title = '',
+                                      legend_loc = 'best',
+                                      legend_labels = None,
+                                      ref_labels = None,
+                                      colors_ref = None,
+                                      y_ref_cds = -3,
+                                      ref_font_size = 40,
+                                      ref_rect_ht = 50,
+                                      bar_labels = None,
+                                      hatch_missing = False,
+                                      color_missing = False,
+                                      hlines = None,
+                                      tight = True,
+                                      save_margin = .1 ):
+
+    tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).reset_index( drop = True ).copy()
+
+    if ax:
+        ax = ax
+    else:
+        ax = plt.gca()
+
+    color_d = { alt: colors[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+    for alt in sorted( tbv[ color_col ].unique() ):
+
+        marker, stem, base = ax.stem( tbv.loc[ tbv[ color_col ] == alt ].index,
+                                      tbv.loc[ tbv[ color_col ] == alt ][ y_col ],
+                                           label = alt,
+                                          markerfmt = 'o',
+                                          basefmt = ' ',
+                                    )
+
+        plt.setp( stem, 'color', color_d[ alt ] )
+        plt.setp( stem, 'linewidth', linewidth )
+        plt.setp( marker, 'color', color_d[ alt ] )
+        plt.setp( marker, 'markersize', lollipop_size )
+
+    if hlines:
+
+        ax.axhline( y = hlines[ 0 ], color = hlines[ 1 ], linestyle = hlines[ 2 ], zorder = 1 )
+
+    if hatch_missing:
+
+        missing_cds = tbv.loc[ tbv[ hatch_missing[ 0 ] ].isnull() ].index.tolist()
+
+        if y_ax_lim:
+
+            y_min,y_max = y_ax_lim
+
+        else:
+
+            y_min,y_max = ax.get_ylim()
+
+        for cds in missing_cds:
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - .5, y_min ),
+                                                1,
+                                                y_max - y_min,
+                                                fill = True,
+                                                facecolor = 'white',
+                                                hatch = hatch_missing[ 1 ],
+                                                linewidth = 0,
+                                                zorder = 2 ), )
+
+    if color_missing:
+
+        missing_cds = tbv.loc[ tbv[ color_missing[ 0 ] ].isnull() ].index.tolist()
+
+        if y_ax_lim:
+
+            y_min,y_max = y_ax_lim
+
+        else:
+
+            y_min,y_max = ax.get_ylim()
+
+        for cds in missing_cds:
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - .5, y_min ),
+                                                1,
+                                                y_max - y_min,
+                                                fill = True,
+                                                facecolor = color_missing[ 1 ],
+                                                linewidth = 0,
+                                                zorder = 2 ), )
+
+    if darken_bars:
+
+        column, colors2 = darken_bars
+
+        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+        for alt in sorted( tbv[ color_col ].unique() ):
+
+            marker, stem, base = ax.stem( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
+                                          tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
+                                           label = alt,
+                                          markerfmt = 'o',
+                                          basefmt = ' ', )
+
+            plt.setp( stem, 'color', color_d2[ alt ] )
+            plt.setp( stem, 'linewidth', linewidth )
+            plt.setp( marker, 'color', color_d2[ alt ] )
+            plt.setp( marker, 'markersize', lollipop_size )
+
+    if darken_bars2:
+
+        column, colors2 = darken_bars2
+
+        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+        for alt in sorted( tbv[ color_col ].unique() ):
+
+            marker, stem, base = ax.stem( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
+                                          tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
+                                           label = alt,
+                                          markerfmt = 'o',
+                                          basefmt = ' ', )
+
+            plt.setp( stem, 'color', color_d2[ alt ] )
+            plt.setp( stem, 'linewidth', linewidth )
+            plt.setp( marker, 'color', color_d2[ alt ] )
+            plt.setp( marker, 'markersize', lollipop_size )
+
+    plt.title( title, fontsize = 24 )
+
+    ax.set_ylabel( y_ax_title, fontsize = y_label_fontsize, rotation = y_label_rotation, va = 'center', ha = 'right' )
+    ax.tick_params( axis = 'y', which='major', labelsize = y_tick_fontsize )
+
+    ax.set_xlim( ( -.5, len( tbv ) - .5 ) )
+
+    plt.xlabel( x_ax_title, fontsize = x_label_fontsize )
+    plt.xticks( [ 3*idx + 1 for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
+                [ tbv.iloc[ 3*idx + 1 ][ pos_col ] for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
+                fontsize = x_tick_fontsize,
+                rotation = 'vertical' )
+
+    if ref_labels:
+
+        assert tick_spacing == 1, 'If your tick_spacing is not set to 1, the ref bases will be wrong!'
+
+        if tight:
+            print( 'Are your rectangles not positioned right? Turn off tight!')
+
+        ref_bases = list( tbv.groupby( 'pos' ).ref.apply( lambda x: x.unique()[ 0 ] ) )
+
+        if colors_ref:
+
+            colors_ref_d = { ref: colors_ref[ idx ] for idx,ref in enumerate( sorted( list( set( ref_bases ) ) ) ) }
+
+        else:
+
+            colors_ref_d = { ref: 'white' for ref in ref_bases.unique() }
+
+        x_coords = ax.get_xticks()
+
+        for base,cds in zip( ref_bases, x_coords ):
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - 1.5, y_ref_cds ),
+                                                3,
+                                                ref_rect_ht,
+                                                color = colors_ref_d[ base ],
+                                                clip_on = False, ) )
+
+            ax.text( cds,
+                     y_ref_cds + ( ref_rect_ht / 2 ),
+                     base,
+                     ha = 'center',
+                     va = 'center',
+                     fontsize = ref_font_size, )
+                     #bbox = { 'facecolor': colors_ref_d[ base ], 'pad': 40 } )
+
+            #ax.add_patch(  )
+
+            #p = patches.Rectangle( ( cds - 1.5, y_ref_cds ), 3, 1, color = colors_ref_d[ base ] )
+            #ax.add_artist(p)
+
+            #plt.text( cds, -.5, base, horizontalalignment = 'center', verticalalignment = 'center', fontsize=40, color='black')
+
+    if bar_labels:
+
+        print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
+
+        if save_margin <= .1:
+
+            print( 'If your labels are not in the pdf, increase save_margin parameter!' )
+
+        x_coords = ax.get_xticks()
+
+        x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
+
+        for label_col, marker_d, y_coords, in bar_labels:
+
+            for val in marker_d:
+
+                marker, color, edgecolor, linewidth, size = marker_d[ val ]
+
+                ax.scatter( x_coords_per_bp,
+                            [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
+                            marker = marker,
+                            color = color,
+                            edgecolor = edgecolor,
+                            linewidth = linewidth,
+                            s = size,
+                            zorder = 100,
+                            clip_on = False )
+
+    if legend:
+
+        if legend_labels:
+            legend = ax.legend( title = legend_title,
+                                 ncol = 2,
+                                 bbox_to_anchor = ( 1, 1 ), #if you turn that on you can put legend outside of plot
+                                 loc = legend_loc,
+                                 labels = legend_labels,
+                                 fontsize = 14 )
+        else:
+            legend = ax.legend( title = legend_title,
+                                 ncol = 2,
+                                 bbox_to_anchor = ( 1, 1 ), #if you turn that on you can put legend outside of plot
+                                 loc = legend_loc,
+                                 fontsize = 14 )
+        plt.setp( legend.get_title(), fontsize=14 )
+    elif labels_legend:
+
+        fake_handles = [ plt.Rectangle( (0, 0), 0, 0, fill=False, edgecolor='none', visible = 'False')
+                        for i in range( len( bar_labels ) ) ]
+
+        legend = ax.legend(  handles = fake_handles,
+                             title = labels_legend_title,
+                             bbox_to_anchor = ( 0, 1 ), #if you turn that on you can put legend outside of plot
+                             loc = labels_legend_loc,
+                             labels = ( symbol + ' '*6 + label for _col, symbol, label, _fsize in bar_labels ),
+                             fontsize = 14 )
+        plt.setp( legend.get_title(), fontsize=14 )
+    else:
+        ax.legend_ = None
+        plt.draw()
+
+    if y_ax_lim:
+        ax.set_ylim( y_ax_lim )
+
+    if tight:
+        plt.tight_layout()
+
+    return ax
+
+def sat_lollipop_subplots_wrapper( var_df,
+                                   y_cols,
+                                   pos_col,
+                                   colors,
+                                   fig_size = ( 30, 10 ),
+                                   share_x = True,
+                                   share_y = True,
+                                   color_col = 'alt',
+                                   zoom = None,
+                                   tick_spacing = 10,
+                                   linewidth = 5,
+                                   lollipop_size = 10,
+                                   darken_bars = None,
+                                   darken_bars2 = None,
+                                   labels_legend = False,
+                                   labels_legend_title = '',
+                                   labels_legend_loc = 'best',
+                                   title = '',
+                                   y_ax_title='',
+                                   y_ax_lim = None,
+                                   x_ax_title = '',
+                                   x_tick_fontsize = 42,
+                                   y_tick_fontsize = 42,
+                                   x_label_fontsize = 42,
+                                   y_label_fontsize = 18,
+                                   y_label_rotation = 90,
+                                   legend = True,
+                                   legend_title = '',
+                                   legend_loc = 'best',
+                                   legend_labels = None,
+                                   ref_labels = None,
+                                   y_ref_cds = -3,
+                                   colors_ref = None,
+                                   ref_font_size = 40,
+                                   ref_rect_ht = 50,
+                                   bar_labels = None,
+                                   hatch_missing = False,
+                                   color_missing = False,
+                                   hlines = None,
+                                   tight = True,
+                                   savefile = None,
+                                   save_margin = .1,
+                                 ):
+
+    tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).copy()
+
+    if zoom:
+        assert zoom[1] > zoom[0], 'Your final zoom coordinate must be larger than the first zoom coordinate'
+        tbv_filt = tbv.set_index( 'pos' ).loc[ zoom[0]:zoom[1] ].reset_index()
+    else:
+        tbv_filt = tbv
+
+    fig, axes = plt.subplots( len( y_cols ),
+                              sharex = share_x,
+                              sharey = share_y,
+                              figsize = fig_size )
+
+    if len( y_cols ) == 1:
+        axes = [ axes ]
+
+    if not darken_bars:
+        dbar_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( darken_bars ) == 1:
+        dbar_dict = { i: darken_bars[ 0 ] for i in range( len( y_cols) ) }
+    elif len( darken_bars ) == len( y_cols ):
+        dbar_dict = { i: darken_bars[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the darken bars argument!' )
+
+    if not darken_bars2:
+        dbar_dict2 = { i: None for i in range( len( y_cols) ) }
+    elif len( darken_bars2 ) == 1:
+        dbar_dict2 = { i: darken_bars2[ 0 ] for i in range( len( y_cols) ) }
+    elif len( darken_bars2 ) == len( y_cols ):
+        dbar_dict2 = { i: darken_bars2[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the darken bars2 argument!' )
+
+    if not y_ax_lim:
+        ylim_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( y_ax_lim ) == 1:
+        ylim_dict = { i: y_ax_lim[ 0 ] for i in range( len( y_cols) ) }
+    elif len( y_ax_lim ) > 1 and share_y:
+        print( 'You specified too many y axis limits to have them all sharey' )
+    elif len( y_ax_lim ) == len( y_cols ):
+        ylim_dict = { i: y_ax_lim[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the y axis limits argument!' )
+
+    if not hatch_missing:
+        hatch_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( hatch_missing ) == 1:
+        hatch_dict = { i: hatch_missing[ 0 ] for i in range( len( y_cols) ) }
+    elif len( hatch_missing ) == len( y_cols ):
+        hatch_dict = { i: hatch_missing[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the hatch missing argument!' )
+
+    if not color_missing:
+        color_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( color_missing ) == 1:
+        color_dict = { i: color_missing[ 0 ] for i in range( len( y_cols) ) }
+    elif len( color_missing ) == len( y_cols ):
+        color_dict = { i: color_missing[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the color missing argument!' )
+
+    if not hlines:
+        hline_dict = { i: None for i in range( len( y_cols) ) }
+    elif len( hlines ) == 1:
+        hline_dict = { i: hlines[ 0 ] for i in range( len( y_cols) ) }
+    elif len( hlines ) == len( y_cols ):
+        hline_dict = { i: hlines[ i ] for i in range( len( y_cols) ) }
+    else:
+        print( 'Something is wrong with how you entered the hlines argument!' )
+
+    #this whole loop is basically to give each its own y axis labels
+    #and to only have the legend & scale bar on the top plot
+    #and to only have wt labels on the bottom plot
+    for idx, col in enumerate( y_cols ):
+
+        if idx == 0 and len( y_cols ) == 1:
+            sat_lollipop_subplot_psi_by_alt(  tbv_filt,
+                                              col,
+                                              pos_col,
+                                              colors,
+                                              ax = axes[ idx ],
+                                              color_col = color_col,
+                                              tick_spacing = tick_spacing,
+                                              linewidth = linewidth,
+                                              lollipop_size = lollipop_size,
+                                              darken_bars = dbar_dict[ idx ],
+                                              darken_bars2 = dbar_dict2[ idx ],
+                                              labels_legend = labels_legend,
+                                              labels_legend_title = labels_legend_title,
+                                              labels_legend_loc = labels_legend_loc,
+                                              title = title,
+                                              y_ax_lim = ylim_dict[ idx ],
+                                              y_ax_title = y_ax_title[ idx ],
+                                              x_ax_title = x_ax_title,
+                                              x_tick_fontsize = x_tick_fontsize,
+                                              y_tick_fontsize = y_tick_fontsize,
+                                              x_label_fontsize = x_label_fontsize,
+                                              y_label_fontsize = y_label_fontsize,
+                                              y_label_rotation = y_label_rotation,
+                                              legend = legend,
+                                              legend_title = legend_title,
+                                              legend_loc = legend_loc,
+                                              legend_labels = legend_labels,
+                                              ref_labels = ref_labels,
+                                              y_ref_cds = y_ref_cds,
+                                              colors_ref = colors_ref,
+                                              ref_font_size = ref_font_size,
+                                              ref_rect_ht = ref_rect_ht,
+                                              bar_labels = bar_labels,
+                                              hatch_missing = hatch_dict[ idx ],
+                                              color_missing = color_dict[ idx ],
+                                              hlines = hline_dict[ idx ],
+                                              tight = tight,
+                                              save_margin = save_margin )
+
+        elif idx == 0:
+            sat_lollipop_subplot_psi_by_alt(  tbv_filt,
+                                              col,
+                                              pos_col,
+                                              colors,
+                                              ax = axes[ idx ],
+                                              color_col = color_col,
+                                              tick_spacing = tick_spacing,
+                                              linewidth = linewidth,
+                                              lollipop_size = lollipop_size,
+                                              darken_bars = dbar_dict[ idx ],
+                                              darken_bars2 = dbar_dict2[ idx ],
+                                              labels_legend = labels_legend,
+                                              labels_legend_title = labels_legend_title,
+                                              labels_legend_loc = labels_legend_loc,
+                                              title = title,
+                                              y_ax_lim = ylim_dict[ idx ],
+                                              y_ax_title = y_ax_title[ idx ],
+                                              x_tick_fontsize = x_tick_fontsize,
+                                              y_tick_fontsize = y_tick_fontsize,
+                                              x_label_fontsize = x_label_fontsize,
+                                              y_label_fontsize = y_label_fontsize,
+                                              y_label_rotation = y_label_rotation,
+                                              legend = legend,
+                                              legend_title = legend_title,
+                                              legend_loc = legend_loc,
+                                              legend_labels = legend_labels,
+                                              bar_labels = bar_labels,
+                                              hatch_missing = hatch_dict[ idx ],
+                                              color_missing = color_dict[ idx ],
+                                              hlines = hline_dict[ idx ],
+                                              tight = tight,
+                                              save_margin = save_margin )
+
+        elif idx == ( len( y_cols ) - 1 ):
+            sat_lollipop_subplot_psi_by_alt(  tbv_filt,
+                                              col,
+                                              pos_col,
+                                              colors,
+                                              ax = axes[ idx ],
+                                              color_col = color_col,
+                                              tick_spacing = tick_spacing,
+                                              linewidth = linewidth,
+                                              lollipop_size = lollipop_size,
+                                              darken_bars = dbar_dict[ idx ],
+                                              darken_bars2 = dbar_dict2[ idx ],
+                                              legend = False,
+                                              y_ax_lim = ylim_dict[ idx ],
+                                              y_ax_title = y_ax_title[ idx ],
+                                              x_tick_fontsize = x_tick_fontsize,
+                                              y_tick_fontsize = y_tick_fontsize,
+                                              x_label_fontsize = x_label_fontsize,
+                                              y_label_fontsize = y_label_fontsize,
+                                              y_label_rotation = y_label_rotation,
+                                              ref_labels = ref_labels,
+                                              y_ref_cds = y_ref_cds,
+                                              colors_ref = colors_ref,
+                                              ref_font_size = ref_font_size,
+                                              ref_rect_ht = ref_rect_ht,
+                                              hatch_missing = hatch_dict[ idx ],
+                                              color_missing = color_dict[ idx ],
+                                              hlines = hline_dict[ idx ],
+                                              tight = tight,
+                                              x_ax_title = x_ax_title, )
+        else:
+            sat_lollipop_subplot_psi_by_alt(  tbv_filt,
+                                              col,
+                                              pos_col,
+                                              colors,
+                                              ax = axes[ idx ],
+                                              color_col = color_col,
+                                              tick_spacing = tick_spacing,
+                                              linewidth = linewidth,
+                                              lollipop_size = lollipop_size,
+                                              darken_bars = dbar_dict[ idx ],
+                                              darken_bars2 = dbar_dict2[ idx ],
+                                              y_ax_lim = ylim_dict[ idx ],
+                                              x_tick_fontsize = x_tick_fontsize,
+                                              y_tick_fontsize = y_tick_fontsize,
+                                              x_label_fontsize = x_label_fontsize,
+                                              y_label_fontsize = y_label_fontsize,
+                                              y_label_rotation = y_label_rotation,
+                                              legend = False,
+                                              y_ax_title = y_ax_title[ idx ],
+                                              hatch_missing = hatch_dict[ idx ],
+                                              color_missing = color_dict[ idx ],
+                                              hlines = hline_dict[ idx ],
+                                              tight = tight, )
+
+    if savefile:
+        plt.savefig( savefile,
+                     #dpi = 300,
+                     bbox_inches = 'tight',
+                     pad_inches = save_margin,
+                   )
+
+    plt.show()
+
+def correlation_heat_map( tbl_by_tool,
+                          figsize = ( 3, 3 ),
+                          color = 'coolwarm',
+                          interpolation = 'nearest',
+                          ytick_labels = None,
+                          xtick_labels = None,
+                          ax = None,
+                          savefile = None, ):
+
+    tbt = tbl_by_tool.copy()
+
+    plt.figure( figsize = figsize )
+
+    plt.imshow( tbt,
+                cmap = color,
+                interpolation = interpolation )
+
+    if ytick_labels:
+        plt.yticks( np.arange( len( tbt ) ),
+                    ytick_labels )
+    else:
+        plt.yticks( np.arange( len( tbt ) ),
+                    [ '' ]*len( tbt ) )
+
+    if xtick_labels:
+        plt.xticks( np.arange( len( tbt.columns ) ),
+                    xtick_labels,
+                    rotation = 90 )
+    else:
+        plt.xticks( np.arange( len( tbt.columns ) ),
+                    [ '' ]*len( tbt.columns ) )
+
+    plt.colorbar()
+
+    if savefile:
+        plt.savefig( savefile )
+
+    plt.show()
+
+def compute_metrics( tbl_by_var,
+                     sdv_col,
+                     tool_cols,
+                     pr_cols,
+                     score_col = None ):
+
+    tbv = tbl_by_var.copy()
+
+    outd = {}
+
+    outd[ 'MCC' ] = mcc_scores( tbv,
+                                   sdv_col,
+                                   tool_cols, )[ 0 ]
+
+    outd[ 'F1' ] = f1_scores( tbv,
+                                 sdv_col,
+                                 tool_cols, )[ 0 ]
+
+    outd[ 'prAUBC' ] = bal_pr_curves( tbv,
+                                         sdv_col,
+                                          pr_cols,
+                                          plt.get_cmap( 'tab20' ),
+                                          fig_size = ( 6, 5 ),
+                                          linewidth = 3,
+                                         )
+
+    outd[ 'rocAUC' ] = roc_curves( tbv,
+                                   sdv_col,
+                                   tool_cols,
+                                   plt.get_cmap( 'tab20' ),
+                                   fig_size = ( 6, 5 ),
+                                   linewidth = 3,
+                                   )
+
+    if score_col:
+
+        outd[ 'Spearman' ] = spearman_rank( tbv,
+                                                score_col,
+                                                tool_cols )
+
+        outd[ 'Pearson' ] = pearson( tbv,
+                                         score_col,
+                                         tool_cols )
+
+    return pd.DataFrame( outd,
+                         index = [ col.split( '_' )[ 0 ] for col in pr_cols ] )
+
+def metric_scatter_subplot( datasets,
+                            names,
+                            name_col,
+                           cmap,
+                           figsize = ( 10, 18 ),
+                           sharex = True,
+                           sharey = True,
+                           bbox = None,
+                           savefile = None,
+                           **kwargs
+                         ):
+
+    data = { cat: datasets[ cat ].copy() for cat in datasets }
+
+    fig, ax = plt.subplots( len( names ),
+                            len( data.keys() ),
+                            figsize = figsize,
+                            sharex = sharex,
+                            sharey = sharey )
+
+    mid = int( len( names ) / 2 )
+
+    for j, cat in enumerate( data.keys() ):
+
+        for i, name in enumerate( names ):
+
+            ax[ i ][ 0 ].set_ylabel( '%s Metrics' % name,
+                                      fontsize = 20 )
+
+            df = data[ cat ].loc[ data[ cat ][ name_col ] == name ].copy()
+
+            if len( df ) == 0:
+
+                ax[ i ][ j ].set_visible( False )
+                continue
+
+            plot_cols = [ col for col in df if col != name_col ]
+
+            for k,col in enumerate( plot_cols ):
+
+                ax[ i ][ j ].scatter( np.arange( 0, len( df ) ) + ( k - 2 )*.05,
+                                      df[ col ],
+                                      label = col,
+                                      color = cmap( k ),
+                                      **kwargs )
+
+            ax[ i ][ j ].set_xticks( np.arange( 0, len( df ) ) )
+            ax[ i ][ j ].set_xticklabels( df.index, rotation = 90, fontsize = 18 )
+
+            ax[ i ][ j ].tick_params( axis = 'y', labelsize = 14 )
+            ax[ 0 ][ j ].set_title( cat, fontsize = 24 )
+
+            ax[ i ][ j ].set_ylim( ( 0, 1 ) )
+
+    if bbox:
+
+        ax[ mid ][ len( data.keys() ) - 1 ].legend( loc = 'center left',
+                                                            bbox_to_anchor = bbox )
+
+    else:
+
+        ax[ mid ][ len( data.keys() ) - 1 ].legend()
+
+    plt.tight_layout()
+
+    if savefile:
+        plt.savefig( savefile,
+                     dpi = 300,
+                     #bbox_inches = 'tight'
+                   )
+
+    plt.show()
+
+def sens_by_cat_subplot( datasets,
+                         back_data,
+                         truth_col,
+                         pred_cols,
+                         cats,
+                         cat_col,
+                         cmap,
+                         x_thresh,
+                         y_thresh,
+                          figsize = ( 12, 10 ),
+                          sharex = False,
+                          sharey = False,
+                          savefig = False ):
+
+    data = { name: datasets[ name ].loc[ datasets[ name ][ truth_col ].notnull() ].copy()
+             for name in datasets.keys() }
+
+    outd = { 'data': [],
+             'tool': [],
+             'group': [],
+             'auc_sens': [],
+             'pt_sens_x': [],
+             'pt_sens_y': [] }
+
+    for name in data.keys():
+
+        if len( datasets[ name ] ) != len( data[ name ] ):
+
+            missing = len( datasets[ name ] ) - len( data[ name ] )
+
+            print( '%i missing values in %s in measured dataset %s' % ( missing, truth_col ) )
+
+    back_df = back_data.copy()
+
+    fig, ax = plt.subplots( len( list( data.keys() ) ),
+                            len( cats ),
+                            figsize = figsize,
+                            sharex = sharex,
+                            sharey = sharey )
+
+    for i, name_df in enumerate( data.items() ):
+
+        name,df = name_df
+
+        for j, cat in enumerate( cats ):
+
+            cat_df = df.loc[ df[ cat_col ] == cat ].copy()
+            bcat_df = back_df.loc[ back_df[ cat_col ] == cat ].copy()
+
+            if len( cat_df ) == 0:
+
+                print( 'No data to plot for %s %s' % ( name, cat ) )
+
+                for col in pred_cols:
+
+                    outd[ 'data' ].append( name )
+                    outd[ 'tool' ].append( col.split( '_' )[ 0 ] )
+                    outd[ 'group' ].append( cat )
+                    outd[ 'auc_sens' ].append( np.nan )
+                    outd[ 'pt_sens_x' ].append( np.nan )
+                    outd[ 'pt_sens_y' ].append( np.nan )
+                    ax[ i ][ j ].set_visible( False )
+
+                continue
+
+            for p, col in enumerate( pred_cols ):
+
+                outd[ 'data' ].append( name )
+                outd[ 'tool' ].append( col.split( '_' )[ 0 ] )
+                outd[ 'group' ].append( cat )
+
+                col_df = cat_df.loc[ cat_df[ col ].notnull() ].copy()
+
+                if len( cat_df ) != len( col_df ):
+
+                    missing = len( cat_df ) - len( col_df )
+
+                    print( '%i missing values in %s in measured dataset %s' % ( missing, col, name ) )
+
+                    if len( col_df ) == 0:
+
+                        print( 'No data to plot for %s %s for tool %s' % ( name, cat, col ) )
+
+                        outd[ 'auc_sens' ].append( np.nan )
+                        outd[ 'pt_sens_x' ].append( np.nan )
+                        outd[ 'pt_sens_y' ].append( np.nan )
+
+                        continue
+
+                _, sens, thresh = roc_curve( col_df[ truth_col ], col_df[ col ] )
+
+                bcol_df = bcat_df.loc[ bcat_df[ col ].notnull() ].copy()
+
+                if len( bcat_df ) != len( bcol_df ):
+
+                    missing = len( bcat_df ) - len( bcol_df )
+
+                    print( '%i missing values in %s in background dataset' % ( missing, col, ) )
+
+                back = np.array( [ 100*( ( bcol_df[ col ] >= t ).sum() / len( bcol_df ) ) for t in thresh ] )
+
+                ax[ i ][ j ].plot( back,
+                                  sens,
+                                  c = plt.get_cmap( cmap )( p ),
+                                  label = col.split( '_' )[ 0 ] )
+
+                outd[ 'auc_sens' ].append( auc( back / 100, sens ) )
+                outd[ 'pt_sens_x' ].append( sens[ back <= x_thresh ][ -1 ] if sum( back <= x_thresh ) > 0 else np.nan )
+                outd[ 'pt_sens_y' ].append( back[ sens >= y_thresh ][ 0 ] if sum( sens >= y_thresh ) > 0 else np.nan )
+
+            ax[ len( data ) - 1 ][ j ].set_xlabel( '% SDV from transcriptomic background' )
+
+            ax[ 0 ][ j ].set_title( cat )
+
+        ax[ i ][ 0 ].set_ylabel( name )
+
+        ax[ 2 ][ j ].legend()
+
+    if j < len( cats ):
+
+        j += 1
+
+        while j < len( cats ):
+
+            ax[ 1 ][ j ].set_visible( False )
+            j += 1
+
+    if i < len( list( data.keys() ) ):
+
+        i += 1
+
+        while i < len( list( data.keys() ) ):
+
+            for j in range( len( cats ) ):
+
+                ax[ i ][ j ].set_visible( False )
+
+            i += 1
+
+    plt.tight_layout()
+
+    if savefig:
+
+        plt.savefig( savefig )
+
+    plt.show()
+
+    outdf = pd.DataFrame( outd )
+
+    return outdf
+
+def pr_scatter( pr_data,
+                cats,
+                cat_col,
+                data_col,
+                tool_col,
+                plot_x,
+                plot_y,
+                figsize = ( 6, 12 ),
+                sharex = True,
+                sharey = True,
+                color = plt.get_cmap( 'tab20' ),
+                savefig = False,
+                **kwargs ):
+
+    df = pr_data.copy()
+
+    fig, ax = plt.subplots( len( df[ data_col ].unique() ),
+                            len( cats ),
+                            figsize = figsize,
+                          sharex = sharex,
+                          sharey = sharey )
+
+    for i,data in enumerate( df[ data_col ].unique() ):
+
+        for j,cat in enumerate( cats ):
+
+            for k,tool in enumerate( df[ tool_col ].unique() ):
+
+                plot_df = df.loc[ ( df[ data_col ] == data ) & ( df[ cat_col ] == cat ) ].copy()
+
+                if not plot_df[ plot_x ].notnull().sum():
+
+                    ax[ i ][ j ].set_visible( False )
+                    continue
+
+                ax[ i ][ j ].scatter( plot_df.loc[ plot_df[ tool_col ] == tool ][ plot_x ],
+                                      plot_df.loc[ plot_df[ tool_col ] == tool ][ plot_y ],
+                                      color = color( k ),
+                                      label = tool,
+                                      **kwargs )
+
+            ax[ i ][ j ].set_xlim( ( 0, 1 ) )
+            ax[ len( df[ data_col ].unique() ) - 1 ][ j ].set_xlabel( 'prAUBC' )
+
+            ax[ i ][ j ].set_ylim( ( 0, 1 ) )
+            ax[ i ][ 0 ].set_ylabel( data )
+
+            ax[ 0 ][ j ].set_title( cat )
+
+    ax[ i ][ j ].legend( loc = 'center left',
+                         bbox_to_anchor = ( 1.2, 1.5 ) )
+
+    if savefig:
+
+        plt.savefig( savefig,
+                     bbox_inches = 'tight' )
+
+    plt.show()
+
+def hist_by_cat_subplots( tbl_by_var,
+                          tool_cols,
+                          colors,
+                          cat_col,
+                          categories,
+                          cat_translate = None,
+                          figsize = ( 40, 30 ),
+                          xlabel = '',
+                          sharex = True,
+                          sharey = False,
+                          savefig = False ):
+
+    tbv = tbl_by_var.copy()
+
+    fig, ax = plt.subplots( len( categories ),
+                            len( tool_cols ),
+                            figsize = figsize,
+                            sharex = sharex,
+                            sharey = sharey )
+
+    ax2 = [ [ 0 ]*len( tool_cols ) ]*len( categories )
+
+    if cat_translate:
+
+        #old_cats = categories
+
+        #categories = [ cat_translate[ cat ] for cat in old_cats ]
+
+        categories = [ cat_translate[ cat ] for cat in categories ]
+
+    for i, cat in enumerate( categories ):
+
+        label_y = 0
+
+        cat_df = tbv.loc[ tbv[ cat_col ] == cat ].copy()
+
+        for j, tool_col in enumerate( tool_cols ):
+
+            if not cat_df[ tool_col ].notnull().sum():
+
+                ax[ i ][ j ].set_visible( False )
+
+                if j == 0:
+                    label_y += 1
+                continue
+
+            ax2[ i ][ j ] = ax[ i ][ j ].twinx()
+
+            ax2[ i ][ j ].hist( tbv.loc[ tbv[ cat_col ] == cat ][ tool_col ],
+                               bins = 100,
+                               color = colors[ i ],
+                               density = True, )
+
+            ecdf_x, ecdf_y = compute_ecdf( tbv.loc[ tbv[ cat_col ] == cat ][ tool_col ] )
+
+            ax[ i ][ j ].step( ecdf_x, ecdf_y, color = 'black' )
+
+            ax[ i ][ j ].set_zorder( ax2[ i ][ j ].get_zorder() + 1 )
+            ax[ i ][ j ].patch.set_visible(False)
+
+            ax2[ i ][ j ].axis( 'off' )
+
+            ax[ i ] [ j ].tick_params( axis = 'x', which = 'major', labelsize = 18 )
+
+            if j != label_y:
+                ax[ i ] [ j ].tick_params( labelleft = False )
+            else:
+                ax[ i ] [ j ].tick_params( axis = 'y', which = 'major', labelsize = 18 )
+
+            ax[ i ] [ j ].set_ylim( ( 0, 1 ) )
+
+            ax[ len( categories ) - 1 ][ j ].set_xlabel( tool_col.split( '_' )[ 0 ], fontsize = 24 )
+
+        ax[ i ][ label_y ].set_ylabel( cat, fontsize = 24 )
+
+    if savefig:
+
+        plt.savefig( savefig )
 
     plt.show()

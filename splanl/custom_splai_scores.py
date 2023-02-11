@@ -1815,15 +1815,21 @@ def gene_specific_gtf( gtf_file,
                                                               for a in att.split( '; ' )
                                                               if a.split( ' ' )[ 0 ] == 'transcript_id' ]
 
-    assert len( gene.transcript_id.dropna().unique().tolist() ) == 1, \
-    'Gene %s has more than one transcript in the table' % ( gene_name )
+    gene.transcript_id = gene.transcript_id.fillna( '' )
 
-    assert gene.transcript_id.dropna().unique().tolist()[ 0 ].startswith( transcript_name ), \
-    'Transcript %s not in table - only transcript %s' % ( transcript_name, gene.transcript_id.dropna().unique().tolist()[ 0 ] )
+    assert transcript_name in gene.transcript_id.apply( lambda x: x.split( '.' )[ 0 ] ).unique().tolist(), \
+    'Transcript %s not in table - only transcript %s' % ( transcript_name, gene.loc[ gene.transcript_id != '' ].transcript_id.unique().tolist() )
 
-    gene = gene.drop( columns = [ 'gene_id', 'transcript_id' ] )
+    #if there's more than one transcript for the gene just grab those rows
+    if len( gene.loc[ gene.transcript_id != '' ].transcript_id.unique().tolist() ) > 1:
+        trans = gene.loc[ ( gene.transcript_id == '' ) | ( gene.transcript_id.str.startswith( transcript_name ) ) ].copy()
 
-    return gene
+    else:
+        trans = gene.copy()
+
+    trans = trans.drop( columns = [ 'gene_id', 'transcript_id' ] )
+
+    return trans
 
 def splai_score_wt_onegene( annots_df,
                             models,
@@ -1925,8 +1931,6 @@ def splai_compute_ss_prob( annots_df,
                            rev_strand = False,
                          ):
 
-    #NOW in custom_splai_scores!
-
     outtbl = { 'ref_name': [ ref_name ]*len( refvarseqs ),
                'chrom': [ chrom ]*len( refvarseqs ),
                'pos': [],
@@ -1935,7 +1939,11 @@ def splai_compute_ss_prob( annots_df,
                'other_var': [],
              }
 
-    outacc,outdon = np.empty( ( len( refvarseq ), scored_context ) ), np.empty( ( len( refvarseq ), scored_context ) )
+    for pos in ss_pos_l:
+        outtbl[ 'ss_acc_prob_' + str( pos ) ] = []
+        outtbl[ 'ss_don_prob_' + str( pos ) ] = []
+
+    out_acc,out_don = np.empty( ( len( refvarseqs ), 2*scored_context + 1 ) ), np.empty( ( len( refvarseqs ), 2*scored_context + 1 ) )
 
     for idx, refvarseq in enumerate( refvarseqs ):
 
@@ -2007,8 +2015,6 @@ def splai_ss_prob_mult_variants_onegene( annots_df,
                                       scored_context = 50,
                                       unscored_context = 5000,
                                       rev_strand = False ):
-
-    #NOW in custom_splai_scores!
 
     strand = '-' if rev_strand else '+'
 
