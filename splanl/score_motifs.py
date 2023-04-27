@@ -215,46 +215,51 @@ def create_hal_skip_input_df( varlist,
 #this was formerly known as create_hal_input_df - previous notebooks will use that function
 
     out_dict = { 'var_name': [],
-                 'refseq': [],
-                 'altseq': [],
-                 'psi': [] }
+                 'altseq': [], }
+
+    ex_start, ex_end = exon_coords
+
+    if not rev_strand:
+        #hal only works on exonic sequences and wants 6 downstream intronic bases in lowercase
+        score_ref = refseq[ ex_start: ex_end ].upper() + refseq[ ex_end: ex_end + 6 ].lower()
+    else:
+        score_ref = css.rev_complement( refseq[ ex_start - 6: ex_start ].lower() + refseq[ ex_start : ex_end ].upper() )
 
     for var in varlist:
 
-        pos = int( var.split( ':' )[ 1 ] )
+        var_l = var.split( ':' )
 
-        if exon_coords[ 1 ] >= pos > exon_coords[ 0 ]:
+        pos = int( var_l[ 1 ] )
 
-            ref = var.split( ':' )[ 2 ].upper()
-            alt = var.split( ':' )[ 3 ].upper()
+        if ex_end >= pos > ex_start:
+
+            ref = var_l[ 2 ].upper()
+            alt = var_l[ 3 ].upper()
 
             #adjust for 0 and 1 based numbering
             assert refseq[ pos - 1: pos - 1 + len( ref ) ].upper() == ref, \
             'Expected reference allele does not match sequence - check numbering'
 
             out_dict[ 'var_name' ].append( var )
+            #out_dict[ 'refseq' ].append( score_ref )
 
             if not rev_strand:
-                #hal only works on exonic sequences and wants 6 downstream intronic bases in lowercase
-                out_dict[ 'refseq' ].append( refseq[ exon_coords[ 0 ] : exon_coords[ 1 ] ].upper() \
-                                            + refseq[ exon_coords[ 1 ]: exon_coords[ 1 ] + 6 ].lower() )
                 #adds in the alternate allele at the reference spot - only tested for SNVS
-                out_dict[ 'altseq' ].append( refseq[ exon_coords[ 0 ] : pos - 1 ].upper() \
+                out_dict[ 'altseq' ].append( refseq[ ex_start : pos - 1 ].upper() \
                                             + alt
                                             + refseq[ pos - 1 + len( ref ): exon_coords[ 1 ] ].upper()
-                                            + refseq[ exon_coords[ 1 ]: exon_coords[ 1 ] + 6 ].lower() )
+                                            + refseq[ ex_end: ex_end + 6 ].lower() )
 
             else:
-                out_dict[ 'refseq' ].append( css.rev_complement( refseq[ exon_coords[ 0 ] - 6: exon_coords[ 0 ] ].lower() \
-                                                                 + refseq[ exon_coords[ 0 ] : exon_coords[ 1 ] ].upper() )  )
-                out_dict[ 'altseq' ].append( css.rev_complement( refseq[ exon_coords[ 0 ] - 6: exon_coords[ 0 ] ].lower() \
-                                                                 + refseq[ exon_coords[ 0 ] : pos - 1 ].upper() \
+                out_dict[ 'altseq' ].append( css.rev_complement( refseq[ ex_start - 6: ex_start ].lower() \
+                                                                 + refseq[ ex_start : pos - 1 ].upper() \
                                                                  + alt \
-                                                                 + refseq[ pos - 1 + len( ref ): exon_coords[ 1 ] ].upper() )  )
-
-            out_dict[ 'psi' ] = wt_psi
+                                                                 + refseq[ pos - 1 + len( ref ): ex_end ].upper() )  )
 
     out_tbl = pd.DataFrame( out_dict )
+
+    out_tbl[ 'refseq' ] = score_ref
+    out_tbl[ 'psi' ] = wt_psi
 
     return out_tbl
 
@@ -363,25 +368,25 @@ def merge_hal( var_df,
 
 def merge_squirls( tbl_by_var,
                    squirls_df,
-                   transcript = None,
                    out_score_col = 'squirls_score',
                    out_sdv_col = 'squirls_sdv',
-                   index_cols = [ 'hg19_pos', 'ref', 'alt' ] ):
+                   index_cols = [ 'transcript_id', 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
 
     tbv = tbl_by_var.set_index( index_cols ).copy()
 
-    if transcript:
+    #if transcript:
 
-        squirls_df = squirls_df.loc[ squirls_df.tx_accession.str.startswith( transcript ) ].copy()
+        #squirls_df = squirls_df.loc[ squirls_df.tx_accession.str.startswith( transcript ) ].copy()
 
     squirls = squirls_df.rename( columns = { 'squirls_score': out_score_col,
-                                              'pos': index_cols[ 0 ] } ).set_index( index_cols ).copy()
+                                              'pos': [ col for col in index_cols if 'pos' in col ][ 0 ],
+                                              'tx_accession': 'squirls_transcript_id' } ).set_index( index_cols ).copy()
 
     assert len( squirls ) > 0, 'No data selected to merge - is the transcript in the table?'
 
     squirls[ out_sdv_col ] = squirls.interpretation == 'pathogenic'
 
-    tbv = tbv.merge( squirls[ [ out_score_col, out_sdv_col ] ],
+    tbv = tbv.merge( squirls[ [ out_score_col, out_sdv_col, 'squirls_transcript_id' ] ],
                      how = 'left',
                      left_index = True,
                      right_index = True ).reset_index()
@@ -487,12 +492,13 @@ def clean_tbx_spidex( spidex,
 
 def merge_spidex( var_df,
                   spidex_df,
-                  index = [ 'hg19_pos', 'ref', 'alt' ] ):
+                  index = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
 
     tbv = var_df.copy().set_index( index )
 
     tsp = spidex_df.copy().set_index( index )
-    tsp = tsp.drop( columns = [ 'chrom', 'End' ] )
+    tsp = tsp.drop( columns = [ 'End' ] )
+    #tsp = tsp.drop( columns = [ 'chrom', 'End' ] )
 
     out_tbl = pd.merge( tbv, tsp, how = 'left', on = index ).reset_index()
 
@@ -933,6 +939,7 @@ def get_pangolin_scores( pangolin_vcf ):
               'hg19_pos': [],
               'ref': [],
               'alt': [],
+              'gene_id': [],
               'pang_incr': [],
               'pang_incr_pos': [],
               'pang_decr': [],
@@ -948,28 +955,37 @@ def get_pangolin_scores( pangolin_vcf ):
             print( 'Variant %s:%s>%s was not scored' % ( var.pos, var.ref, var.alts[ 0 ] ) )
             continue
 
-        out_d[ 'chrom' ].append( str( var.chrom ) )
-        out_d[ 'hg19_pos' ].append( var.pos )
-        out_d[ 'ref' ].append( var.ref )
-        out_d[ 'alt' ].append( var.alts[ 0 ] )
+        info_str = var.info[ 'Pangolin' ][ 0 ]
 
-        info_tup = var.info[ 'Pangolin' ]
+        rows_l = info_str.split( 'Warnings:' )
 
-        out_d[ 'pang_incr' ].append( float( info_tup[ 0 ].split( '|' )[ 1 ].split( ':' )[ 1 ] ) )
-        out_d[ 'pang_incr_pos' ].append( int( info_tup[ 0 ].split( '|' )[ 1 ].split( ':' )[ 0 ] ) )
-        out_d[ 'pang_decr' ].append( float( info_tup[ 0 ].split( '|' )[ 2 ].split( ':' )[ 1 ] ) )
-        out_d[ 'pang_decr_pos' ].append( int( info_tup[ 0 ].split( '|' )[ 2 ].split( ':' )[ 0 ] ) )
+        assert rows_l[ -1 ] == '', 'Careful - you might be cutting out a transcript score!'
 
-        score_keys = [ 'pang_incr', 'pang_decr' ]
+        rows_l = rows_l[ : -1 ]
 
-        #first get the maximum probability across the difference scores
-        out_d[ 'pang_max' ].append( max( [ out_d[ key ][ -1 ] for key in score_keys ], key = abs ) )
+        for row in rows_l:
 
-        #then get the type of event that represents the maximum probability
-        out_d[ 'pang_max_type' ].append( [ key for key in score_keys
+            out_d[ 'chrom' ].append( str( var.chrom ) )
+            out_d[ 'hg19_pos' ].append( var.pos )
+            out_d[ 'ref' ].append( var.ref )
+            out_d[ 'alt' ].append( var.alts[ 0 ] )
+            out_d[ 'gene_id' ].append( row.split( '|' )[ 0 ] )
+            out_d[ 'pang_incr' ].append( float( row.split( '|' )[ 1 ].split( ':' )[ 1 ] ) )
+            out_d[ 'pang_incr_pos' ].append( int( row.split( '|' )[ 1 ].split( ':' )[ 0 ] ) )
+            out_d[ 'pang_decr' ].append( float( row.split( '|' )[ 2 ].split( ':' )[ 1 ] ) )
+            out_d[ 'pang_decr_pos' ].append( int( row.split( '|' )[ 2 ].split( ':' )[ 0 ] ) )
+
+            score_keys = [ 'pang_incr', 'pang_decr' ]
+
+            #first get the maximum probability across the difference scores
+            out_d[ 'pang_max' ].append( max( [ out_d[ key ][ -1 ] for key in score_keys ], key = abs ) )
+
+            #then get the type of event that represents the maximum probability
+            out_d[ 'pang_max_type' ].append( [ key for key in score_keys
                                           if out_d[ key ][ -1 ] == out_d[ 'pang_max' ][ -1 ] ][ 0 ] )
-        #finally, get the location of the event associated with the highest difference score
-        out_d[ 'pang_max_pos' ].append( out_d[ out_d[ 'pang_max_type' ][ -1 ] + '_pos' ][ -1 ] )
+
+            #finally, get the location of the event associated with the highest difference score
+            out_d[ 'pang_max_pos' ].append( out_d[ out_d[ 'pang_max_type' ][ -1 ] + '_pos' ][ -1 ] )
 
     outdf = pd.DataFrame( out_d )
 
@@ -977,7 +993,7 @@ def get_pangolin_scores( pangolin_vcf ):
 
 def merge_pangolin( tbl_by_var,
                     pangolin_scores,
-                    index_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+                    index_cols = [ 'gene_id', 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
 
     tbv = tbl_by_var.set_index( index_cols ).copy()
 
@@ -1052,21 +1068,23 @@ def score_RBP_motifs(refseq,
 
 def merge_mmsplice( var_df,
                     mmsplice_df,
-                    index = [ 'hg19_pos', 'ref', 'alt' ],
-                    transcript = None ):
+                    index = [ 'transcript_id', 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
 
     tbv = var_df.set_index( index ).copy()
 
     tmm = mmsplice_df.copy()
 
-    if transcript:
+    #if transcript:
 
-        tmm = tmm.loc[ tmm.transcript_id.str.startswith( transcript ) ].copy()
+        #tmm = tmm.loc[ tmm.transcript_id.str.startswith( transcript ) ].copy()
 
     tmm = tmm.rename( columns = { 'delta_logit_psi': 'mmsplice_chgPERlogit' } )
     tmm = tmm.rename( columns = { 'pathogenicity': 'mmsplice_pathogen' } )
     tmm = tmm.rename( columns = { 'efficiency': 'mmsplice_eff' } )
-    tmm = tmm.rename( columns = { 'transcript_id': 'mmsplice_trans' } )
+    if 'transcript_id' in index:
+        tmm[ 'mmsplice_trans' ] = tmm.transcript_id
+    else:
+        tmm = tmm.rename( columns = { 'transcript_id': 'mmsplice_trans' } )
     tmm = tmm[ index + [ 'mmsplice_chgPERlogit', 'mmsplice_pathogen', 'mmsplice_eff', 'mmsplice_trans' ] ].set_index( index )
 
     if not tmm.index.is_unique:
@@ -1374,41 +1392,50 @@ def merge_bpp_wt( tbl_by_var,
     return tbv
 
 def get_consplice_scores( pysam_vcf,
-                          hg19_liftover_bed,
-                          hg38_liftover_bed ):
+                          liftover_bed, ):
 
-    hg19b = hg19_liftover_bed.copy()
-    hg38b = hg38_liftover_bed.copy()
-
-    assert len( hg19b ) == len( hg38b ), 'Bedfiles are of different lengths!'
+    lift = liftover_bed.copy()
 
     hg38tohg19_lift = { chrom: { hg38:hg19
-                                 for hg38, hg19 in zip( hg38b.loc[ hg38b.chrom == chrom ].hg38_pos, hg19b.loc[ hg19b.chrom == chrom ].hg19_pos ) }
-                         for chrom in hg38b.chrom.unique() }
+                                 for hg38, hg19 in zip( chrom_df.hg38_pos, chrom_df.hg19_pos ) }
+                         for chrom, chrom_df in lift.groupby( 'chrom' ) }
 
     outd = { 'chrom': [],
              'hg38_pos': [],
              'hg19_pos': [],
              'ref': [],
              'alt': [],
+             'gene_name': [],
              'consplice': [],
              'conspliceml': [] }
 
     for rec in pysam_vcf:
 
-        outd[ 'chrom' ].append( rec.chrom )
-        outd[ 'hg38_pos' ].append( rec.pos )
-        if outd[ 'chrom' ][ -1 ] not in hg38tohg19_lift:
-            if outd[ 'chrom' ][ -1 ].startswith( 'chr' ):
-                outd[ 'hg19_pos' ].append( hg38tohg19_lift[ outd[ 'chrom' ][ -1 ][ 3: ] ][ outd[ 'hg38_pos' ][ -1 ] ] )
+        if rec.chrom not in hg38tohg19_lift:
+            if rec.chrom.startswith( 'chr' ):
+                chrom = rec.chrom[ 3: ]
             else:
-                outd[ 'hg19_pos' ].append( hg38tohg19_lift[ 'chr' + str( outd[ 'chrom' ][ -1 ] ) ][ outd[ 'hg38_pos' ][ -1 ] ] )
+                chrom = 'chr' + str( rec.chrom )
         else:
-            outd[ 'hg19_pos' ].append( hg38tohg19_lift[ outd[ 'chrom' ][ -1 ] ][ outd[ 'hg38_pos' ][ -1 ] ] )
+            chrom = rec.chrom
+
+        if rec.pos not in hg38tohg19_lift[ chrom ]:
+            continue
+
+        outd[ 'chrom' ].append( chrom )
+        outd[ 'hg38_pos' ].append( rec.pos )
+        outd[ 'hg19_pos' ].append( hg38tohg19_lift[ outd[ 'chrom' ][ -1 ] ][ outd[ 'hg38_pos' ][ -1 ] ] )
         outd[ 'ref' ].append( rec.ref )
         outd[ 'alt' ].append( rec.alts[ 0 ] )
-        outd[ 'consplice' ].append( float( rec.info[ 'ConSplice' ][ 0 ].split( '|' )[ -1 ] ) )
+        assert len( rec.info[ 'ConSpliceML' ][ 0 ].split( '|' ) ) == 2, 'You might be missing info - check your code!'
+        outd[ 'gene_name' ].append( rec.info[ 'ConSpliceML' ][ 0 ].split( '|' )[ 0 ] )
         outd[ 'conspliceml' ].append( float( rec.info[ 'ConSpliceML' ][ 0 ].split( '|' )[ -1 ] ) )
+        assert any( outd[ 'gene_name' ][ -1 ] in tup for tup in rec.info[ 'ConSplice' ] ), \
+        'Your gene name is not matching for %s:%i%s>%s- code will fail!' % ( outd[ 'chrom' ][ -1 ], outd[ 'hg38_pos' ][ -1 ], outd[ 'ref' ][ -1 ], outd[ 'alt' ][ -1 ] )
+        consplice_info = rec.info[ 'ConSplice' ][ 0 ].split( ',' )
+        for info in rec.info[ 'ConSplice' ]:
+            if info.split( '|' )[ 0 ] == outd[ 'gene_name' ][ -1 ]:
+                outd[ 'consplice' ].append( float( info.split( '|' )[ -1 ] ) )
 
     pysam_vcf.close()
 
@@ -1418,7 +1445,7 @@ def get_consplice_scores( pysam_vcf,
 
 def merge_consplice( tbl_by_var,
                      consplice_df,
-                     idx_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+                     idx_cols = [ 'gene_name', 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
 
     tbv = tbl_by_var.copy()
     conspl = consplice_df.copy()
@@ -1429,5 +1456,59 @@ def merge_consplice( tbl_by_var,
                                              how = 'left',
                                              left_index = True,
                                              right_index = True ).reset_index()
+
+    return outdf
+
+def get_splai_precanned_scores( splai_vcf,
+                                masked = True ):
+
+    outtbl = { 'chrom': [],
+               'pos': [],
+               'ref': [],
+               'alt': [],
+               'gene_name': [],
+               'DS_AG' + masked*'m': [],
+               'DS_AL' + masked*'m': [],
+               'DS_DG' + masked*'m': [],
+               'DS_DL' + masked*'m': [],
+               'DP_AG' + masked*'m': [],
+               'DP_AL' + masked*'m': [],
+               'DP_DG' + masked*'m': [],
+               'DP_DL' + masked*'m': [],
+               'DS_max' + masked*'m': [],
+               'DS_max' + masked*'m' + '_type': [],
+               'POS_max' + masked*'m': [],
+             }
+
+    DS_scores = [ 'DS_AG' + masked*'m', 'DS_AL' + masked*'m', 'DS_DG' + masked*'m', 'DS_DL' + masked*'m' ]
+    DP_scores = [ 'DP_AG' + masked*'m', 'DP_AL' + masked*'m', 'DP_DG' + masked*'m', 'DP_DL' + masked*'m' ]
+
+    for var in splai_vcf:
+
+        outtbl[ 'chrom' ].append( var.chrom )
+        outtbl[ 'pos' ].append( int( var.pos ) )
+        outtbl[ 'ref' ].append( var.ref )
+        assert len( var.alts ) == 1, 'Alt longer than one character!'
+        outtbl[ 'alt' ].append( var.alts[ 0 ] )
+
+        info_l = var.info[ 'SpliceAI'][ 0 ].split( '|' )
+
+        outtbl[ 'gene_name' ].append( info_l[ 1 ] )
+
+        for i,col in enumerate( DS_scores ):
+            outtbl[ col ].append( info_l[ i + 2 ] )
+
+        for i,col in enumerate( DP_scores ):
+            outtbl[ col ].append( info_l[ i + 6 ] )
+
+        #first get the maximum probability across the difference scores
+        outtbl[ 'DS_max' + masked*'m' ].append( max( outtbl[ col ][ -1 ] for col in DS_scores ) )
+        #then get the type of event that represents the maximum probability
+        outtbl[ 'DS_max' + masked*'m' + '_type' ].append( [ col for col in DS_scores
+                                                          if outtbl[ col ][ -1 ] == outtbl[ 'DS_max' + masked*'m' ][ -1 ] ][ 0 ] )
+        #finally, get the location of the event associated with the highest difference score
+        outtbl[ 'POS_max' + masked*'m' ].append( outtbl[ outtbl[ 'DS_max' + masked*'m' + '_type' ][ -1 ].replace( 'DS', 'DP' ) ][ -1 ] )
+
+    outdf = pd.DataFrame( outtbl )
 
     return outdf

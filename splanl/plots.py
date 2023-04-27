@@ -3171,15 +3171,22 @@ def sat_subplot_psi_by_alt(   var_df,
 
             print( 'If your labels are not in the pdf, increase save_margin parameter!' )
 
-        x_coords = ax.get_xticks()
+        #x_coords = ax.get_xticks()
 
-        x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
+        #x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
+
+        x_coords_per_bp = [ x for x in range( len( tbv ) ) ]
 
         for label_col, marker_d, y_coords, in bar_labels:
 
             for val in marker_d:
 
                 marker, color, edgecolor, linewidth, size = marker_d[ val ]
+
+                #print( len( x_coords_per_bp ), x_coords_per_bp )
+
+                #print( len( [ y_coords if label == val else np.nan for label in tbv[ label_col ] ] ),
+                       #[ y_coords if label == val else np.nan for label in tbv[ label_col ] ] )
 
                 ax.scatter( x_coords_per_bp,
                             [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
@@ -4932,9 +4939,9 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
 
             print( 'If your labels are not in the pdf, increase save_margin parameter!' )
 
-        x_coords = ax.get_xticks()
+        #x_coords = ax.get_xticks()
 
-        x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
+        #x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
 
         for label_col, marker_d, y_coords, in bar_labels:
 
@@ -4942,7 +4949,7 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
 
                 marker, color, edgecolor, linewidth, size = marker_d[ val ]
 
-                ax.scatter( x_coords_per_bp,
+                ax.scatter( [ i for i in range( len( tbv ) ) ],
                             [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
                             marker = marker,
                             color = color,
@@ -5255,6 +5262,8 @@ def correlation_heat_map( tbl_by_tool,
                           figsize = ( 3, 3 ),
                           color = 'coolwarm',
                           interpolation = 'nearest',
+                          hmin = None,
+                          hmax = None,
                           ytick_labels = None,
                           xtick_labels = None,
                           ax = None,
@@ -5266,7 +5275,9 @@ def correlation_heat_map( tbl_by_tool,
 
     plt.imshow( tbt,
                 cmap = color,
-                interpolation = interpolation )
+                interpolation = interpolation,
+                vmin = hmin,
+                vmax = hmax )
 
     if ytick_labels:
         plt.yticks( np.arange( len( tbt ) ),

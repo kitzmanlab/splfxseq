@@ -94,13 +94,40 @@ def create_liftover_bed( chrom,
 
     out_d = { 'chrom': [],
               coords + '_pos': [],
-              'end': [] }
+              'end': [],
+              'name': [] }
 
     for pos in range( start, end + 1 ):
 
         out_d[ 'chrom' ].append( chrom )
         out_d[ coords + '_pos' ].append( pos )
         out_d[ 'end' ].append( pos + 1 )
+        out_d[ 'name' ].append( out_d[ 'chrom' ][ -1 ] + ':' + str( pos ) )
+
+    outdf = pd.DataFrame( out_d )
+
+    return outdf
+
+def create_liftover_bed_byvar( tbl_by_var,
+                               chrom_col = 'chrom',
+                               pos_col = 'hg19_pos' ):
+
+    tbv = tbl_by_var.copy()
+
+    if not tbv.iloc[ 0 ][ chrom_col ].startswith( 'chr' ):
+        tbv[ chrom_col ] = [ 'chr' + chrom for chrom in tbv[ chrom_col ] ]
+
+    out_d = { chrom_col: [],
+              pos_col: [],
+              'end': [],
+              'name': [] }
+
+    for chrom, pos in zip( tbv[ chrom_col ], tbv[ pos_col ] ):
+
+        out_d[ chrom_col ].append( chrom )
+        out_d[ pos_col ].append( pos )
+        out_d[ 'end' ].append( pos + 1 )
+        out_d[ 'name' ].append( chrom + ':' + str( pos ) )
 
     outdf = pd.DataFrame( out_d )
 
