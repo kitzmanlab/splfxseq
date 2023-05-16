@@ -3,26 +3,28 @@ import numpy as np
 import argparse
 import sys
 import time
+import csv
 from keras.models import load_model
 from pkg_resources import resource_filename
 import splanl.plots as sp
-import mpsa_pipe.seq_fx as sf
-import mpsa_pipe.annots as ann
-import mpsa_pipe.create_vcf as vcf
-import mpsa_pipe.score_splai as splai
-import mpsa_pipe.scrape_public_data as spd
+import splanl.post_processing as pp
+import splanl.coords as cd
+import splanl.annots as ann
+import splanl.create_vcf as vcf
+import splanl.custom_splai_scores as css
+import splanl.scrape_public_data as spd
 
 def main():
 
     T0 = time.time()
 
-    parser = argparse.ArgumentParser( description = 'Score data with SpliceAI!',
+    parser = argparse.ArgumentParser( description = 'Score SNVs with SpliceAI!',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument( '-rn', '--refseqname',
-                         help = 'Name of sequence in vector fasta file (str) ie chrom11' )
+                         help = 'Name of sequence in reference fasta file (str) ie chrom11' )
     parser.add_argument( '-ann', '--annotation_file_override',
                          help = 'Annotation file in splai format to use - overrides custom transcript specific file! : dir + filename (str)' )
-    parser.add_argument( '-d', '--scoring distance',
+    parser.add_argument( '-d', '--scoring_distance',
                          type = int,
                          help = 'Scored distance (default is exon length + 10) (int)' )
     parser.add_argument( '-altss', '--score_alt_ss',
@@ -49,6 +51,8 @@ def main():
                          help = 'Gencode gene identifier (starts with ENSG) (str)' )
     parser.add_argument( 'gencode_transcript_id',
                          help = 'Gencode transcript identifier (starts with ENST) (str)' )
+    parser.add_argument( 'reference_fafile',
+                         help = 'Reference fasta file: dir + filename (str)' )
     parser.add_argument( 'score_start_pos',
                          type = int,
                          help = 'Start position to score - be consistent with reference_fafile coords! (int)' )
@@ -97,6 +101,9 @@ def main():
         clinvar = pd.read_table( config[ 'clinvar_file' ] )
         assert config[ 'merge_pos_col' ] in clinvar, 'Your ClinVar dataframe must have the merge_pos_col (-mcol) as one of the columns!'
 
+    chrom = config[ 'chrom' ] if not config[ 'chrom' ].startswith( 'chr' ) else config[ 'chrom' ][ 3: ]
+    chrom_chr = config[ 'chrom' ] if config[ 'chrom' ].startswith( 'chr' ) else 'chr' + config[ 'chrom' ]
+
     date_string = time.strftime( '%Y-%m%d', time.localtime() )
 
     gencode_annot = pd.read_table(  config[ 'gencode_basic' ],
@@ -109,7 +116,7 @@ def main():
                                        config[ 'gencode_gene_id' ],
                                        config[ 'gencode_transcript_id' ] )
 
-    trans_gtf.to_csv( config[ 'annot_out_dir' ] + 'gencode_' + config[ 'gencode_transcript_id' ] + '_' + date_string + '.gtf.gz',
+    trans_gtf.to_csv( config[ 'annot_out_dir' ] + 'gencode_' + config[ 'gencode_transcript_id' ] + '.gtf.gz',
                       sep = '\t',
                       index = False,
                       header = False,
@@ -118,7 +125,7 @@ def main():
 
     trans_splai = ann.gtf_to_splai_annot( trans_gtf )
 
-    trans_splai.to_csv( config[ 'annot_out_dir' ] + 'splai_' + config[ 'gencode_transcript_id' ] + '_' + date_string + '.txt',
+    trans_splai.to_csv( config[ 'annot_out_dir' ] + 'splai_' + config[ 'gencode_transcript_id' ] + '.txt',
                         sep = '\t',
                         index = False, )
 
@@ -136,19 +143,31 @@ def main():
     else:
         annot = trans_splai
 
-    refseq_d = sf.get_refseq( config[ 'reference_fafile' ] )
+    refseq_d = pp.get_refseq( config[ 'reference_fafile' ] )
 
     if config[ 'refseqname' ]:
-        assert config[ 'refseqname' ] in refseq_d, 'Refseqname (-rn) not in provided fasta file!'
-        refseq = refseq_d[ config[ 'refseqname' ] ]
+        if config[ 'refseqname' ] in refseq_d:
+            refseq = refseq_d[ config[ 'refseqname' ] ]
+        else:
+            if config[ 'verbose' ]:
+                print( 'Refseqname (-rn) %s not in fasta - trying %s' % ( config[ 'refseqname' ], chrom_chr  ) )
+            with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
+                f.write( 'Refseqname (-rn) %s not in fasta - trying %s\n' % ( config[ 'refseqname' ], chrom_chr  ) )
+            assert chrom_chr in refseq_d, 'Refseqname (-rn) %s and chromosome %s not in provided fasta file - only %s!' % ( config[ 'refseqname' ], chrom_chr, ', '.join( list( refseq_d.keys() ) ) )
+            refseq = refseq_d[ chrom_chr ]
     elif len( refseq_d ) == 1:
         if config[ 'verbose' ]:
-            print( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
+            print( 'No refseqname (-rn) provided - using %s' % list( refseq_d.keys() )[ 0 ] )
         with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
-            f.write( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] + '\n' )
+            f.write( 'No refseqname (-rn) provided - using %s\n' % list( refseq_d.keys() )[ 0 ] )
         refseq = list( refseq_d.values() )[ 0 ]
     else:
-        sys.exit( 'Multiple sequences in fasta file! Please provide the name of the sequence in the fasta file using the -rn argument' )
+        if config[ 'verbose' ]:
+            print( 'No refseqname (-rn) provided - trying %s' % chrom_chr  )
+        with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( 'No refseqname (-rn) provided - trying %s\n' % chrom_chr )
+        assert chrom_chr in refseq_d, 'Chromosome %s not in provided fasta file - only %s! Try specifying refseqname (-rn)...' % ( chrom_chr, ', '.join( list( refseq_d.keys() ) ) )
+        refseq = refseq_d[ chrom_chr ]
 
     #garbage collect the memory in case a lot of sequences provided
     refseq_d = {}
@@ -162,22 +181,19 @@ def main():
 
     if config[ 'vcf_out_dir' ]:
 
-        chrom = config[ 'chrom' ] if not config[ 'chrom' ].startswith( 'chr' ) else config[ 'chrom' ][ 3: ]
-        chrom_chr = config[ 'chrom' ] if config[ 'chrom' ].startswith( 'chr' ) else 'chr' + config[ 'chrom' ]
-
         vcf.create_input_vcf( vcf.vcf_header(),
-                              vcf.tup_to_vcf( [ ( chrom, pos, refseq[ p - 1 ].upper(), alt )
-                                                for p in range( config[ 'score_start_pos' ], config[ 'score_end_pos' ] + 1 )
+                              vcf.tup_to_vcf( [ ( chrom, pos, refseq[ pos - 1 ].upper(), alt )
+                                                for pos in range( config[ 'score_start_pos' ], config[ 'score_end_pos' ] + 1 )
                                                 for alt in [ 'A', 'C', 'G', 'T' ]
-                                                if alt != refseq[ p - 1 ].upper() ] ),
-                              config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_' + date_string + '.vcf' )
+                                                if alt != refseq[ pos - 1 ].upper() ] ),
+                              config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_' + '.vcf' )
 
         vcf.create_input_vcf( vcf.vcf_header_chr(),
-                              vcf.tup_to_vcf( [ ( chrom_chr, pos, refseq[ p - 1 ].upper(), alt )
-                                                for p in range( config[ 'score_start_pos' ], config[ 'score_end_pos' ] + 1 )
+                              vcf.tup_to_vcf( [ ( chrom_chr, pos, refseq[ pos - 1 ].upper(), alt )
+                                                for pos in range( config[ 'score_start_pos' ], config[ 'score_end_pos' ] + 1 )
                                                 for alt in [ 'A', 'C', 'G', 'T' ]
-                                                if alt != refseq[ p - 1 ].upper() ] ),
-                               config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_chr_' + date_string + '.vcf' )
+                                                if alt != refseq[ pos - 1 ].upper() ] ),
+                               config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_chr_' + '.vcf' )
 
         if config[ 'verbose' ]:
             print( 'VCFs created and saved at %s' % config[ 'vcf_out_dir' ] )
@@ -186,6 +202,7 @@ def main():
 
     if config[ 'verbose' ]:
         print( 'Whirling up SpliceAI - takes a few minutes..' )
+        print( 'No need to worry about the training configuration warning!' )
 
     paths = ('models/spliceai{}.h5'.format(x) for x in range(1, 6))
     models = [load_model(resource_filename('spliceai', x)) for x in paths]
@@ -205,18 +222,18 @@ def main():
 
     t0 = time.time()
 
-    splai_scores = splai.splai_score_mult_variants_onegene( annot,
+    splai_scores = css.splai_score_mult_variants_onegene( annot,
                                                             models,
                                                             refseq,
-                                                            config[ 'transcript_id' ],
-                                                            config[ 'chrom' ],
+                                                            config[ 'gencode_transcript_id' ],
+                                                            str( annot.CHROM.values[ 0 ]  ),
                                                             centers,
                                                             scored_context = dist,
                                                             rev_strand = config[ 'strand' ] == '-' )
 
     if config[ 'strand' ] == '-':
-        splai_scores[ 'ref_c' ] = [ sf.rev_complement( r ) for r in splai_scores.ref ]
-        splai_scores[ 'alt_c' ] = [ sf.rev_complement( a ) for a in splai_scores.alt ]
+        splai_scores[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_scores.ref ]
+        splai_scores[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_scores.alt ]
 
     splai_scores.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.txt',
                          sep = '\t',
@@ -246,11 +263,11 @@ def main():
         with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
             f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( alt_ss ) ) )
 
-    splai_wt_pr  =  splai.splai_score_wt_onegene( annot,
+    splai_wt_pr  =  css.splai_score_wt_onegene( annot,
                                                   models,
                                                   refseq,
-                                                  config[ 'transcript_id' ],
-                                                  config[ 'chrom' ],
+                                                  config[ 'gencode_transcript_id' ],
+                                                  str( annot.CHROM.values[ 0 ]  ),
                                                   ss_list,
                                                   scored_context = dist,
                                                   rev_strand = config[ 'strand' ] == '-' )
@@ -259,19 +276,19 @@ def main():
                          sep = '\t',
                          index = False )
 
-    splai_ss_pr, splai_acc_pr, splai_don_pr = splai.splai_ss_prob_mult_variants_onegene( annot,
+    splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
                                                                                          models,
                                                                                          refseq,
-                                                                                         config[ 'transcript_id' ],
-                                                                                         config[ 'chrom' ],
+                                                                                         config[ 'gencode_transcript_id' ],
+                                                                                         str( annot.CHROM.values[ 0 ] ),
                                                                                          centers,
                                                                                          ss_list,
                                                                                          scored_context = dist,
                                                                                          rev_strand = config[ 'strand' ] == '-' )
 
     if config[ 'strand' ] == '-':
-        splai_ss_pr[ 'ref_c' ] = [ sf.rev_complement( r ) for r in splai_ss_pr.ref ]
-        splai_ss_pr[ 'alt_c' ] = [ sf.rev_complement( a ) for a in splai_ss_pr.alt ]
+        splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]
+        splai_ss_pr[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_ss_pr.alt ]
 
     splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.txt',
                         sep = '\t',
@@ -424,7 +441,7 @@ def main():
                                 x_ax_title = 'Coordinate position',
                                 tick_spacing = 10,
                                 cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
                                 )
 
         wt_probs = [ float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_start_pos' ] ].wt_acc_pr ),
@@ -444,7 +461,7 @@ def main():
                                 tick_spacing = 10,
                                 hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                 cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
                                 )
 
         if config[ 'clinvar_file' ]:
@@ -466,7 +483,7 @@ def main():
                                     tight = False,
                                     save_margin = 1,
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
                                  )
 
             sp.sat_subplots_wrapper( splai_ss_pr,
@@ -484,7 +501,7 @@ def main():
                                     save_margin = 1,
                                     hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
                                     )
 
         if config[ 'gnomad2_file' ]:
@@ -504,7 +521,7 @@ def main():
                                     tight = False,
                                     save_margin = 1,
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
                                  )
 
             sp.sat_subplots_wrapper( splai_ss_pr,
@@ -522,7 +539,7 @@ def main():
                                     save_margin = 1,
                                     hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
                                     )
 
         if config[ 'maxentscan' ]:
@@ -539,7 +556,7 @@ def main():
                                              hlines = [ ( 0, 'black', 'solid' ) for i in range( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ],
                                              tick_spacing = 10,
                                              cml = True,
-                                             savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_maxent_' + date_string + '.pdf',
+                                             savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_maxent_' + date_string + '.pdf',
                                              )
 
     else:
@@ -559,7 +576,7 @@ def main():
                                 x_ax_title = 'Coordinate position',
                                 tick_spacing = 10,
                                 cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
                                 )
 
         wt_probs = [ float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_end_pos' ] ].wt_acc_pr ),
@@ -582,7 +599,7 @@ def main():
                                 tick_spacing = 10,
                                 hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                 cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
                                 )
 
         if config[ 'clinvar_file' ]:
@@ -607,7 +624,7 @@ def main():
                                     tight = False,
                                     save_margin = 1,
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
                                  )
 
             sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
@@ -628,7 +645,7 @@ def main():
                                     save_margin = 1,
                                     hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
                                     )
 
         if config[ 'gnomad2_file' ]:
@@ -651,7 +668,7 @@ def main():
                                     tight = False,
                                     save_margin = 1,
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
                                  )
 
             sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
@@ -672,7 +689,7 @@ def main():
                                     save_margin = 1,
                                     hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                     cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
+                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
                                     )
 
         if config[ 'maxentscan' ]:
@@ -692,7 +709,7 @@ def main():
                                              hlines = [ ( 0, 'black', 'solid' ) for i in range( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ],
                                              tick_spacing = 10,
                                              cml = True,
-                                             savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_maxent_' + date_string + '.pdf',
+                                             savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_maxent_' + date_string + '.pdf',
                                              )
 
     with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:

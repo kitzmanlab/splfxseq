@@ -873,56 +873,6 @@ def possible_ss( tbl_by_var,
 
     return tbv
 
-def saturate_variants( tbl_by_var,
-                       refseq,
-                       pos_col,
-                       exon_col,
-                       intron_dist = 100,
-                       rev_strand = False,
-                       add_missing_introns = False ):
-
-    tbv = tbl_by_var.copy()
-
-    exons = tbv.loc[ tbv[ exon_col ].notnull() ][ exon_col ].unique()
-
-    exon_bds = { int( ex ): ( int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].min() ) - intron_dist,
-                              int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].max() ) + intron_dist )
-                 for ex in exons }
-
-    by_ex_d = { int( ex ): tbv.loc[ ( tbv[ pos_col ] >= exon_bds[ int( ex ) ][ 0 ] )
-                                    & ( tbv[ pos_col ] <= exon_bds[ int( ex ) ][ 1 ] ) ].copy()
-                for ex in exons }
-
-    for ex in by_ex_d.keys():
-
-        if add_missing_introns:
-            min_bd = min( by_ex_d[ ex ][ pos_col ].min(), exon_bds[ ex ][ 0 ] )
-            max_bd = max( by_ex_d[ ex ][ pos_col ].max(), exon_bds[ ex ][ 1 ] )
-        else:
-            min_bd, max_bd = by_ex_d[ ex ][ pos_col ].min(), by_ex_d[ ex ][ pos_col ].max(),
-
-        merge_ex = pd.DataFrame( { pos_col: [ p for p in range( min_bd, max_bd + 1 ) for j in range( 3 ) ],
-                                   'alt': [ a for p in range( min_bd, max_bd + 1 )
-                                              for a in [ 'A', 'C', 'G', 'T' ] if a.upper() != refseq[ p - 1 ].upper() ],
-                                   'ref': [ refseq[ p - 1 ].upper() for p in range( min_bd, max_bd + 1 )
-                                            for j in range( 3 ) ] } )
-
-        if rev_strand:
-
-            merge_ex[ 'alt_c' ] = [ cd.rev_complement( a ) for a in merge_ex.alt ]
-            merge_ex[ 'ref_c' ] = [ cd.rev_complement( r ) for r in merge_ex.ref ]
-            #merge_ex[ 'pos' ] = -merge_ex[ pos_col ]
-
-
-        idx = merge_ex.columns.tolist()
-
-        by_ex_d[ int( ex ) ] = merge_ex.set_index( idx ).merge( by_ex_d[ int( ex ) ].set_index( idx ),
-                                                                how = 'outer',
-                                                                left_index = True,
-                                                                right_index = True ).reset_index()
-
-    return by_ex_d
-
 def get_transcriptome_per( transcriptome_df,
                            tbl_by_var,
                            pred_cols ):

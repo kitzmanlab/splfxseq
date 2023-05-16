@@ -6,8 +6,9 @@ import argparse
 import os
 import sys
 import time
-import mpsa_pipe.mpsa_plots as mp
-import mpsa_pipe.seq_fx as sf
+import splanl.plots as sp
+import splanl.coords as cd
+import splanl.post_processing as pp
 import mpsa_pipe.junction_scores as jn
 import mpsa_pipe.aggregate_vars as av
 import mpsa_pipe.scrape_public_data as spd
@@ -170,7 +171,7 @@ def main():
 
     date_string = time.strftime( '%Y-%m%d', time.localtime() )
 
-    refseq_d = sf.get_refseq( config[ 'vector_fafile' ] )
+    refseq_d = pp.get_refseq( config[ 'vector_fafile' ] )
 
     if config[ 'refseqname' ]:
         assert config[ 'refseqname' ] in refseq_d, 'Refseqname (-rn) not in provided fasta file!'
@@ -181,7 +182,7 @@ def main():
     else:
         sys.exit( 'Multiple sequences in fasta file! Please provide the name of the sequence in the fasta file using the -rn argument' )
 
-    refseq_d = sf.get_refseq( config[ 'genomic_fafile' ] )
+    refseq_d = pp.get_refseq( config[ 'genomic_fafile' ] )
 
     if config[ 'chrom_refseqname' ]:
         assert config[ 'chrom_refseqname' ] in refseq_d, 'Chromosome refseqname (-crn) not in provided fasta file!'
@@ -295,7 +296,7 @@ def main():
 
     iso_rows = [ 'secondary', 'unmapped', 'unpaired', 'bad_starts', 'bad_ends', 'soft_clipped' ] + canonical_isos
 
-    reads_df = mp.plot_iso_stats( iso_df_stats,
+    reads_df = sp.plot_iso_stats( iso_df_stats,
                                iso_rows = iso_rows,
                                cml = True,
                                plot_out = config[ 'plots_out_dir' ], )
@@ -388,7 +389,7 @@ def main():
     cut_dict = { samp: cut for samp,cut in zip( read_cut_unfilt[ 'sample' ],
                                                 read_cut_unfilt[ str( config[ 'bc_read_cut_thresh' ] ) + '_y' ] ) }
 
-    mp.plot_waterfall_bysamp( read_cut_unfilt,
+    sp.plot_waterfall_bysamp( read_cut_unfilt,
                            cutoffs = tuple( waterfall_thresh ),
                            cml = True,
                            savefig = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + 'waterfall_cutoffs_bysamp.pdf',
@@ -434,7 +435,7 @@ def main():
 
     for samp in msamp_byvartbl_allisos_snvs:
 
-        msamp_byvartbl_allisos_snvs[ samp ][ 'hgvs_pos' ] = sf.pos_to_hgvspos( msamp_byvartbl_allisos_snvs[ samp ].pos,
+        msamp_byvartbl_allisos_snvs[ samp ][ 'hgvs_pos' ] = cd.pos_to_hgvspos( msamp_byvartbl_allisos_snvs[ samp ].pos,
                                                                             ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
                                                                             [ incl_iso ],
                                                                             [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
@@ -465,7 +466,7 @@ def main():
 
     for samp in msamp_byvartbl_snvs:
 
-        msamp_byvartbl_snvs[ samp ][ 'hgvs_pos' ] = sf.pos_to_hgvspos( msamp_byvartbl_snvs[ samp ].pos,
+        msamp_byvartbl_snvs[ samp ][ 'hgvs_pos' ] = cd.pos_to_hgvspos( msamp_byvartbl_snvs[ samp ].pos,
                                                                     ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
                                                                     [ incl_iso ],
                                                                     [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
@@ -473,7 +474,7 @@ def main():
 
     for samp in msamp_byvartbl_snvs:
 
-        msamp_byvartbl_snvs[ samp ][ 'hg19_pos' ] = sf.vpos_to_gpos( msamp_byvartbl_snvs[ samp ].pos,
+        msamp_byvartbl_snvs[ samp ][ 'hg19_pos' ] = cd.vpos_to_gpos( msamp_byvartbl_snvs[ samp ].pos,
                                                                   incl_iso,
                                                                   [ config[ 'exon_hg19_start' ], config[ 'exon_hg19_end' ] ],
                                                                   rev_strand = config[ 'strand' ] == '-' )
@@ -488,8 +489,8 @@ def main():
         byvartbl_long[ 'ref_c' ] = byvartbl_long.ref
         byvartbl_long[ 'alt_c' ] = byvartbl_long.alt
 
-        byvartbl_long[ 'ref' ] = [ sf.rev_complement( r ) for r in byvartbl_long.ref_c ]
-        byvartbl_long[ 'alt' ] = [ sf.rev_complement( a ) for a in byvartbl_long.alt_c ]
+        byvartbl_long[ 'ref' ] = [ cd.rev_complement( r ) for r in byvartbl_long.ref_c ]
+        byvartbl_long[ 'alt' ] = [ cd.rev_complement( a ) for a in byvartbl_long.alt_c ]
 
     byvartbl_wide = av.combine_rep_pervartbls_wide( [ byvartbl_long.loc[ byvartbl_long[ 'sample' ] == samp ][ [ col for col in byvartbl_long if col != 'sample' ] ]
                                                     for samp in byvartbl_long[ 'sample' ].unique() ],
@@ -633,7 +634,7 @@ def main():
 
     byvartbl_long[ 'n_bc_passfilt_log10' ] = np.log10( byvartbl_long[ 'n_bc_passfilt' ] + .1 )
 
-    sat_by_samp = { samp: mp.saturate_variants( byvartbl_long.loc[ byvartbl_long[ 'sample' ] == samp ],
+    sat_by_samp = { samp: sp.saturate_variants( byvartbl_long.loc[ byvartbl_long[ 'sample' ] == samp ],
                                              chrom_refseq,
                                              'hg19_pos',
                                              'exon_num',
@@ -671,7 +672,7 @@ def main():
     for samp in sat_by_samp:
 
         if config[ 'strand' ] == '+':
-            mp.sat_subplots_wrapper( sat_by_samp[ samp ],
+            sp.sat_subplots_wrapper( sat_by_samp[ samp ],
                                     [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ],
                                     'hgvs_pos',
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -686,7 +687,7 @@ def main():
                                 )
 
         elif config[ 'strand' ] == '-':
-            mp.sat_subplots_wrapper( sat_by_samp[ samp ].rename( columns = { 'ref': 'r',
+            sp.sat_subplots_wrapper( sat_by_samp[ samp ].rename( columns = { 'ref': 'r',
                                                                           'alt': 'a',
                                                                           'ref_c': 'ref',
                                                                           'alt_c': 'alt' } ),
@@ -713,7 +714,7 @@ def main():
         if sample_stats[ col ].notnull().sum() == 0:
             continue
         elif col.startswith( 'per_' ):
-            mp.barplot_across_samples( sample_stats,
+            sp.barplot_across_samples( sample_stats,
                                    col,
                                    y_label = col,
                                    y_lim = ( 0, 100 ),
@@ -723,7 +724,7 @@ def main():
                                    savefile = config[ 'plots_out_dir' ] + 'filtered_sampsummary_' + col + '.pdf',
                                  )
         elif col.startswith( 'per_' ) and sample_stats[ col ].max() <= 20:
-            mp.barplot_across_samples( sample_stats,
+            sp.barplot_across_samples( sample_stats,
                                     col,
                                     y_label = col,
                                     color_col = 'sample_group',
@@ -732,7 +733,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + 'filtered_sampsummary_' + col + '_zoomed.pdf',
                                   )
         elif col.startswith( 'med_' ):
-            mp.barplot_across_samples( sample_stats,
+            sp.barplot_across_samples( sample_stats,
                                     col,
                                     y_label = col,
                                     y_lim = ( 0, 1 ),
@@ -742,7 +743,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + 'filtered_sampsummary_' + col + '.pdf',
                                   )
         else:
-            mp.barplot_across_samples( sample_stats,
+            sp.barplot_across_samples( sample_stats,
                                     col,
                                     y_label = col,
                                     color_col = 'sample_group',
@@ -755,7 +756,7 @@ def main():
                         sep = '\t',
                         index = False )
 
-    byvartbl_wide_sat = mp.saturate_variants( byvartbl_wide,
+    byvartbl_wide_sat = sp.saturate_variants( byvartbl_wide,
                                               chrom_refseq,
                                               'hg19_pos',
                                               'exon_num',
@@ -764,7 +765,7 @@ def main():
     byvartbl_wide_sat[ samp ].pos = byvartbl_wide_sat[ samp ].hg19_pos - offset.median()
 
     #have to put back the hgvs positions
-    byvartbl_wide_sat[ 'hgvs_pos' ] = sf.pos_to_hgvspos( byvartbl_wide_sat.pos,
+    byvartbl_wide_sat[ 'hgvs_pos' ] = cd.pos_to_hgvspos( byvartbl_wide_sat.pos,
                                                       ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
                                                       [ incl_iso ],
                                                       [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ] )
@@ -775,7 +776,7 @@ def main():
     wmean_cols = [ col for col in byvartbl_wide_sat if col.startswith( 'wmean_' ) ]
 
     if config[ 'strand' ] == '+':
-        mp.split_ax_bcs( byvartbl_wide_sat,
+        sp.split_ax_bcs( byvartbl_wide_sat,
                       [ 'n_bc_passfilt_mean' ],
                       'hgvs_pos',
                       [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -788,7 +789,7 @@ def main():
                       savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_bcs_filt_by_pos.' + date_string + '.pdf',
                   )
 
-        mp.sat_subplots_wrapper( byvartbl_wide_sat,
+        sp.sat_subplots_wrapper( byvartbl_wide_sat,
                               wmean_cols,
                               'hgvs_pos',
                               [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -807,7 +808,7 @@ def main():
 
             lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
 
-            mp.sat_subplots_wrapper( byvartbl_wide_sat,
+            sp.sat_subplots_wrapper( byvartbl_wide_sat,
                                  wmean_cols,
                                  'hgvs_pos',
                                  [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -831,7 +832,7 @@ def main():
                              'LPP': ( '^', 'black', 'face', 1.5, 200 ),
                              'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
 
-            mp.sat_subplots_wrapper( byvartbl_wide_sat,
+            sp.sat_subplots_wrapper( byvartbl_wide_sat,
                                  wmean_cols,
                                  'hgvs_pos',
                                  [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -851,7 +852,7 @@ def main():
 
         if config[ 'maxentscan' ]:
 
-            mp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat,
+            sp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat,
                                              wmean_cols + [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ],
                                              'hgvs_pos',
                                              [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -868,7 +869,7 @@ def main():
                                              )
 
     elif config[ 'strand' ] == '-':
-        mp.split_ax_bcs( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
+        sp.split_ax_bcs( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
                                                             'ref': 'r',
                                                              'alt_c': 'alt',
                                                              'ref_c': 'ref' } ),
@@ -884,7 +885,7 @@ def main():
                       savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_bcs_filt_by_pos.' + date_string + '.pdf',
                       )
 
-        mp.sat_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
+        sp.sat_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
                                                                     'ref': 'r',
                                                                     'alt_c': 'alt',
                                                                     'ref_c': 'ref' } ),
@@ -908,7 +909,7 @@ def main():
                              'LPP': ( '^', 'black', 'face', 1.5, 200 ),
                              'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
 
-            mp.sat_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
+            sp.sat_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
                                                                         'ref': 'r',
                                                                          'alt_c': 'alt',
                                                                          'ref_c': 'ref' } ),
@@ -931,7 +932,7 @@ def main():
 
             if config[ 'maxentscan' ]:
 
-                mp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
+                sp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
                                                                                         'ref': 'r',
                                                                                         'alt_c': 'alt',
                                                                                         'ref_c': 'ref' } ),
@@ -958,7 +959,7 @@ def main():
 
         if config[ 'gnomad2' ]:
 
-            mp.plot_clinvar_by_interp( byvartbl_wide.loc[ ( byvartbl_wide.clinvar_abbrev != '' ) ],
+            sp.plot_clinvar_by_interp( byvartbl_wide.loc[ ( byvartbl_wide.clinvar_abbrev != '' ) ],
                                     wmean_cols,
                                     lit_marker_d,
                                     figsize = ( ( byvartbl_wide.clinvar_abbrev != '' ).sum() / 2, 3*len( wmean_cols ) ),
@@ -971,7 +972,7 @@ def main():
                                     )
         else:
 
-            mp.plot_clinvar_by_interp( byvartbl_wide.loc[ ( byvartbl_wide.clinvar_abbrev != '' ) ],
+            sp.plot_clinvar_by_interp( byvartbl_wide.loc[ ( byvartbl_wide.clinvar_abbrev != '' ) ],
                                     wmean_cols,
                                     lit_marker_d,
                                     figsize = ( ( byvartbl_wide.clinvar_abbrev != '' ).sum() / 2, 3*len( wmean_cols ) ),

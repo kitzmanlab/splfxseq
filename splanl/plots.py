@@ -8,7 +8,7 @@ import matplotlib.patches as patches
 from matplotlib.artist import Artist as art
 from matplotlib import gridspec
 from collections import Counter
-import splanl.coords as cds
+import splanl.coords as cd
 import splanl.merge_bcs as mbcs
 import splanl.post_processing as pp
 from sklearn.metrics import roc_curve, precision_recall_curve, auc, f1_score, matthews_corrcoef
@@ -26,7 +26,13 @@ def waterfall_plot( bctbl,
                     title='',
                     x_ax_title='Barcode Rank Log10',
                     y1_ax_title='Read Count Log10',
-                    y2_ax_title='Cumulative Read Count Percentile' ):
+                    y2_ax_title='Cumulative Read Count Percentile',
+                    verbose = False,
+                    cml = False,
+                    savefig = None ):
+
+    if cml and not savefig:
+        print( 'Your plots are not going to show up!' )
 
     bc_ranks = bctbl.copy()
 
@@ -71,11 +77,18 @@ def waterfall_plot( bctbl,
                 color = 'black' )
 
     fig.tight_layout()  # otherwise the right y-label is slightly clipped
-    plt.show()
 
-    for per in percentile_l:
+    if savefig:
+        plt.savefig( savefig )
 
-        print( 'The read count cut off at the', per, 'th percentile is', read_count_cutoff[ per ] )
+    if not cml:
+        plt.show()
+    else:
+        plt.close()
+
+    if verbose:
+        for per in percentile_l:
+            print( 'The read count cut off at the', per, 'th percentile is', read_count_cutoff[ per ] )
 
     return percentile_cutoff, read_count_cutoff
 
@@ -426,7 +439,7 @@ def PlotPSIByPos(vardf,
 
     if coords.lower() == 'cdna':
         plt.xlabel('cDNA Position',fontsize=22)
-        bcs_tbl['hgvs_pos'] = cds.pos_to_hgvspos( bcs_tbl.index,
+        bcs_tbl['hgvs_pos'] = cd.pos_to_hgvspos( bcs_tbl.index,
                                vec_corange_cloned,
                                vec_corange_exons,
                                cdna_corange_exons
@@ -494,7 +507,7 @@ def PlotBCsByPos(vardf,
 
     tbv.sort_values(by=['pos'],inplace=True)
     bcs_tbl=tbv.pivot(index='pos',columns='alt',values='n_bc_passfilt')
-    bcs_tbl['hgvs_pos'] = cds.pos_to_hgvspos( bcs_tbl.index,
+    bcs_tbl['hgvs_pos'] = cd.pos_to_hgvspos( bcs_tbl.index,
                            vec_corange_cloned,
                            vec_corange_exons,
                            cdna_corange_exons
@@ -616,7 +629,12 @@ def barplot_across_samples( byvartbl_long,
                             title = '',
                             y_lim = None,
                             color_col = None,
-                            color_dict = None):
+                            color_dict = None,
+                            cml = False,
+                            savefile = None ):
+
+    if cml and not savefile:
+        print( 'Your plots are not going to show up!' )
 
     tbv = byvartbl_long.copy()
 
@@ -639,7 +657,15 @@ def barplot_across_samples( byvartbl_long,
 
     plt.title( title )
 
-    plt.show()
+    plt.tight_layout()
+
+    if savefile:
+        plt.savefig( savefile )
+
+    if not cml:
+        plt.show()
+    else:
+        plt.close()
 
 def per_sdv_by_thresh( byvartbl,
                      sdv_col,
@@ -2908,8 +2934,12 @@ def split_ax_bcs( var_df,
                   legend_loc = 'best',
                   legend_labels = None,
                   tight = True,
-                  savefile = None
+                  cml = False,
+                  savefile = None,
                   ):
+
+    if cml and not savefile:
+        print( 'Your plots are not going to show up!' )
 
     tbv = var_df.sort_values( by = index_cols ).copy()
 
@@ -2993,250 +3023,13 @@ def split_ax_bcs( var_df,
 
     if savefile:
         plt.savefig( savefile,
-                     #dpi = 300,
-                     bbox_inches = 'tight'
+                    bbox_inches = 'tight'
                    )
 
-    plt.show()
-
-def sat_subplot_psi_by_alt(   var_df,
-                          y_col,
-                          pos_col,
-                          colors,
-                          color_col = 'alt',
-                          ax = None,
-                          tick_spacing = 10,
-                          darken_bars = None,
-                          darken_bars2 = None,
-                          labels_legend = False,
-                          labels_legend_title = '',
-                          labels_legend_loc = 'best',
-                          title = '',
-                          y_ax_lim = None,
-                          y_ax_title='',
-                          x_ax_title = '',
-                          x_tick_fontsize = 42,
-                          x_label_fontsize = 42,
-                          y_tick_fontsize = 42,
-                          legend = True,
-                          legend_title = '',
-                          legend_loc = 'best',
-                          legend_labels = None,
-                          ref_labels = None,
-                          colors_ref = None,
-                          y_ref_cds = -3,
-                          ref_font_size = 40,
-                          ref_rect_ht = 50,
-                          bar_labels = None,
-                          hatch_missing = False,
-                          hlines = None,
-                          tight = True,
-                          save_margin = .1 ):
-
-    tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).reset_index( drop = True ).copy()
-
-    if ax:
-        ax = ax
+    if not cml:
+        plt.show()
     else:
-        ax = plt.gca()
-
-    color_d = { alt: colors[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
-
-    for alt in sorted( tbv[ color_col ].unique() ):
-
-        ax.bar( tbv.loc[ tbv[ color_col ] == alt ].index,
-                 tbv.loc[ tbv[ color_col ] == alt ][ y_col ],
-                 label = alt,
-                 color = color_d[ alt ],
-                 align = 'center',
-                 width = 1, )
-
-    if hlines:
-
-        ax.axhline( y = hlines[ 0 ], color = hlines[ 1 ], linestyle = hlines[ 2 ], zorder = 1 )
-
-    if hatch_missing:
-
-        missing_cds = tbv.loc[ tbv[ hatch_missing[ 0 ] ].isnull() ].index.tolist()
-
-        if y_ax_lim:
-
-            y_min,y_max = y_ax_lim
-
-        else:
-
-            y_min,y_max = ax.get_ylim()
-
-        for cds in missing_cds:
-
-            rect = ax.add_patch( plt.Rectangle( ( cds - .5, y_min ),
-                                                1,
-                                                y_max - y_min,
-                                                fill = True,
-                                                facecolor = 'white',
-                                                hatch = hatch_missing[ 1 ],
-                                                linewidth = 0,
-                                                zorder = 2 ), )
-
-    if darken_bars:
-
-        column, colors2 = darken_bars
-
-        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
-
-        for alt in sorted( tbv[ color_col ].unique() ):
-
-            ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
-                    tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
-                    label = alt,
-                    color = color_d2[ alt ],
-                    align = 'center',
-                    width = 1, )
-
-    if darken_bars2:
-
-        column, colors2 = darken_bars2
-
-        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
-
-        for alt in sorted( tbv[ color_col ].unique() ):
-
-            ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
-                    tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
-                    label = alt,
-                    color = color_d2[ alt ],
-                    align = 'center',
-                    width = 1, )
-
-    plt.title( title, fontsize = 24 )
-
-    ax.set_ylabel( y_ax_title, fontsize = 18 )
-    ax.tick_params( axis = 'y', which='major', labelsize = y_tick_fontsize )
-
-    ax.set_xlim( ( -.5, len( tbv ) - .5 ) )
-
-    plt.xlabel( x_ax_title, fontsize = x_label_fontsize )
-    plt.xticks( [ 3*idx + 1 for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
-                [ tbv.iloc[ 3*idx + 1 ][ pos_col ] for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
-                fontsize = x_tick_fontsize,
-                rotation = 'vertical' )
-
-    if ref_labels:
-
-        assert tick_spacing == 1, 'If your tick_spacing is not set to 1, the ref bases will be wrong!'
-
-        if tight:
-            print( 'Are your rectangles not positioned right? Turn off tight!')
-
-        ref_bases = list( tbv.groupby( 'pos' ).ref.apply( lambda x: x.unique()[ 0 ] ) )
-
-        if colors_ref:
-
-            colors_ref_d = { ref: colors_ref[ idx ] for idx,ref in enumerate( sorted( list( set( ref_bases ) ) ) ) }
-
-        else:
-
-            colors_ref_d = { ref: 'white' for ref in ref_bases.unique() }
-
-        x_coords = ax.get_xticks()
-
-        for base,cds in zip( ref_bases, x_coords ):
-
-            rect = ax.add_patch( plt.Rectangle( ( cds - 1.5, y_ref_cds ),
-                                                3,
-                                                ref_rect_ht,
-                                                color = colors_ref_d[ base ],
-                                                clip_on = False, ) )
-
-            ax.text( cds,
-                     y_ref_cds + ( ref_rect_ht / 2 ),
-                     base,
-                     ha = 'center',
-                     va = 'center',
-                     fontsize = ref_font_size, )
-                     #bbox = { 'facecolor': colors_ref_d[ base ], 'pad': 40 } )
-
-            #ax.add_patch(  )
-
-            #p = patches.Rectangle( ( cds - 1.5, y_ref_cds ), 3, 1, color = colors_ref_d[ base ] )
-            #ax.add_artist(p)
-
-            #plt.text( cds, -.5, base, horizontalalignment = 'center', verticalalignment = 'center', fontsize=40, color='black')
-
-    if bar_labels:
-
-        print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
-
-        if save_margin <= .1:
-
-            print( 'If your labels are not in the pdf, increase save_margin parameter!' )
-
-        #x_coords = ax.get_xticks()
-
-        #x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
-
-        x_coords_per_bp = [ x for x in range( len( tbv ) ) ]
-
-        for label_col, marker_d, y_coords, in bar_labels:
-
-            for val in marker_d:
-
-                marker, color, edgecolor, linewidth, size = marker_d[ val ]
-
-                #print( len( x_coords_per_bp ), x_coords_per_bp )
-
-                #print( len( [ y_coords if label == val else np.nan for label in tbv[ label_col ] ] ),
-                       #[ y_coords if label == val else np.nan for label in tbv[ label_col ] ] )
-
-                ax.scatter( x_coords_per_bp,
-                            [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
-                            marker = marker,
-                            color = color,
-                            edgecolor = edgecolor,
-                            linewidth = linewidth,
-                            s = size,
-                            zorder = 100,
-                            clip_on = False )
-
-    if legend:
-
-        if legend_labels:
-            legend = ax.legend( title = legend_title,
-                                 ncol = 2,
-                                 bbox_to_anchor = ( 1, 1 ), #if you turn that on you can put legend outside of plot
-                                 loc = legend_loc,
-                                 labels = legend_labels,
-                                 fontsize = 14 )
-        else:
-            legend = ax.legend( title = legend_title,
-                                 ncol = 2,
-                                 bbox_to_anchor = ( 1, 1 ), #if you turn that on you can put legend outside of plot
-                                 loc = legend_loc,
-                                 fontsize = 14 )
-        plt.setp( legend.get_title(), fontsize=14 )
-    elif labels_legend:
-
-        fake_handles = [ plt.Rectangle( (0, 0), 0, 0, fill=False, edgecolor='none', visible = 'False')
-                        for i in range( len( bar_labels ) ) ]
-
-        legend = ax.legend(  handles = fake_handles,
-                             title = labels_legend_title,
-                             bbox_to_anchor = ( 0, 1 ), #if you turn that on you can put legend outside of plot
-                             loc = labels_legend_loc,
-                             labels = ( symbol + ' '*6 + label for _col, symbol, label, _fsize in bar_labels ),
-                             fontsize = 14 )
-        plt.setp( legend.get_title(), fontsize=14 )
-    else:
-        ax.legend_ = None
-        plt.draw()
-
-    if y_ax_lim:
-        ax.set_ylim( y_ax_lim )
-
-    if tight:
-        plt.tight_layout()
-
-    return ax
+        plt.close()
 
 def sat_subplots_wrapper( var_df,
                       y_cols,
@@ -3273,9 +3066,13 @@ def sat_subplots_wrapper( var_df,
                      hatch_missing = False,
                      hlines = None,
                      tight = True,
-                     savefile = None,
                      save_margin = .1,
+                     cml = False,
+                     savefile = None,
                      ):
+
+    if cml and not savefile:
+        print( 'Your plots are not going to show up!' )
 
     tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).copy()
 
@@ -3454,14 +3251,238 @@ def sat_subplots_wrapper( var_df,
                                  hlines = hline_dict[ idx ],
                                  tight = tight, )
 
-    if savefile:
+    if savefig:
         plt.savefig( savefile,
-                     #dpi = 300,
-                     bbox_inches = 'tight',
-                     pad_inches = save_margin,
-                   )
+                    bbox_inches = 'tight',
+                    pad_inches = save_margin,
+                    )
 
-    plt.show()
+    if not cml:
+        plt.show()
+    else:
+        plt.close()
+
+def sat_subplot_psi_by_alt(   var_df,
+                          y_col,
+                          pos_col,
+                          colors,
+                          color_col = 'alt',
+                          ax = None,
+                          tick_spacing = 10,
+                          darken_bars = None,
+                          darken_bars2 = None,
+                          labels_legend = False,
+                          labels_legend_title = '',
+                          labels_legend_loc = 'best',
+                          title = '',
+                          y_ax_lim = None,
+                          y_ax_title='',
+                          x_ax_title = '',
+                          x_tick_fontsize = 42,
+                          x_label_fontsize = 42,
+                          y_tick_fontsize = 42,
+                          legend = True,
+                          legend_title = '',
+                          legend_loc = 'best',
+                          legend_labels = None,
+                          ref_labels = None,
+                          colors_ref = None,
+                          y_ref_cds = -3,
+                          ref_font_size = 40,
+                          ref_rect_ht = 50,
+                          bar_labels = None,
+                          hatch_missing = False,
+                          hlines = None,
+                          tight = True,
+                          save_margin = .1 ):
+
+    tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).reset_index( drop = True ).copy()
+
+    if ax:
+        ax = ax
+    else:
+        ax = plt.gca()
+
+    color_d = { alt: colors[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+    for alt in sorted( tbv[ color_col ].unique() ):
+
+        ax.bar( tbv.loc[ tbv[ color_col ] == alt ].index,
+                 tbv.loc[ tbv[ color_col ] == alt ][ y_col ],
+                 label = alt,
+                 color = color_d[ alt ],
+                 align = 'center',
+                 width = 1, )
+
+    if hlines:
+
+        ax.axhline( y = hlines[ 0 ], color = hlines[ 1 ], linestyle = hlines[ 2 ], zorder = 1 )
+
+    if hatch_missing:
+
+        missing_cds = tbv.loc[ tbv[ hatch_missing[ 0 ] ].isnull() ].index.tolist()
+
+        if y_ax_lim:
+
+            y_min,y_max = y_ax_lim
+
+        else:
+
+            y_min,y_max = ax.get_ylim()
+
+        for cds in missing_cds:
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - .5, y_min ),
+                                                1,
+                                                y_max - y_min,
+                                                fill = True,
+                                                facecolor = 'white',
+                                                hatch = hatch_missing[ 1 ],
+                                                linewidth = 0,
+                                                zorder = 2 ), )
+
+    if darken_bars:
+
+        column, colors2 = darken_bars
+
+        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+        for alt in sorted( tbv[ color_col ].unique() ):
+
+            ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
+                    tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
+                    label = alt,
+                    color = color_d2[ alt ],
+                    align = 'center',
+                    width = 1, )
+
+    if darken_bars2:
+
+        column, colors2 = darken_bars2
+
+        color_d2 = { alt: colors2[ idx ] for idx,alt in enumerate( sorted( tbv[ color_col ].unique() ) ) }
+
+        for alt in sorted( tbv[ color_col ].unique() ):
+
+            ax.bar( tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ].index,
+                    tbv.loc[ ( tbv[ color_col ] == alt ) & ( tbv[ column ] ) ][ y_col ],
+                    label = alt,
+                    color = color_d2[ alt ],
+                    align = 'center',
+                    width = 1, )
+
+    plt.title( title, fontsize = 24 )
+
+    ax.set_ylabel( y_ax_title, fontsize = 18 )
+    ax.tick_params( axis = 'y', which='major', labelsize = y_tick_fontsize )
+
+    ax.set_xlim( ( -.5, len( tbv ) - .5 ) )
+
+    plt.xlabel( x_ax_title, fontsize = x_label_fontsize )
+    plt.xticks( [ 3*idx + 1 for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
+                [ tbv.iloc[ 3*idx + 1 ][ pos_col ] for idx,p in enumerate( tbv.pos.unique() ) if p % ( tick_spacing ) == 0 ],
+                fontsize = x_tick_fontsize,
+                rotation = 'vertical' )
+
+    if ref_labels:
+
+        assert tick_spacing == 1, 'If your tick_spacing is not set to 1, the ref bases will be wrong!'
+
+        if tight:
+            print( 'Are your rectangles not positioned right? Turn off tight!')
+
+        ref_bases = list( tbv.groupby( 'pos' ).ref.apply( lambda x: x.unique()[ 0 ] ) )
+
+        if colors_ref:
+
+            colors_ref_d = { ref: colors_ref[ idx ] for idx,ref in enumerate( sorted( list( set( ref_bases ) ) ) ) }
+
+        else:
+
+            colors_ref_d = { ref: 'white' for ref in ref_bases.unique() }
+
+        x_coords = ax.get_xticks()
+
+        for base,cds in zip( ref_bases, x_coords ):
+
+            rect = ax.add_patch( plt.Rectangle( ( cds - 1.5, y_ref_cds ),
+                                                3,
+                                                ref_rect_ht,
+                                                color = colors_ref_d[ base ],
+                                                clip_on = False, ) )
+
+            ax.text( cds,
+                     y_ref_cds + ( ref_rect_ht / 2 ),
+                     base,
+                     ha = 'center',
+                     va = 'center',
+                     fontsize = ref_font_size, )
+
+    if bar_labels:
+
+        print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
+
+        if save_margin <= .1:
+
+            print( 'If your labels are not in the pdf, increase save_margin parameter!' )
+
+        x_coords_per_bp = [ x for x in range( len( tbv ) ) ]
+
+        for label_col, marker_d, y_coords, in bar_labels:
+
+            for val in marker_d:
+
+                marker, color, edgecolor, linewidth, size = marker_d[ val ]
+
+                ax.scatter( x_coords_per_bp,
+                            [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
+                            marker = marker,
+                            color = color,
+                            edgecolor = edgecolor,
+                            linewidth = linewidth,
+                            s = size,
+                            zorder = 100,
+                            clip_on = False )
+
+    if legend:
+
+        if legend_labels:
+            legend = ax.legend( title = legend_title,
+                                 ncol = 2,
+                                 bbox_to_anchor = ( 1, 1 ), #if you turn that on you can put legend outside of plot
+                                 loc = legend_loc,
+                                 labels = legend_labels,
+                                 fontsize = 14 )
+        else:
+            legend = ax.legend( title = legend_title,
+                                 ncol = 2,
+                                 bbox_to_anchor = ( 1, 1 ), #if you turn that on you can put legend outside of plot
+                                 loc = legend_loc,
+                                 fontsize = 14 )
+        plt.setp( legend.get_title(), fontsize=14 )
+    elif labels_legend:
+
+        fake_handles = [ plt.Rectangle( (0, 0), 0, 0, fill=False, edgecolor='none', visible = 'False')
+                        for i in range( len( bar_labels ) ) ]
+
+        legend = ax.legend(  handles = fake_handles,
+                             title = labels_legend_title,
+                             bbox_to_anchor = ( 0, 1 ), #if you turn that on you can put legend outside of plot
+                             loc = labels_legend_loc,
+                             labels = ( symbol + ' '*6 + label for _col, symbol, label, _fsize in bar_labels ),
+                             fontsize = 14 )
+        plt.setp( legend.get_title(), fontsize=14 )
+    else:
+        ax.legend_ = None
+        plt.draw()
+
+    if y_ax_lim:
+        ax.set_ylim( y_ax_lim )
+
+    if tight:
+        plt.tight_layout()
+
+    return ax
 
 def plot_stacked_psi(     var_df,
                           zcols,
@@ -4572,7 +4593,12 @@ def scatter_by_interp( tbl_by_var,
 def plot_iso_stats( iso_df_stats,
                     sa_col_stem = '_sum_sa_reads',
                     read_col_stem = '_read_count',
-                    iso_rows = [ 'secondary', 'unmapped', 'unpaired', 'bad_starts', 'bad_ends', 'soft_clipped' ] ):
+                    iso_rows = [ 'secondary', 'unmapped', 'unpaired', 'bad_starts', 'bad_ends', 'soft_clipped' ],
+                    cml = False,
+                    plot_out = None ):
+
+    if cml and not plot_out:
+        print( 'Your plots are not going to show up unless you turn cml to False!' )
 
     iso_df = iso_df_stats.copy()
 
@@ -4596,35 +4622,36 @@ def plot_iso_stats( iso_df_stats,
 
     all_cnts.columns = [ 'total_reads', 'sa_reads' ] + [ 'total_' + str( iso ) for iso in used_isos ]
 
-    print( 'Raw counts\n' )
-
     for col in all_cnts:
 
-        print( col )
-
+        plt.figure()
         all_cnts[ col ].plot.bar()
-
         plt.ylabel( col )
+        plt.tight_layout()
+        if plot_out:
+            plt.savefig( plot_out + 'isostats_' + col + '_counts.pdf' )
+        if not cml:
+            plt.show()
+        else:
+            plt.close()
 
-        plt.show()
-
-    print( 'Percentages\n' )
     for col in all_cnts:
 
         if col == 'total_reads':
             continue
 
-        print( col )
-
-        all_cnts[ 'per_' + col ] = all_cnts[ col ] / all_cnts.total_reads
-
-        all_cnts[ 'per_' + col ].plot.bar()
-
+        plt.figure()
+        all_cnts[ col.replace( 'total_', 'per_' ) ] = all_cnts[ col ] / all_cnts.total_reads
+        all_cnts[ col.replace( 'total_', 'per_' ) ].plot.bar()
         plt.ylim( ( 0, 1 ) )
-
-        plt.ylabel( col + ' percent of total' )
-
-        plt.show()
+        plt.ylabel( col.replace( 'total_', '' ) + ' percent of total' )
+        plt.tight_layout()
+        if plot_out:
+            plt.savefig( plot_out + 'isostats_' + col.replace( 'total_', '' ) + '_percentage.pdf' )
+        if not cml:
+            plt.show()
+        else:
+            plt.close()
 
     all_cnts.index.name = 'sample'
 
@@ -4636,8 +4663,12 @@ def plot_waterfall_bysamp( cutoff_df,
                            x_samp_col = 'sample',
                            y_cols = [ '_x_log10', '_y' ],
                            cutoffs = ( 75, 95 ),
-                           ylabels = [ 'Log10 BC Rank', '# of reads/BC' ] ):
+                           ylabels = [ 'Log10 BC Rank', '# of reads/BC' ],
+                           cml = False,
+                           savefig = None ):
 
+    if cml and not savefig:
+        print( 'Your plots are not going to show up!' )
     cut = cutoff_df.copy()
 
     assert len( y_cols ) == len( ylabels ), 'You did not provide enough y axis labels to match your y columns'
@@ -4646,7 +4677,7 @@ def plot_waterfall_bysamp( cutoff_df,
                            len( cutoffs ),
                            sharey = 'row',
                            sharex = True,
-                           figsize = ( 12, 10 ) )
+                           figsize = ( 6*len( cutoffs ), 5*( len( y_cols ) ) ) )
 
     for i,y in enumerate( y_cols ):
 
@@ -4667,48 +4698,63 @@ def plot_waterfall_bysamp( cutoff_df,
 
                 ax[ i ][ j ].tick_params( axis='x', labelrotation = 90 )
 
-    plt.show()
+    if savefig:
+        plt.savefig( savefig )
+
+    if not cml:
+        plt.show()
+    else:
+        plt.close()
 
 def plot_clinvar_by_interp( tbl_by_var,
                             yaxis_cols,
-                            markers,
-                            colors,
+                            marker_d,
                             interp_col = 'lit_interp',
                             sort_col = 'pos',
                             plot_pos_col = 'hgvs_var',
                             figsize = ( 8, 3 ),
                             sharex = 'col',
                             sharey = 'row',
-                            marker_size = 100,
-                            row_label = False,
-                            col_label = False, ):
+                            col_label = None,
+                            row_label = None,
+                            ylim = None,
+                            gnomad_labels = None,
+                            cml = False,
+                            savefig = False,
+                            ):
+
+    if cml and not savefig:
+        print( 'You should fill in the savefig argument for the command line or your plot will not show up!' )
 
     tbv = tbl_by_var.loc[ tbl_by_var[ interp_col ] != '' ].copy()
-
-    assert len( markers ) == len( tbv[ interp_col ].unique() ), \
-    'Number of markers does not match the number of unique values for interpretation column!'
 
     fig,ax = plt.subplots( len( yaxis_cols ), len( tbv[ interp_col ].unique() ),
                            gridspec_kw = { 'width_ratios' : [ len( tbv.loc[ tbv[ interp_col ] == l ] ) for l in tbv[ interp_col ].unique() ] },
                            sharex = sharex,
                            sharey = sharey,
-                           figsize = figsize )
+                           figsize = figsize,
+                           squeeze = False )
 
     for i,interp in enumerate( tbv[ interp_col ].unique() ):
 
         interp_df = tbv.loc[ tbv[ interp_col ] == interp ].sort_values( by = sort_col ).reset_index().copy()
 
+        marker, color, edgecolor, linewidth, size = marker_d[ interp ]
+
         if col_label:
 
-            ax[ 0 ][ i ].set_title( interp )
+            ax[ 0 ][ i ].set_title( interp.replace( '(', '\n(' ),
+                                    fontsize = 14 )
 
         for j,ycol in enumerate( yaxis_cols ):
 
             ax[ j ][ i ].scatter( interp_df.index,
                                   interp_df[ ycol ],
-                                  marker = markers[ i ],
-                                  color = colors( i ),
-                                  s = marker_size )
+                                  marker = marker,
+                                  color = color,
+                                  edgecolor = edgecolor,
+                                  linewidth = linewidth,
+                                  s = size )
 
             if row_label:
 
@@ -4719,13 +4765,52 @@ def plot_clinvar_by_interp( tbl_by_var,
 
             ax[ j ][ i ].set_xlim( ( x_l - .5, x_r + .5 ) )
 
+            if ylim:
+
+                ax[ j ][ i ].set_ylim( ylim )
+
         ax[ j ][ i ].set_xticks(  interp_df.index )
 
         ax[ j ][ i ].set_xticklabels( interp_df[ plot_pos_col ],
                                       fontsize=12,
                                       rotation='vertical' )
 
-    plt.show()
+        if gnomad_labels:
+
+            x_coords = ax[ 0 ][ i ].get_xticks()
+
+            for label_col, gnomad_markers, y_coords, in gnomad_labels:
+
+                marker, color, size = gnomad_markers
+
+                ax[ 0 ][ i ].scatter( x_coords,
+                                      [ y_coords if ~np.isnan( label ) else np.nan for label in interp_df[ label_col ] ],
+                                      marker = marker,
+                                      color = color,
+                                      s = size,
+                                      clip_on = False )
+
+                for k, val in enumerate( interp_df[ label_col ] ):
+
+                    if np.isnan( val ):
+                        continue
+
+                    ax[ 0 ][ i ].annotate( '%.1E' % val,
+                                           ( x_coords[ k ], y_coords ),
+                                           annotation_clip = False,
+                                           fontsize = 8,
+                                           ha = 'center',
+                                           va = 'center',
+                                           rotation = 45 )
+
+    if savefig:
+
+        plt.savefig( savefig )
+
+    if not cml:
+        plt.show()
+    else:
+        plt.close()
 
 def sat_lollipop_subplot_psi_by_alt(  var_df,
                                       y_col,
@@ -4922,14 +5007,6 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
                      ha = 'center',
                      va = 'center',
                      fontsize = ref_font_size, )
-                     #bbox = { 'facecolor': colors_ref_d[ base ], 'pad': 40 } )
-
-            #ax.add_patch(  )
-
-            #p = patches.Rectangle( ( cds - 1.5, y_ref_cds ), 3, 1, color = colors_ref_d[ base ] )
-            #ax.add_artist(p)
-
-            #plt.text( cds, -.5, base, horizontalalignment = 'center', verticalalignment = 'center', fontsize=40, color='black')
 
     if bar_labels:
 
@@ -4939,9 +5016,9 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
 
             print( 'If your labels are not in the pdf, increase save_margin parameter!' )
 
-        #x_coords = ax.get_xticks()
+        x_coords = ax.get_xticks()
 
-        #x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
+        x_coords_per_bp = [ x for x in range( x_coords[ -1 ] + 2 ) ]
 
         for label_col, marker_d, y_coords, in bar_labels:
 
@@ -4949,7 +5026,7 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
 
                 marker, color, edgecolor, linewidth, size = marker_d[ val ]
 
-                ax.scatter( [ i for i in range( len( tbv ) ) ],
+                ax.scatter( x_coords_per_bp,
                             [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
                             marker = marker,
                             color = color,
@@ -5039,9 +5116,13 @@ def sat_lollipop_subplots_wrapper( var_df,
                                    color_missing = False,
                                    hlines = None,
                                    tight = True,
+                                   cml = False,
                                    savefile = None,
                                    save_margin = .1,
                                  ):
+
+    if cml and not savefile:
+        print( 'Your plots are not going to show up!' )
 
     tbv = var_df.sort_values( by = [ 'pos', 'alt' ] ).copy()
 
@@ -5251,12 +5332,14 @@ def sat_lollipop_subplots_wrapper( var_df,
 
     if savefile:
         plt.savefig( savefile,
-                     #dpi = 300,
                      bbox_inches = 'tight',
                      pad_inches = save_margin,
                    )
 
-    plt.show()
+    if not cml:
+        plt.show()
+    else:
+        plt.close()
 
 def correlation_heat_map( tbl_by_tool,
                           figsize = ( 3, 3 ),
@@ -5711,3 +5794,53 @@ def hist_by_cat_subplots( tbl_by_var,
         plt.savefig( savefig )
 
     plt.show()
+
+def saturate_variants( tbl_by_var,
+                       refseq,
+                       pos_col,
+                       exon_col,
+                       intron_dist = 100,
+                       rev_strand = False,
+                       add_missing_introns = False ):
+
+    tbv = tbl_by_var.copy()
+
+    exons = tbv.loc[ tbv[ exon_col ].notnull() ][ exon_col ].unique()
+
+    exon_bds = { int( ex ): ( int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].min() ) - intron_dist,
+                              int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].max() ) + intron_dist )
+                 for ex in exons }
+
+    by_ex_d = { int( ex ): tbv.loc[ ( tbv[ pos_col ] >= exon_bds[ int( ex ) ][ 0 ] )
+                                    & ( tbv[ pos_col ] <= exon_bds[ int( ex ) ][ 1 ] ) ].copy()
+                for ex in exons }
+
+    for ex in by_ex_d.keys():
+
+        if add_missing_introns:
+            min_bd = min( by_ex_d[ ex ][ pos_col ].min(), exon_bds[ ex ][ 0 ] )
+            max_bd = max( by_ex_d[ ex ][ pos_col ].max(), exon_bds[ ex ][ 1 ] )
+        else:
+            min_bd, max_bd = by_ex_d[ ex ][ pos_col ].min(), by_ex_d[ ex ][ pos_col ].max(),
+
+        merge_ex = pd.DataFrame( { pos_col: [ p for p in range( min_bd, max_bd + 1 ) for j in range( 3 ) ],
+                                   'alt': [ a for p in range( min_bd, max_bd + 1 )
+                                              for a in [ 'A', 'C', 'G', 'T' ] if a.upper() != refseq[ p - 1 ].upper() ],
+                                   'ref': [ refseq[ p - 1 ].upper() for p in range( min_bd, max_bd + 1 )
+                                            for j in range( 3 ) ] } )
+
+        if rev_strand:
+
+            merge_ex[ 'alt_c' ] = [ cd.rev_complement( a ) for a in merge_ex.alt ]
+            merge_ex[ 'ref_c' ] = [ cd.rev_complement( r ) for r in merge_ex.ref ]
+            #merge_ex[ 'pos' ] = -merge_ex[ pos_col ]
+
+
+        idx = merge_ex.columns.tolist()
+
+        by_ex_d[ int( ex ) ] = merge_ex.set_index( idx ).merge( by_ex_d[ int( ex ) ].set_index( idx ),
+                                                                how = 'outer',
+                                                                left_index = True,
+                                                                right_index = True ).reset_index()
+
+    return by_ex_d
