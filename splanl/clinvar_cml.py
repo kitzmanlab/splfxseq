@@ -1,11 +1,11 @@
-import mpsa_pipe.scrape_public_data as spd
+import splanl.scrape_public_data as spd
 import argparse
 import pysam
 import pandas as pd
 
 def main():
 
-    parser = argparse.ArgumentParser( description = 'Scrape gnomAD to merge with MSPA data',
+    parser = argparse.ArgumentParser( description = 'Scrape ClinVar to merge with MSPA data',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument( '-g', '--gene_name',
                          default = '',

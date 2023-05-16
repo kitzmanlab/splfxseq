@@ -1,4 +1,4 @@
-import mpsa_pipe.scrape_public_data as spd
+import splanl.scrape_public_data as spd
 import argparse
 import pysam
 import pandas as pd
@@ -17,9 +17,9 @@ def main():
                          default = '',
                          help = 'Exon name to append to outfile names (str)' )
     parser.add_argument( 'gnomad2',
-                         help = 'Dir + file for tabix indexed gnomAD2 dataset (str)' )
+                         help = 'Dir + file for tabix indexed gnomAD2 dataset - tabix gene/small region from gnomAD online (str)' )
     parser.add_argument( 'gnomad3',
-                         help = 'Dir + file for tabix indexed gnomAD3 dataset (str)' )
+                         help = 'Dir + file for tabix indexed gnomAD3 dataset - tabix gene/small region from gnomAD online (str)' )
     parser.add_argument( 'chrom',
                          help = 'Chromosome of region to scrape (str)' )
     parser.add_argument( 'hg19_start',
@@ -35,7 +35,7 @@ def main():
                          type = int,
                          help = 'HG38 end position to scrape (int)' )
     parser.add_argument( 'gnomad_outdir',
-                         help = 'Out directory to place scraped gnomAD files(str)' )
+                         help = 'Out directory to place scraped gnomAD files (str)' )
     args = parser.parse_args()
     config = vars(args)
 

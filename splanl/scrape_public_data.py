@@ -5,11 +5,12 @@ import subprocess as subp
 import splanl.coords as cd
 
 def create_gnomad_df( gnomad_tbx,
-                        chrom,
-                        coords, ):
+                      chrom,
+                      coords,
+                      genome, ):
 
     out_tbl = { 'chrom': [],
-                'gdna_pos_hg38': [],
+                genome + '_pos': [],
                 'ref': [],
                 'alt': [],
                 'n_alt': [],
@@ -23,7 +24,7 @@ def create_gnomad_df( gnomad_tbx,
 
         out_tbl[ 'chrom' ].append( chrom )
         #add one to account for stupid 0 and 1 based indexing issues
-        out_tbl[ 'gdna_pos_hg38' ].append( row.pos + 1 )
+        out_tbl[ genome + '_pos' ].append( row.pos + 1 )
 
         out_tbl[ 'ref' ].append( row.ref )
         out_tbl[ 'alt' ].append( row.alt )

@@ -5,7 +5,7 @@ import sys
 import time
 from keras.models import load_model
 from pkg_resources import resource_filename
-import mpsa_pipe.mpsa_plots as mp
+import splanl.plots as sp
 import mpsa_pipe.seq_fx as sf
 import mpsa_pipe.annots as ann
 import mpsa_pipe.create_vcf as vcf
@@ -414,7 +414,7 @@ def main():
 
     if config[ 'strand' ] == '+':
 
-        mp.sat_subplots_wrapper( splai_scores,
+        sp.sat_subplots_wrapper( splai_scores,
                                 [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                 'coord_pos',
                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -432,7 +432,7 @@ def main():
                    [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_acc_pr ) for ss in alt_ss ] + \
                    [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_don_pr ) for ss in alt_ss ]
 
-        mp.sat_subplots_wrapper( splai_ss_pr,
+        sp.sat_subplots_wrapper( splai_ss_pr,
                                 [ 'ss_acc_prob_' + str( config[ 'exon_start_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_end_pos' ] ) ] + \
                                 [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                 'coord_pos',
@@ -453,7 +453,7 @@ def main():
                              'LPP': ( '^', 'black', 'face', 1.5, 200 ),
                              'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
 
-            mp.sat_subplots_wrapper( splai_scores,
+            sp.sat_subplots_wrapper( splai_scores,
                                     [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                     config[ 'merge_pos_col' ],
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -469,7 +469,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
                                  )
 
-            mp.sat_subplots_wrapper( splai_ss_pr,
+            sp.sat_subplots_wrapper( splai_ss_pr,
                                     [ 'ss_acc_prob_' + str( config[ 'exon_start_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_end_pos' ] ) ] + \
                                     [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                     config[ 'merge_pos_col' ],
@@ -491,7 +491,7 @@ def main():
 
             lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
 
-            mp.sat_subplots_wrapper( splai_scores,
+            sp.sat_subplots_wrapper( splai_scores,
                                     [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                     config[ 'merge_pos_col' ],
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -507,7 +507,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
                                  )
 
-            mp.sat_subplots_wrapper( splai_ss_pr,
+            sp.sat_subplots_wrapper( splai_ss_pr,
                                     [ 'ss_acc_prob_' + str( config[ 'exon_start_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_end_pos' ] ) ] + \
                                     [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                     config[ 'merge_pos_col' ],
@@ -527,7 +527,7 @@ def main():
 
         if config[ 'maxentscan' ]:
 
-            mp.sat_lollipop_subplots_wrapper( splai_scores,
+            sp.sat_lollipop_subplots_wrapper( splai_scores,
                                              [ 'DS_maxm' ] + [ col for col in splai_scores if col.endswith( '_diff' ) ],
                                              'coord_pos',
                                              [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -546,7 +546,7 @@ def main():
 
         splai_scores[ 'pos' ] = -splai_scores.pos
 
-        mp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
+        sp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
                                                                   'ref': 'r',
                                                                   'alt_c': 'alt',
                                                                   'ref_c': 'ref' } ),
@@ -567,7 +567,7 @@ def main():
                    [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_acc_pr ) for ss in alt_ss ] + \
                    [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_don_pr ) for ss in alt_ss ]
 
-        mp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
+        sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
                                                                  'ref': 'r',
                                                                  'alt_c': 'alt',
                                                                  'ref_c': 'ref' } ),
@@ -591,7 +591,7 @@ def main():
                              'LPP': ( '^', 'black', 'face', 1.5, 200 ),
                              'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
 
-            mp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
+            sp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
                                                                       'ref': 'r',
                                                                       'alt_c': 'alt',
                                                                       'ref_c': 'ref' } ),
@@ -610,7 +610,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
                                  )
 
-            mp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
+            sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
                                                                      'ref': 'r',
                                                                      'alt_c': 'alt',
                                                                      'ref_c': 'ref' } ),
@@ -635,7 +635,7 @@ def main():
 
             lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
 
-            mp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
+            sp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
                                                                       'ref': 'r',
                                                                       'alt_c': 'alt',
                                                                       'ref_c': 'ref' } ),
@@ -654,7 +654,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
                                  )
 
-            mp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
+            sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
                                                                      'ref': 'r',
                                                                      'alt_c': 'alt',
                                                                      'ref_c': 'ref' } ),
@@ -677,7 +677,7 @@ def main():
 
         if config[ 'maxentscan' ]:
 
-            mp.sat_lollipop_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
+            sp.sat_lollipop_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
                                                                       'ref': 'r',
                                                                       'alt_c': 'alt',
                                                                       'ref_c': 'ref' } ),
