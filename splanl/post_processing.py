@@ -5,7 +5,7 @@ import pysam
 import hgvs.parser
 import hgvs.dataproviders.uta
 import hgvs.assemblymapper
-import splanl.custom_splai_scores as css
+import splanl.coords as cd
 
 def get_refseq( fa_file ):
 
@@ -820,7 +820,7 @@ def possible_ss( tbl_by_var,
         assert refseq[ pos -1: pos - 1 + len( ref ) ].upper() == ref, 'Reference does not match sequence at %i' % pos
 
         if rev_strand:
-            alt = css.rev_complement( alt )
+            alt = cd.rev_complement( alt )
 
         if alt == 'C':
 
@@ -837,7 +837,7 @@ def possible_ss( tbl_by_var,
 
             else:
 
-                acc.append( css.rev_complement( refseq[ pos - 2 ].upper() ) == 'G' )
+                acc.append( cd.rev_complement( refseq[ pos - 2 ].upper() ) == 'G' )
 
         elif alt == 'T':
 
@@ -849,7 +849,7 @@ def possible_ss( tbl_by_var,
 
             else:
 
-                don.append( css.rev_complement( refseq[ pos ].upper() ) == 'G' )
+                don.append( cd.rev_complement( refseq[ pos ].upper() ) == 'G' )
 
         elif alt == 'G':
 
@@ -860,8 +860,8 @@ def possible_ss( tbl_by_var,
 
             else:
 
-                acc.append( css.rev_complement( refseq[ pos ].upper() ) == 'A' )
-                don.append( css.rev_complement( refseq[ pos - 2 ].upper() ) == 'T' )
+                acc.append( cd.rev_complement( refseq[ pos ].upper() ) == 'A' )
+                don.append( cd.rev_complement( refseq[ pos - 2 ].upper() ) == 'T' )
 
         else:
 
@@ -909,8 +909,8 @@ def saturate_variants( tbl_by_var,
 
         if rev_strand:
 
-            merge_ex[ 'alt_c' ] = [ css.rev_complement( a ) for a in merge_ex.alt ]
-            merge_ex[ 'ref_c' ] = [ css.rev_complement( r ) for r in merge_ex.ref ]
+            merge_ex[ 'alt_c' ] = [ cd.rev_complement( a ) for a in merge_ex.alt ]
+            merge_ex[ 'ref_c' ] = [ cd.rev_complement( r ) for r in merge_ex.ref ]
             #merge_ex[ 'pos' ] = -merge_ex[ pos_col ]
 
 
@@ -922,22 +922,6 @@ def saturate_variants( tbl_by_var,
                                                                 right_index = True ).reset_index()
 
     return by_ex_d
-
-def merge_clinvar( tbl_by_var,
-                   clinvar,
-                   index_cols = [ 'hg19_pos', 'ref', 'alt' ] ):
-
-    tbv = tbl_by_var.set_index( index_cols ).copy()
-    cv = clinvar.set_index( index_cols ).copy()
-
-    tbv = tbv.merge( cv,
-                     how = 'left',
-                     left_index = True,
-                     right_index = True ).reset_index()
-
-    tbv[ 'clinvar' ] = tbv[ 'clinvar_interp' ].notnull()
-
-    return tbv
 
 def get_transcriptome_per( transcriptome_df,
                            tbl_by_var,

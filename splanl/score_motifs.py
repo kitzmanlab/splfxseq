@@ -3,7 +3,7 @@ import numpy as np
 import zipfile as zp
 from maxentpy import maxent
 import scipy.stats as ss
-import splanl.custom_splai_scores as css
+import splanl.coords as cd
 
 def ImportFastA(fastafile):
     """Opens a fasta file, discards the header, and returns the sequence.
@@ -116,7 +116,7 @@ def score_motifs_mean( refseq,
 
     else:
 
-        score_seq = css.rev_complement( refseq[ exon_coords[ 0 ] - 1 : exon_coords[ 1 ] ] )
+        score_seq = cd.rev_complement( refseq[ exon_coords[ 0 ] - 1 : exon_coords[ 1 ] ] )
 
     wt = { ( i, score_seq[ i + k - 1 ] ) :
             np.mean( [ float( mdf.loc[ kseq, score_col ] ) if kseq in mdf.index else 0
@@ -223,7 +223,7 @@ def create_hal_skip_input_df( varlist,
         #hal only works on exonic sequences and wants 6 downstream intronic bases in lowercase
         score_ref = refseq[ ex_start: ex_end ].upper() + refseq[ ex_end: ex_end + 6 ].lower()
     else:
-        score_ref = css.rev_complement( refseq[ ex_start - 6: ex_start ].lower() + refseq[ ex_start : ex_end ].upper() )
+        score_ref = cd.rev_complement( refseq[ ex_start - 6: ex_start ].lower() + refseq[ ex_start : ex_end ].upper() )
 
     for var in varlist:
 
@@ -251,7 +251,7 @@ def create_hal_skip_input_df( varlist,
                                             + refseq[ ex_end: ex_end + 6 ].lower() )
 
             else:
-                out_dict[ 'altseq' ].append( css.rev_complement( refseq[ ex_start - 6: ex_start ].lower() \
+                out_dict[ 'altseq' ].append( cd.rev_complement( refseq[ ex_start - 6: ex_start ].lower() \
                                                                  + refseq[ ex_start : pos - 1 ].upper() \
                                                                  + alt \
                                                                  + refseq[ pos - 1 + len( ref ): ex_end ].upper() )  )
@@ -329,16 +329,16 @@ def create_hal_5ss_input_df( varlist,
 
                 out_dict[ 'var_name' ].append( var )
 
-                out_dict[ 'refseq' ].append( css.rev_complement( refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower()
+                out_dict[ 'refseq' ].append( cd.rev_complement( refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower()
                                                                  + refseq[ don_coords[ 1 ] : acc_coords ].upper() ) )
 
                 if pos <= don_coords[ 1 ]:
-                    out_dict[ 'altseq' ].append( css.rev_complement( refseq[ don_coords[ 0 ]: pos - 1 ].lower()
+                    out_dict[ 'altseq' ].append( cd.rev_complement( refseq[ don_coords[ 0 ]: pos - 1 ].lower()
                                                                      + alt.lower()
                                                                      + refseq[ pos - 1 + len( ref ): don_coords[ 1 ] ].lower()
                                                                      + refseq[ don_coords[ 1 ] : acc_coords ].upper() ) )
                 else:
-                    out_dict[ 'altseq' ].append( css.rev_complement( refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower()
+                    out_dict[ 'altseq' ].append( cd.rev_complement( refseq[ don_coords[ 0 ]: don_coords[ 1 ] ].lower()
                                                                      + refseq[ don_coords[ 1 ] : pos - 1 ].upper()
                                                                      + alt
                                                                      + refseq[ pos - 1 + len( ref ): acc_coords ].upper() ) )
@@ -637,9 +637,9 @@ def maxent_score_wt( refseq,
 
     else:
 
-        outtbl[ 'wt_acc_pr' ] = [ maxent.score3( css.rev_complement( refseq[ pos - 1 - 2: pos - 1 + 21 ] ) )
+        outtbl[ 'wt_acc_pr' ] = [ maxent.score3( cd.rev_complement( refseq[ pos - 1 - 2: pos - 1 + 21 ] ) )
                                   for pos in pos_l ]
-        outtbl[ 'wt_don_pr' ] = [ maxent.score5( css.rev_complement( refseq[ pos - 1 - 6: pos - 1 + 3 ] ) )
+        outtbl[ 'wt_don_pr' ] = [ maxent.score5( cd.rev_complement( refseq[ pos - 1 - 6: pos - 1 + 3 ] ) )
                                   for pos in pos_l ]
 
     outdf = pd.DataFrame( outtbl )
@@ -688,8 +688,8 @@ def maxent_score_donors( refseq,
 
                 else:
 
-                    assert ref.upper() == css.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
-                    maxent_scores[ dpos ].append( maxent.score5( css.rev_complement( refseq[ m_pos[ dpos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ dpos ][ 1 ] ] ) ) )
+                    assert ref.upper() == cd.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    maxent_scores[ dpos ].append( maxent.score5( cd.rev_complement( refseq[ m_pos[ dpos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ dpos ][ 1 ] ] ) ) )
 
     return maxent_scores
 
@@ -735,203 +735,10 @@ def maxent_score_acceptors( refseq,
 
                 else:
 
-                    assert ref.upper() == css.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
-                    maxent_scores[ apos ].append( maxent.score3( css.rev_complement( refseq[ m_pos[ apos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ apos ][ 1 ] ] ) ) )
+                    assert ref.upper() == cd.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    maxent_scores[ apos ].append( maxent.score3( cd.rev_complement( refseq[ m_pos[ apos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ apos ][ 1 ] ] ) ) )
 
     return maxent_scores
-
-def compute_maxent_scores( byvartbl,
-                           refseq,
-                           wt_accept_col,
-                           wt_donor_col,
-                           var_accept_col,
-                           var_donor_col ):
-
-    tbv = byvartbl.copy()
-
-    wt_a = list( tbv.loc[ tbv[ wt_accept_col ] ].pos )
-    wt_a_scores = { pos: score_acceptor( pos, refseq ) for pos in wt_a }
-    wt_a_df = pd.DataFrame( wt_a_scores.items(), columns = [ 'pos', 'wt_acc_maxent'] ).set_index( 'pos' )
-
-    wt_d = list( tbv.loc[ tbv[ wt_donor_col ] ].pos )
-    wt_d_scores = { pos: score_donor( pos, refseq ) for pos in wt_d }
-    wt_d_df = pd.DataFrame( wt_d_scores.items(), columns = [ 'pos', 'wt_don_maxent'] ).set_index( 'pos' )
-
-    var_a = list( zip( tbv.loc[ tbv[ var_accept_col ] ].pos,
-                       tbv.loc[ tbv[ var_accept_col ] ].alt ) )
-    var_a_scores = { ( pos, alt ): score_acceptor( pos, refseq, alt ) for pos, alt in var_a }
-    var_a_df = pd.Series( var_a_scores ).reset_index()
-    var_a_df.columns = [ 'pos', 'alt', 'snv_acc_maxent' ]
-    var_a_df = var_a_df.set_index( [ 'pos', 'alt' ] )
-
-    var_d = list( zip( tbv.loc[ tbv[ var_donor_col ] ].pos,
-                       tbv.loc[ tbv[ var_donor_col ] ].alt ) )
-    var_d_scores = { ( pos, alt ): score_donor( pos, refseq, alt ) for pos, alt in var_d }
-    var_d_df = pd.Series( var_d_scores ).reset_index()
-    var_d_df.columns = [ 'pos', 'alt', 'snv_don_maxent' ]
-    var_d_df = var_d_df.set_index( [ 'pos', 'alt' ] )
-
-    out_tbl = tbv.set_index( [ 'pos' ] )
-
-    out_tbl = pd.merge( out_tbl, wt_a_df, left_index = True, right_index = True, how = 'outer')
-    out_tbl = pd.merge( out_tbl, wt_d_df, left_index = True, right_index = True, how = 'outer')
-
-    out_tbl = out_tbl.reset_index().set_index( [ 'pos', 'alt' ] )
-
-    out_tbl = pd.merge( out_tbl, var_a_df, left_index = True, right_index = True, how = 'outer')
-    out_tbl = pd.merge( out_tbl, var_d_df, left_index = True, right_index = True, how = 'outer')
-
-    out_tbl = out_tbl.reset_index()
-
-    return out_tbl
-
-def score_acceptor( pos,
-                    refseq,
-                    alt_allele = False ):
-
-    if not alt_allele:
-
-        assert refseq[ pos - 1 ] == 'A' or refseq[ pos - 1 ] == 'G', \
-        'Reference does not contain A or G at position %i' % pos
-
-        if refseq[ pos - 1 ] == 'A':
-            score = maxent.score3( refseq[ pos - 19: pos + 4 ] )
-        else:
-            score = maxent.score3( refseq[ pos - 20: pos + 3 ] )
-
-    else:
-
-        assert alt_allele == 'A' or alt_allele == 'G', \
-        'Alternate allele is not A or G'
-
-        if alt_allele == 'A':
-            score = maxent.score3( refseq[ pos - 19: pos - 1 ] + alt_allele + refseq[ pos: pos + 4 ] )
-        else:
-            score = maxent.score3( refseq[ pos - 20: pos - 1 ] + alt_allele + refseq[ pos: pos + 3 ] )
-
-    return score
-
-def score_donor( pos,
-                 refseq,
-                 alt_allele = False ):
-
-    if not alt_allele:
-
-        assert refseq[ pos - 1 ] == 'G' or refseq[ pos - 1 ] == 'T', \
-        'Reference does not contain G or T at position %i' % pos
-
-        if refseq[ pos - 1 ] == 'G':
-            score = maxent.score5( refseq[ pos - 4: pos + 5 ] )
-        else:
-            score = maxent.score5( refseq[ pos - 5: pos + 4 ] )
-
-    else:
-
-        assert alt_allele == 'G' or alt_allele == 'T', \
-        'Alternate allele is not G or T'
-
-        if alt_allele == 'G':
-            score = maxent.score5( refseq[ pos - 4: pos - 1 ] + alt_allele + refseq[ pos: pos + 5 ] )
-        else:
-            score = maxent.score5( refseq[ pos - 5: pos - 1 ] + alt_allele + refseq[ pos: pos + 4 ] )
-
-    return score
-
-def score_maxent_allvar( tbl_by_var,
-                         refseq,
-                         out_col = ( 'maxent_3ss', 'maxent_5ss' ),
-                         rev_strand = False ):
-
-    tbv = tbl_by_var.copy()
-
-    trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
-
-    me3_mtx = maxent.load_matrix3()
-    me5_mtx = maxent.load_matrix5()
-
-    me3ss = []
-    me5ss = []
-
-    for p, ra in zip( tbv.pos, zip( tbv.ref, tbv.alt ) ):
-
-        ref, alt = ra
-
-        #print( p, ra )
-
-        assert refseq[ p - 1: p - 1 + len( ref ) ].upper() == ref.upper(), \
-        'Reference does not match for %i:%s>%s' % ( p, ref, alt )
-
-        if not rev_strand:
-
-            wt3 = np.array( [ maxent.score3( refseq[ p + i - 23 + len( ref ) - 1 : p + i + len( ref ) - 1 ],
-                                                     matrix = me3_mtx
-                                                   )
-                              for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
-
-            var3 = np.array( [ maxent.score3( refseq[ p + i - 23 + len( ref ) - 1 : p - 1 ] \
-                                                       + alt \
-                                                       + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ],
-                                                      matrix = me3_mtx
-                                                    )
-                               for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
-
-            wt5 = np.array( [ maxent.score5( refseq[ p + i - 9 + len( ref ) - 1 : p + i + len( ref ) - 1 ],
-                                                     matrix = me5_mtx
-                                                   )
-                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
-
-            var5 = np.array( [ maxent.score5( refseq[ p + i - 9 + len( ref ) - 1 : p - 1 ] \
-                                                       + alt \
-                                                       + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ],
-                                                      matrix = me5_mtx
-                                                    )
-                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
-
-        else:
-
-            wt3 = np.array( [ maxent.score3( refseq[ p + i - 23 + len( ref ) - 1 : p + i + len( ref ) - 1 ].translate( trans_tbl )[ ::-1 ],
-                                                     matrix = me3_mtx
-                                                   )
-                              for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
-
-            var3 = np.array( [ maxent.score3( ( refseq[ p + i - 23 + len( ref ) - 1 : p - 1 ] \
-                                                       + alt \
-                                                       + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ] ).translate( trans_tbl )[ ::-1 ],
-                                                      matrix = me3_mtx
-                                                    )
-                               for i in range( len( alt ) - len( ref ), 23 - len( ref ) - 1 ) ] )
-
-            wt5 = np.array( [ maxent.score5( refseq[ p + i - 9 + len( ref ) - 1 : p + i + len( ref ) - 1 ].translate( trans_tbl )[ ::-1 ],
-                                                     matrix = me5_mtx
-                                                   )
-                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
-
-            var5 = np.array( [ maxent.score5( ( refseq[ p + i - 9 + len( ref ) - 1 : p - 1 ] \
-                                                        + alt \
-                                                        + refseq[ p + len( ref ) - 1 : p + i + len( ref ) - 1 + ( len( ref ) - len( alt ) ) ] ).translate( trans_tbl )[ ::-1 ],
-                                                      matrix = me5_mtx
-                                                    )
-                              for i in range( len( alt ) - len( ref ), 9 - len( ref ) - 1 ) ] )
-
-        ss3_diff = var3 - wt3
-        ss5_diff = var5 - wt5
-
-        if len( wt3 ) > 0:
-            me3ss.append( max( ss3_diff.max(), ss3_diff.min(), key = abs ) )
-        else:
-            print( 'No 3ss scores appended for %i:%s>%s' % ( p, ref, alt ) )
-            me3ss.append( np.nan )
-
-        if len( wt5 ) > 0:
-            me5ss.append( max( ss5_diff.max(), ss5_diff.min(), key = abs ) )
-        else:
-            print( 'No 5ss scores appended for %i:%s>%s' % ( p, ref, alt ) )
-            me5ss.append( np.nan )
-
-    tbv[ out_col[ 0 ] ] = me3ss
-    tbv[ out_col[ 1 ] ] = me5ss
-
-    return tbv
 
 def get_pangolin_scores( pangolin_vcf ):
 

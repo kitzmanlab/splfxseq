@@ -2,6 +2,7 @@ import pysam
 import pandas as pd
 import numpy as np
 import subprocess as subp
+import splanl.coords as cd
 
 def create_gnomad_df( gnomad_tbx,
                         chrom,
@@ -196,3 +197,93 @@ def merge_data_phylop( byvartbl,
                                       indexcols = index_cols )
 
     return merge_tbl
+
+def create_clinvar_df( clinvar_tbx,
+                       chrom,
+                       coords,
+                       genome ):
+
+    if genome != 'hg19':
+        print( 'Processing genome other than hg19 - MPSA driver script assumes merge on hg19_pos column!' )
+        print( 'You will need to do a liftover to merge with MPSA data - could download hg19 VCF instead!' )
+
+    all_info_keys = list( set( [ key for rec in clinvar_tbx.fetch( chrom ,
+                                                               coords[0],
+                                                               coords[1], )
+                                 for key in rec.info.keys() ] ) )
+
+    outd = { col: [] for col in [ 'chrom', genome + '_pos', 'ref', 'alt' ] + all_info_keys }
+
+    for rec in clinvar_tbx.fetch( chrom ,
+                              coords[0],
+                              coords[1], ):
+
+        ref = rec.ref
+
+        if rec.alts is None or len( rec.alts ) > 1:
+            continue
+
+        alt = rec.alts[ 0 ]
+
+        #only get SNVs
+        if len( ref ) != 1 or len( alt ) != 1:
+            continue
+
+        info_keys = list( rec.info.keys() )
+
+        if 'CLNSIG' not in info_keys or rec.info[ 'CLNSIG' ] == '':
+            continue
+
+        outd[ 'chrom' ].append( int( rec.chrom ) )
+        outd[ 'hg19_pos' ].append( int( rec.pos ) )
+        outd[ 'ref' ].append( ref )
+        outd[ 'alt' ].append( alt )
+
+        for key in all_info_keys:
+
+            if key in info_keys:
+
+                if isinstance( rec.info[ key ], tuple ) and len( rec.info[ key ] ) == 1:
+                    outd[ key ].append( rec.info[ key ][ 0 ] )
+                else:
+                    outd[ key ].append( rec.info[ key ] )
+
+            else:
+                outd[ key ].append( '' )
+
+    outdf = pd.DataFrame( outd ).rename( columns = { 'CLNSIG': 'clinvar_interp' } )
+
+    if 'GENEINFO' in outdf:
+        outdf[ 'clinvar_gene' ] = outdf.GENEINFO.apply( lambda x: x.split( ':' )[ 0 ] )
+
+    clinvar_possible = [ 'Uncertain_significance', 'Likely_benign',
+                         'Conflicting_interpretations_of_pathogenicity',
+                         'Benign/Likely_benign', 'Benign', 'Pathogenic',
+                         'Pathogenic/Likely_pathogenic', 'Likely_pathogenic',
+                         'not_provided' ]
+
+    if len( set( outdf.clinvar_interp.unique() ).difference( set( clinvar_possible ) ) ) > 0:
+        print( 'Some ClinVar interpretations not getting processed into the clinvar_abbrev column properly!', set( outdf.clinvar_interp.unique() ).difference( set( clinvar_possible ) ) )
+
+    outdf[ 'clinvar_abbrev' ] = [ 'LBB' if interp == 'Likely_benign' or interp == 'Benign/Likely_benign' or interp == 'Benign'
+                                  else 'LPP' if interp == 'Pathogenic' or interp == 'Pathogenic/Likely_pathogenic' or interp == 'Likely_pathogenic'
+                                  else 'VUS' if interp == 'Uncertain_significance' or interp == 'Conflicting_interpretations_of_pathogenicity'
+                                  else ''
+                                  for interp in outdf.clinvar_interp ]
+
+    return outdf
+
+def merge_data_clinvar( psi_df,
+                       clinvar_df,
+                       indexcols = [ 'hg19_pos', 'ref', 'alt' ],
+                       keep_cols = [ 'clinvar_interp', 'clinvar_abbrev', 'clinvar_gene' ] ):
+
+    psi = psi_df.set_index( indexcols ).copy()
+    clinvar = clinvar_df.set_index( indexcols ).copy()
+
+    if 'chrom' not in indexcols:
+        clinvar = clinvar.drop( columns = [ 'chrom' ] )
+
+    out = psi.join( clinvar[ keep_cols ], how = 'left' ).reset_index()
+
+    return out
