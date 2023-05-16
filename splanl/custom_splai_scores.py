@@ -1,28 +1,10 @@
 import pandas as pd
 import numpy as np
-from keras.models import load_model
-from pkg_resources import resource_filename
 from spliceai.utils import one_hot_encode
 import pysam
 import splanl.post_processing as pp
+import splanl.coords as cd
 import matplotlib.pyplot as plt
-
-def rev_complement( seq ):
-    """
-    Creates reverse complement of DNA string (not case sensitive)
-
-    Args: seq (str)
-
-    Returns: comp (str) reverse complement of input string
-    """
-
-    trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
-
-    rev = seq[::-1]
-
-    comp = rev.translate( trans_tbl )
-
-    return comp
 
 def get_gene_bds( annots_df,
                   chrom,
@@ -248,8 +230,8 @@ def create_input_seq( refseq,
 
     if rev_strand:
 
-        refseq = rev_complement( refseq )
-        varseq = rev_complement( varseq )
+        refseq = cd.rev_complement( refseq )
+        varseq = cd.rev_complement( varseq )
 
     return ( refseq, varseq )
 
@@ -1196,7 +1178,7 @@ def custom_score_indiv_variants_multexon( tbl_byvar,
 
         print( chrom )
 
-        chr_seq = pp.get_refseq( refseq_files + chrom + '.fa' )[ 0 ]
+        chr_seq = pp.get_refseq( refseq_files + chrom + '.fa' )[ ref_name ]
 
         tbv_chrom = tbv.loc[ tbv.chrom == chrom ].copy()
         tbv_pos = tbv_chrom.loc[ tbv.strand == '+' ]
@@ -1308,7 +1290,7 @@ def create_exon_table( exon_dict,
         outtbl[ 'gdna_end' ].append( int( annot.loc[ annot[ '#NAME' ] == gene_name ].EXON_END.str.split( ',' ).tolist()[ 0 ][ exon - 1 ] )
                                      if not rev_strand else
                                      int( annot.loc[ annot[ '#NAME' ] == gene_name ].EXON_END.str.split( ',' ).tolist()[ 0 ][ -exon ] ) )
-        outtbl[ 'seq' ].append( seq if not rev_strand else rev_complement( seq ))
+        outtbl[ 'seq' ].append( seq if not rev_strand else cd.rev_complement( seq ))
 
     if sum( outtbl[ 'len' ] ) % 3 != 0:
         print( 'Your exonic sequence is not divisible by 3 - did you make a mistake?' )
@@ -1383,7 +1365,7 @@ def amino_acid_subs( exon_tbl,
 
                         center_vars.append( ( gpos, codon[ j ], sub_cod[ j ] )
                                             if not rev_strand else
-                                            ( gpos, rev_complement( codon[ j ] ), rev_complement( sub_cod[ j ] ) ) )
+                                            ( gpos, cd.rev_complement( codon[ j ] ), cd.rev_complement( sub_cod[ j ] ) ) )
 
                         ref_aa.append( dna_to_amino[ codon ] )
                         alt_aa.append( dna_to_amino[ sub_cod ] )
@@ -1418,7 +1400,7 @@ def amino_acid_subs( exon_tbl,
                             #for this one go all the way through k
                             haplotypes[ -1 ].append( ( gpos, codon[ k ], sub_cod[ k ] )
                                                      if not rev_strand else
-                                                     ( gpos, rev_complement( codon[ k ] ), rev_complement( sub_cod[ k ] ) ) )
+                                                     ( gpos, cd.rev_complement( codon[ k ] ), cd.rev_complement( sub_cod[ k ] ) ) )
 
                         else:
 

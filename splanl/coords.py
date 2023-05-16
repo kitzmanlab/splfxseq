@@ -1,5 +1,22 @@
 import pandas as pd
 
+def rev_complement( seq ):
+    """
+    Creates reverse complement of DNA string (not case sensitive)
+
+    Args: seq (str)
+
+    Returns: comp (str) reverse complement of input string
+    """
+
+    trans_tbl = str.maketrans( 'ACGTNacgtn', 'TGCANtgcan' )
+
+    rev = seq[::-1]
+
+    comp = rev.translate( trans_tbl )
+
+    return comp
+
 def pos_to_hgvspos(
     lvecpos,
     vec_corange_cloned,
