@@ -51,47 +51,22 @@ def is_int( str ):
   except ValueError:
     return False
 
-def merge_v2_v3( v2_df,
-                 v3_df,
-                 indexcols = [ 'chrom', 'gdna_pos_hg38', 'ref', 'alt' ]):
-
-    v2 = v2_df.set_index( indexcols ).copy()
-    v3 = v3_df.set_index( indexcols ).copy()
-
-    out = v2.join( v3, how = 'outer', lsuffix = '_v2', rsuffix = '_v3' )
-
-    #sum of all columns
-    for col in out.columns:
-
-        if col.endswith( '_v2' ):
-
-            out[ col[ :-3 ] ] = out[ col ].fillna( 0 ) + out[ col[:-1] + '3' ].fillna( 0 )
-
-    #drop all version 2, version 3 specific columns
-    out = out.drop( columns = [ col for col in out.columns if col.endswith('_v2') or col.endswith('_v3') ] )
-
-    out[ 'alt_AF' ] = out.n_alt / out.n_allele
-
-    out = out.reset_index()
-
-    return out
-
 def merge_data_gnomad( psi_df,
                        gnomad_df,
-                       indexcols = [ 'gdna_pos_hg38', 'ref', 'alt' ],
+                       indexcols = [ 'hg19_pos', 'ref', 'alt' ],
                        suffix = None ):
 
     psi = psi_df.set_index( indexcols ).copy()
     gnomad = gnomad_df.set_index( indexcols ).copy()
 
-    #drop gnomad chromosome info
-    gnomad = gnomad.drop( columns = [ 'chrom' ] )
+    if 'chrom' not in indexcols:
+        gnomad = gnomad.drop( columns = [ 'chrom' ] )
 
     if suffix:
-        renamed = { col: col + '_' + suffix for col in gnomad.columns }
+        renamed = { col: col + '_' + suffix for col in gnomad.columns if 'pos' not in col }
         gnomad = gnomad.rename( columns = renamed )
 
-    out = psi.join( gnomad, how = 'left' ).sort_values( by = 'pos' ).reset_index()
+    out = psi.join( gnomad, how = 'left' ).reset_index()
 
     return out
 

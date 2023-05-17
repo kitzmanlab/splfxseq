@@ -13,6 +13,7 @@ import splanl.annots as ann
 import splanl.create_vcf as vcf
 import splanl.custom_splai_scores as css
 import splanl.scrape_public_data as spd
+import splanl.score_motifs as sm
 
 def main():
 
@@ -186,14 +187,14 @@ def main():
                                                 for pos in range( config[ 'score_start_pos' ], config[ 'score_end_pos' ] + 1 )
                                                 for alt in [ 'A', 'C', 'G', 'T' ]
                                                 if alt != refseq[ pos - 1 ].upper() ] ),
-                              config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_' + '.vcf' )
+                              config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '.vcf' )
 
         vcf.create_input_vcf( vcf.vcf_header_chr(),
                               vcf.tup_to_vcf( [ ( chrom_chr, pos, refseq[ pos - 1 ].upper(), alt )
                                                 for pos in range( config[ 'score_start_pos' ], config[ 'score_end_pos' ] + 1 )
                                                 for alt in [ 'A', 'C', 'G', 'T' ]
                                                 if alt != refseq[ pos - 1 ].upper() ] ),
-                               config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_chr_' + '.vcf' )
+                               config[ 'vcf_out_dir' ] + config[ 'gencode_transcript_id' ] + '_chr' + '.vcf' )
 
         if config[ 'verbose' ]:
             print( 'VCFs created and saved at %s' % config[ 'vcf_out_dir' ] )
@@ -346,63 +347,46 @@ def main():
 
     if config[ 'maxentscan' ]:
 
-        maxent_wt = spd.maxent_score_wt( refseq,
-                                         splai_scores.pos.unique().tolist() )
+        maxent_wt = sm.maxent_score_wt( refseq,
+                                         splai_scores.pos.unique().tolist(),
+                                         rev_strand = config[ 'strand' ] == '-' )
 
         if config[ 'strand' ] == '+':
             acceptors = [ config[ 'exon_start_pos' ] ] + alt_ss
             donors = [ config[ 'exon_end_pos' ] ] + alt_ss
-
-            acceptor_d = spd.maxent_score_acceptors( refseq,
-                                                     splai_scores,
-                                                    'pos',
-                                                    'ref',
-                                                    'alt',
-                                                    acceptors,
-                                                 )
-            donor_d = spd.maxent_score_donors( refseq,
-                                               splai_scores,
-                                               'pos',
-                                               'ref',
-                                               'alt',
-                                               donors,
-                                               )
-
-            splai_scores = splai_scores.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
-                                                                            how = 'left',
-                                                                            left_index = True,
-                                                                            right_index = True ).reset_index()
-            splai_ss_pr = splai_ss_pr.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
-                                                                            how = 'left',
-                                                                            left_index = True,
-                                                                            right_index = True ).reset_index()
+            merge_ref = 'ref'
 
         elif config[ 'strand' ] == '-':
             acceptors = [ config[ 'exon_end_pos' ] ] + alt_ss
             donors = [ config[ 'exon_start_pos' ] ] + alt_ss
+            merge_ref = 'ref_c'
 
-            acceptor_d = spd.maxent_score_acceptors( refseq,
-                                                     splai_scores,
-                                                     'pos',
-                                                     'ref_c',
-                                                     'alt_c',
-                                                      acceptors,
-                                                     )
-            donor_d = spd.maxent_score_donors( refseq,
-                                                splai_scores,
-                                                'pos',
-                                                'ref_c',
-                                                'alt_c',
-                                                donors,
-                                                )
-            splai_scores = splai_scores.set_index( 'pos', 'ref_c' ).merge( maxent_wt.set_index( 'pos', 'ref_c' ),
-                                                                           how = 'left',
-                                                                           left_index = True,
-                                                                           right_index = True ).reset_index()
-            splai_ss_pr = splai_ss_pr.set_index( 'pos', 'ref_c' ).merge( maxent_wt.set_index( 'pos', 'ref_c' ),
-                                                                           how = 'left',
-                                                                           left_index = True,
-                                                                           right_index = True ).reset_index()
+        acceptor_d = sm.maxent_score_acceptors( refseq,
+                                                 splai_scores,
+                                                 'pos',
+                                                 'ref',
+                                                 'alt',
+                                                 acceptors,
+                                                 rev_strand = config[ 'strand' ] == '-'
+                                                 )
+        donor_d = sm.maxent_score_donors( refseq,
+                                          splai_scores,
+                                          'pos',
+                                          'ref',
+                                          'alt',
+                                          donors,
+                                          rev_strand = config[ 'strand' ] == '-'
+                                            )
+
+        splai_scores = splai_scores.set_index( 'pos', merge_ref ).merge( maxent_wt.set_index( 'pos', merge_ref ),
+                                                                     how = 'left',
+                                                                     left_index = True,
+                                                                      right_index = True ).reset_index()
+        splai_ss_pr = splai_ss_pr.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
+                                                                    how = 'left',
+                                                                    left_index = True,
+                                                                    right_index = True ).reset_index()
+
         for acc in acceptor_d:
             splai_scores[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
             splai_scores[ 'maxent_acc_%i_diff' % acc ] = splai_scores[ 'maxent_acc_%i' % acc ] - splai_scores.loc[ splai_scores.pos == acc ].maxent_wt_acc.mean()
@@ -726,7 +710,7 @@ def main():
     with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
         f.write( '\nCompleting scoring and plots in %.2f minutes!' % ( ( T1 - T0 ) / 60 ) )
 
-    print( 'See ya next time!' )
+    print( 'See ya next time on The Splice is Right!' )
 
     return
 

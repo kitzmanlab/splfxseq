@@ -701,8 +701,6 @@ def maxent_score_acceptors( refseq,
                             acceptor_pos_l,
                             rev_strand = False ):
 
-    #NOW in score_motifs!
-
     tbv = tbl_by_var.copy()
 
     if not rev_strand:
