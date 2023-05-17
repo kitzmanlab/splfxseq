@@ -28,6 +28,9 @@ def main():
     parser.add_argument( '-d', '--scoring_distance',
                          type = int,
                          help = 'Scored distance (default is exon length + 10) (int)' )
+    parser.add_argument( '-sspr', '--score_ss_probs',
+                         action = 'store_false',
+                         help = 'Compute SS probabilities? Turn off if not running over whole exon!' )
     parser.add_argument( '-altss', '--score_alt_ss',
                          help = 'Compute SS probabilities for a site other than the exon bds (comma sep ints - ie 1234,)' )
     parser.add_argument( '-v', '--verbose',
@@ -47,12 +50,12 @@ def main():
     parser.add_argument( 'score_end_pos',
                          type = int,
                          help = 'End position to score - be consistent with reference_fafile coords! (int)' )
-    parser.add_argument( 'exon_start_pos',
+    parser.add_argument( 'exon_acceptor_pos',
                          type = int,
-                         help = 'First bp of exon - used for scoring distance unless overridden by -d! (int)' )
-    parser.add_argument( 'exon_end_pos',
+                         help = 'First bp of exon (transcribed strand) - used for scoring distance unless overridden by -d! (int)' )
+    parser.add_argument( 'exon_donor_pos',
                          type = int,
-                         help = 'Last bp of exon - used for scoring distance unless overridden by -d! (int)' )
+                         help = 'Last bp of exon (transcribed strand) - used for scoring distance unless overridden by -d! (int)' )
     parser.add_argument( 'chrom',
                          help = 'Chromosome - can be with or without chr (str)' )
     parser.add_argument( 'strand',
@@ -75,6 +78,10 @@ def main():
         config[ 'data_out_dir' ] = config[ 'data_out_dir' ] + '/'
     if config[ 'vcf_out_dir' ] and not config[ 'vcf_out_dir' ].endswith( '/' ):
         config[ 'vcf_out_dir' ] = config[ 'vcf_out_dir' ] + '/'
+
+    if config[ 'score_alt_ss' ] is not None:
+        with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( 'Your alternate splice sites (-altss) will not be scored unless you turn on score splice site probs (-sspr)!\n' )
 
     chrom = config[ 'chrom' ] if not config[ 'chrom' ].startswith( 'chr' ) else config[ 'chrom' ][ 3: ]
     chrom_chr = config[ 'chrom' ] if config[ 'chrom' ].startswith( 'chr' ) else 'chr' + config[ 'chrom' ]
@@ -177,7 +184,7 @@ def main():
             dnvs_haps.append( [ snv_j ] )
 
     if not config[ 'scoring_distance' ]:
-        dist = np.abs( config[ 'exon_start_pos' ] - config[ 'exon_end_pos' ] ) + 10
+        dist = np.abs( config[ 'exon_acceptor_pos' ] - config[ 'exon_donor_pos' ] ) + 10
     else:
         dist = config[ 'scoring_distance' ]
 
@@ -213,49 +220,70 @@ def main():
     with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
         f.write( 'Scored %i DNVs in %.2f hours!\n' % ( len( centers ), ( t1 - t0 ) / 60 / 60 ) )
 
-    if config[ 'verbose' ]:
-        print( 'Scoring SS probabilities now - this is faster..' )
+    if config[ 'score_ss_probs' ]:
 
-    t0 = time.time()
-
-    if not config[ 'score_alt_ss' ]:
-        alt_ss = []
-        ss_list = [ config[ 'exon_start_pos' ], config[ 'exon_end_pos' ] ]
-    else:
-        alt_ss = [ int( p ) for p in config[ 'score_alt_ss' ].split( ',' ) if p != '' ]
-        ss_list = [ config[ 'exon_start_pos' ], config[ 'exon_end_pos' ] ] + alt_ss
         if config[ 'verbose' ]:
-            print( 'Scoring alternate splice sites at %s' % ( ', '.join( alt_ss ) ) )
+            print( 'Scoring SS probabilities now - this is faster..' )
+
+        t0 = time.time()
+
+        ss_list = []
+        if config[ 'score_start_pos' ] <= config[ 'exon_acceptor_pos' ] and config[ 'score_end_pos' ] >= config[ 'exon_acceptor_pos' ]:
+            ss_list.append( config[ 'exon_acceptor_pos' ] )
+        if config[ 'score_start_pos' ] <= config[ 'exon_donor_pos' ] and config[ 'score_end_pos' ] >= config[ 'exon_donor_pos' ]:
+            ss_list.append( config[ 'exon_donor_pos' ] )
+
+        if not config[ 'score_alt_ss' ]:
+            alt_ss = []
+        else:
+            alt_ss = [ int( p ) for p in config[ 'score_alt_ss' ].split( ',' )
+                        if p != '' and p >= config[ 'score_start_pos' ] and p <= config[ 'score_end_pos' ] ]
+            ss_list += alt_ss
+            if config[ 'verbose' ]:
+                print( 'Scoring alternate splice sites at %s' % ( ', '.join( alt_ss ) ) )
+            with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
+                f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( alt_ss ) ) )
+
+        if ss_list:
+            splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
+                                                                                                models,
+                                                                                                refseq,
+                                                                                                config[ 'gencode_transcript_id' ],
+                                                                                                str( annot.CHROM.values[ 0 ] ),
+                                                                                                dnvs_centers,
+                                                                                                ss_list,
+                                                                                                scored_context = dist,
+                                                                                                haplotypes = dnvs_haps,
+                                                                                                rev_strand = config[ 'strand' ] == '-' )
+
+            if config[ 'strand' ] == '-':
+                splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]
+                splai_ss_pr[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_ss_pr.alt ]
+
+            splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_DNV_SS_probs_' + date_string + '.txt',
+                                sep = '\t',
+                                index = False )
+
+        else:
+            if config[ 'verbose' ]:
+                print( 'No exon bounds or alternate splice sites within scoring range - splice site probabilities not provided!')
+            with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
+                f.write( 'No exon bounds or alternate splice sites within scoring range - splice site probabilities not provided!\n' )
+
+        t1 = time.time()
+
+        if config[ 'verbose' ]:
+            print( 'Scored SS probs in %.2f hours!' % ( ( t1 - t0 ) / 60 / 60 ) )
+
         with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
-            f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( alt_ss ) ) )
+            f.write( 'Scored SS probs in %.2f hours!\n' % ( ( t1 - t0 ) / 60 / 60 ) )
 
+    else:
 
-    splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
-                                                                                         models,
-                                                                                         refseq,
-                                                                                         config[ 'gencode_transcript_id' ],
-                                                                                         str( annot.CHROM.values[ 0 ] ),
-                                                                                         dnvs_centers,
-                                                                                         ss_list,
-                                                                                         scored_context = dist,
-                                                                                         haplotypes = dnvs_haps,
-                                                                                         rev_strand = config[ 'strand' ] == '-' )
-
-    if config[ 'strand' ] == '-':
-        splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]
-        splai_ss_pr[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_ss_pr.alt ]
-
-    splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_DNV_SS_probs_' + date_string + '.txt',
-                        sep = '\t',
-                        index = False )
-
-    t1 = time.time()
-
-    if config[ 'verbose' ]:
-        print( 'Scored SS probs in %.2f hours!' % ( ( t1 - t0 ) / 60 / 60 ) )
-
-    with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
-        f.write( 'Scored SS probs in %.2f hours!\n' % ( ( t1 - t0 ) / 60 / 60 ) )
+        if config[ 'verbose' ]:
+            print( 'Not scoring splice site probabilities! Turn (-sspr) on if you want them scored!' )
+        with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( 'Not scoring splice site probabilities! Turn (-sspr) on if you want them scored!\n' )
 
     T1 = time.time()
 
@@ -263,7 +291,7 @@ def main():
         print( 'Completing scoring in %.2f hours!' % ( ( T1 - T0 ) / 60 / 60 ) )
 
     with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
-        f.write( '\nCompleting scoring and plots in %.2f hours!' % ( ( T1 - T0 ) / 60 / 60 ) )
+        f.write( '\nCompleting scoring in %.2f hours!' % ( ( T1 - T0 ) / 60 / 60 ) )
 
     print( 'See ya next time on The Splice is Right - DNV spin off!' )
 

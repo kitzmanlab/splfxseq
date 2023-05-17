@@ -60,12 +60,12 @@ def main():
     parser.add_argument( 'score_end_pos',
                          type = int,
                          help = 'End position to score - be consistent with reference_fafile coords! (int)' )
-    parser.add_argument( 'exon_start_pos',
+    parser.add_argument( 'exon_acceptor_pos',
                          type = int,
-                         help = 'First bp of exon - used for scoring distance unless overridden by -d! (int)' )
-    parser.add_argument( 'exon_end_pos',
+                         help = 'First bp of exon (transcribed strand) - used for scoring distance unless overridden by -d! (int)' )
+    parser.add_argument( 'exon_donor_pos',
                          type = int,
-                         help = 'Last bp of exon - used for scoring distance unless overridden by -d! (int)' )
+                         help = 'Last bp of exon (transcribed strand) - used for scoring distance unless overridden by -d! (int)' )
     parser.add_argument( 'chrom',
                          help = 'Chromosome - can be with or without chr (str)' )
     parser.add_argument( 'strand',
@@ -214,7 +214,7 @@ def main():
                   if alt != refseq[ p - 1 ].upper() ]
 
     if not config[ 'scoring_distance' ]:
-        dist = np.abs( config[ 'exon_start_pos' ] - config[ 'exon_end_pos' ] ) + 10
+        dist = np.abs( config[ 'exon_acceptor_pos' ] - config[ 'exon_donor_pos' ] ) + 10
     else:
         dist = config[ 'scoring_distance' ]
 
@@ -253,12 +253,18 @@ def main():
 
     t0 = time.time()
 
+    ss_list = []
+    if config[ 'score_start_pos' ] <= config[ 'exon_acceptor_pos' ] and config[ 'score_end_pos' ] >= config[ 'exon_acceptor_pos' ]:
+        ss_list.append( config[ 'exon_acceptor_pos' ] )
+    if config[ 'score_start_pos' ] <= config[ 'exon_donor_pos' ] and config[ 'score_end_pos' ] >= config[ 'exon_donor_pos' ]:
+        ss_list.append( config[ 'exon_donor_pos' ] )
+
     if not config[ 'score_alt_ss' ]:
         alt_ss = []
-        ss_list = [ config[ 'exon_start_pos' ], config[ 'exon_end_pos' ] ]
     else:
-        alt_ss = [ int( p ) for p in config[ 'score_alt_ss' ].split( ',' ) if p != '' ]
-        ss_list = [ config[ 'exon_start_pos' ], config[ 'exon_end_pos' ] ] + alt_ss
+        alt_ss = [ int( p ) for p in config[ 'score_alt_ss' ].split( ',' )
+                    if p != '' and p >= config[ 'score_start_pos' ] and p <= config[ 'score_end_pos' ] ]
+        ss_list += alt_ss
         if config[ 'verbose' ]:
             print( 'Scoring alternate splice sites at %s' % ( ', '.join( alt_ss ) ) )
         with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
@@ -277,23 +283,32 @@ def main():
                          sep = '\t',
                          index = False )
 
-    splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
-                                                                                         models,
-                                                                                         refseq,
-                                                                                         config[ 'gencode_transcript_id' ],
-                                                                                         str( annot.CHROM.values[ 0 ] ),
-                                                                                         centers,
-                                                                                         ss_list,
-                                                                                         scored_context = dist,
-                                                                                         rev_strand = config[ 'strand' ] == '-' )
+    if ss_list:
 
-    if config[ 'strand' ] == '-':
-        splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]
-        splai_ss_pr[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_ss_pr.alt ]
+        splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
+                                                                                            models,
+                                                                                            refseq,
+                                                                                            config[ 'gencode_transcript_id' ],
+                                                                                            str( annot.CHROM.values[ 0 ] ),
+                                                                                            centers,
+                                                                                            ss_list,
+                                                                                            scored_context = dist,
+                                                                                            rev_strand = config[ 'strand' ] == '-' )
 
-    splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.txt',
-                        sep = '\t',
-                        index = False )
+        if config[ 'strand' ] == '-':
+            splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]
+            splai_ss_pr[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_ss_pr.alt ]
+
+        splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.txt',
+                            sep = '\t',
+                            index = False )
+
+    else:
+
+        if config[ 'verbose' ]:
+            print( 'No exon bounds or alternate splice sites within scoring range - splice site probabilities not provided!')
+        with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( 'No exon bounds or alternate splice sites within scoring range - splice site probabilities not provided!\n' )
 
     t1 = time.time()
 
@@ -309,7 +324,6 @@ def main():
     if config[ 'gnomad2_file' ]:
 
         splai_scores[ config[ 'merge_pos_col' ] ] = splai_scores.pos
-        splai_ss_pr[ config[ 'merge_pos_col' ] ] = splai_ss_pr.pos
 
         splai_scores = spd.merge_data_gnomad( splai_scores,
                                                 gnomad2,
@@ -317,33 +331,34 @@ def main():
         splai_scores = spd.merge_data_gnomad( splai_scores,
                                                 gnomad3,
                                                 suffix = 'v3' )
-        splai_ss_pr = spd.merge_data_gnomad( splai_ss_pr,
-                                                gnomad2,
-                                                suffix = 'v2' )
-        splai_ss_pr = spd.merge_data_gnomad( splai_ss_pr,
-                                                gnomad3,
-                                                suffix = 'v3' )
-
         splai_scores[ 'gnomad' ] = ( splai_scores.n_alt_v2 > 0 ) | ( splai_scores.n_alt_v3 > 0 )
-        splai_ss_pr[ 'gnomad' ] = ( splai_ss_pr.n_alt_v2 > 0 ) | ( splai_ss_pr.n_alt_v3 > 0 )
-
         splai_scores[ 'gnomad_af_max' ] = splai_scores[ ['af_v2', 'af_v3'] ].max( axis = 1 )
-        splai_ss_pr[ 'gnomad_af_max' ] = splai_ss_pr[ ['af_v2', 'af_v3'] ].max( axis = 1 )
+
+        if ss_list:
+            splai_ss_pr[ config[ 'merge_pos_col' ] ] = splai_ss_pr.pos
+            splai_ss_pr = spd.merge_data_gnomad( splai_ss_pr,
+                                                gnomad2,
+                                                suffix = 'v2' )
+            splai_ss_pr = spd.merge_data_gnomad( splai_ss_pr,
+                                                gnomad3,
+                                                suffix = 'v3' )
+            splai_ss_pr[ 'gnomad' ] = ( splai_ss_pr.n_alt_v2 > 0 ) | ( splai_ss_pr.n_alt_v3 > 0 )
+            splai_ss_pr[ 'gnomad_af_max' ] = splai_ss_pr[ ['af_v2', 'af_v3'] ].max( axis = 1 )
 
     if config[ 'clinvar_file' ]:
 
         splai_scores[ config[ 'merge_pos_col' ] ] = splai_scores.pos
-        splai_ss_pr[ config[ 'merge_pos_col' ] ] = splai_ss_pr.pos
-
         splai_scores = spd.merge_data_clinvar( splai_scores,
                                                clinvar,
                                                keep_cols = [ 'clinvar_interp', 'clinvar_abbrev', 'clinvar_gene' ] )
-        splai_ss_pr = spd.merge_data_clinvar( splai_ss_pr,
-                                              clinvar,
-                                              keep_cols = [ 'clinvar_interp', 'clinvar_abbrev', 'clinvar_gene' ] )
-
         splai_scores.loc[ splai_scores.clinvar_interp.isnull(), 'clinvar_abbrev' ] = ''
-        splai_ss_pr.loc[ splai_ss_pr.clinvar_interp.isnull(), 'clinvar_abbrev' ] = ''
+
+        if ss_list:
+            splai_ss_pr[ config[ 'merge_pos_col' ] ] = splai_ss_pr.pos
+            splai_ss_pr = spd.merge_data_clinvar( splai_ss_pr,
+                                                  clinvar,
+                                                  keep_cols = [ 'clinvar_interp', 'clinvar_abbrev', 'clinvar_gene' ] )
+            splai_ss_pr.loc[ splai_ss_pr.clinvar_interp.isnull(), 'clinvar_abbrev' ] = ''
 
     if config[ 'maxentscan' ]:
 
@@ -351,15 +366,8 @@ def main():
                                          splai_scores.pos.unique().tolist(),
                                          rev_strand = config[ 'strand' ] == '-' )
 
-        if config[ 'strand' ] == '+':
-            acceptors = [ config[ 'exon_start_pos' ] ] + alt_ss
-            donors = [ config[ 'exon_end_pos' ] ] + alt_ss
-            merge_ref = 'ref'
-
-        elif config[ 'strand' ] == '-':
-            acceptors = [ config[ 'exon_end_pos' ] ] + alt_ss
-            donors = [ config[ 'exon_start_pos' ] ] + alt_ss
-            merge_ref = 'ref_c'
+        acceptors = [ config[ 'exon_acceptor_pos' ] ] + alt_ss
+        donors = [ config[ 'exon_donor_pos' ] ] + alt_ss
 
         acceptor_d = sm.maxent_score_acceptors( refseq,
                                                  splai_scores,
@@ -378,32 +386,41 @@ def main():
                                           rev_strand = config[ 'strand' ] == '-'
                                             )
 
+        if config[ 'strand' ] == '+':
+            merge_ref = 'ref'
+        elif config[ 'strand' ] == '-':
+            merge_ref = 'ref_c'
+
         splai_scores = splai_scores.set_index( 'pos', merge_ref ).merge( maxent_wt.set_index( 'pos', merge_ref ),
                                                                      how = 'left',
                                                                      left_index = True,
                                                                       right_index = True ).reset_index()
-        splai_ss_pr = splai_ss_pr.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
-                                                                    how = 'left',
-                                                                    left_index = True,
-                                                                    right_index = True ).reset_index()
+        if ss_list:
+            splai_ss_pr = splai_ss_pr.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
+                                                                        how = 'left',
+                                                                        left_index = True,
+                                                                        right_index = True ).reset_index()
 
         for acc in acceptor_d:
             splai_scores[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
             splai_scores[ 'maxent_acc_%i_diff' % acc ] = splai_scores[ 'maxent_acc_%i' % acc ] - splai_scores.loc[ splai_scores.pos == acc ].maxent_wt_acc.mean()
-            splai_ss_pr[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
-            splai_ss_pr[ 'maxent_acc_%i_diff' % acc ] = splai_ss_pr[ 'maxent_acc_%i' % acc ] - splai_ss_pr.loc[ splai_ss_pr.pos == acc ].maxent_wt_acc.mean()
+            if ss_list:
+                splai_ss_pr[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
+                splai_ss_pr[ 'maxent_acc_%i_diff' % acc ] = splai_ss_pr[ 'maxent_acc_%i' % acc ] - splai_ss_pr.loc[ splai_ss_pr.pos == acc ].maxent_wt_acc.mean()
         for don in donor_d:
             splai_scores[ 'maxent_don_%i' % don ] = donor_d[ don ]
             splai_scores[ 'maxent_don_%i_diff' % don ] = splai_scores[ 'maxent_don_%i' % don ] - splai_scores.loc[ splai_scores.pos == don ].maxent_wt_don.mean()
-            splai_ss_pr[ 'maxent_don_%i' % don ] = donor_d[ don ]
-            splai_ss_pr[ 'maxent_don_%i_diff' % don ] = splai_ss_pr[ 'maxent_don_%i' % don ] - splai_ss_pr.loc[ splai_ss_pr.pos == don ].maxent_wt_don.mean()
+            if ss_list:
+                splai_ss_pr[ 'maxent_don_%i' % don ] = donor_d[ don ]
+                splai_ss_pr[ 'maxent_don_%i_diff' % don ] = splai_ss_pr[ 'maxent_don_%i' % don ] - splai_ss_pr.loc[ splai_ss_pr.pos == don ].maxent_wt_don.mean()
 
     splai_scores.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.txt',
                          sep = '\t',
                          index = False )
-    splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.txt',
-                        sep = '\t',
-                        index = False )
+    if ss_list:
+        splai_ss_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.txt',
+                            sep = '\t',
+                            index = False )
 
     if config[ 'verbose' ]:
         print( 'Time to plot!' )
@@ -413,65 +430,79 @@ def main():
 
     splai_scores[ 'coord_pos' ] = splai_scores.pos
 
-    if config[ 'strand' ] == '+':
+    wt_probs = [ float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_acceptor_pos' ] ].wt_acc_pr ),
+                 float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_donor_pos' ] ].wt_don_pr ), ] + \
+               [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_acc_pr ) for ss in alt_ss ] + \
+               [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_don_pr ) for ss in alt_ss ]
+
+    #this is just for plotting purposes - won't be saving the data again
+    if config[ 'strand' ] == '-':
+        splai_scores[ 'pos' ] = -splai_scores.pos
+        splai_scores = splai_scores.rename( columns = { 'alt': 'a',
+                                                        'ref': 'r',
+                                                        'alt_c': 'alt',
+                                                        'ref_c': 'ref' } )
+        if ss_list:
+            splai_ss_pr.pos = -splai_ss_pr.pos
+            splai_ss_pr = splai_ss_pr.rename( columns = { 'alt': 'a',
+                                                          'ref': 'r',
+                                                          'alt_c': 'alt',
+                                                          'ref_c': 'ref' } )
+
+
+    sp.sat_subplots_wrapper( splai_scores,
+                            [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
+                            'coord_pos',
+                            [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
+                            fig_size = ( 40, 12 ),
+                            y_ax_lim = [ ( 0, 1 ) ],
+                            y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
+                            x_ax_title = 'Coordinate position',
+                            tick_spacing = 10,
+                            cml = True,
+                            savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
+                            )
+    if ss_list:
+        sp.sat_subplots_wrapper( splai_ss_pr,
+                                [ 'ss_acc_prob_' + str( config[ 'exon_acceptor_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_donor_pos' ] ) ] + \
+                                [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
+                                'coord_pos',
+                                [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
+                                fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
+                                y_ax_lim = [ ( 0, 1 ) ],
+                                y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
+                                x_ax_title = 'Coordinate position',
+                                tick_spacing = 10,
+                                hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
+                                cml = True,
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
+                                )
+
+    if config[ 'clinvar_file' ]:
+
+        lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 200 ),
+                         'LPP': ( '^', 'black', 'face', 1.5, 200 ),
+                         'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
 
         sp.sat_subplots_wrapper( splai_scores,
                                 [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                'coord_pos',
+                                config[ 'merge_pos_col' ],
                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
                                 fig_size = ( 40, 12 ),
                                 y_ax_lim = [ ( 0, 1 ) ],
                                 y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                x_ax_title = 'Coordinate position',
+                                x_ax_title = config[ 'merge_pos_col' ],
                                 tick_spacing = 10,
+                                bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
+                                tight = False,
+                                save_margin = 1,
                                 cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
-                                )
-
-        wt_probs = [ float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_start_pos' ] ].wt_acc_pr ),
-                     float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_end_pos' ] ].wt_don_pr ), ] + \
-                   [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_acc_pr ) for ss in alt_ss ] + \
-                   [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_don_pr ) for ss in alt_ss ]
-
-        sp.sat_subplots_wrapper( splai_ss_pr,
-                                [ 'ss_acc_prob_' + str( config[ 'exon_start_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_end_pos' ] ) ] + \
-                                [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
-                                'coord_pos',
-                                [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
-                                y_ax_lim = [ ( 0, 1 ) ],
-                                y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
-                                x_ax_title = 'Coordinate position',
-                                tick_spacing = 10,
-                                hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
-                                cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
-                                )
-
-        if config[ 'clinvar_file' ]:
-
-            lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 200 ),
-                             'LPP': ( '^', 'black', 'face', 1.5, 200 ),
-                             'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
-
-            sp.sat_subplots_wrapper( splai_scores,
-                                    [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    config[ 'merge_pos_col' ],
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 12 ),
-                                    y_ax_lim = [ ( 0, 1 ) ],
-                                    y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    x_ax_title = config[ 'merge_pos_col' ],
-                                    tick_spacing = 10,
-                                    bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
-                                    tight = False,
-                                    save_margin = 1,
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
                                  )
 
+        if ss_list:
             sp.sat_subplots_wrapper( splai_ss_pr,
-                                    [ 'ss_acc_prob_' + str( config[ 'exon_start_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_end_pos' ] ) ] + \
+                                    [ 'ss_acc_prob_' + str( config[ 'exon_acceptor_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_donor_pos' ] ) ] + \
                                     [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                     config[ 'merge_pos_col' ],
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -488,178 +519,29 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
                                     )
 
-        if config[ 'gnomad2_file' ]:
+    if config[ 'gnomad2_file' ]:
 
-            lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
+        lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
 
-            sp.sat_subplots_wrapper( splai_scores,
-                                    [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    config[ 'merge_pos_col' ],
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 12 ),
-                                    y_ax_lim = [ ( 0, 1 ) ],
-                                    y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    x_ax_title = config[ 'merge_pos_col' ],
-                                    tick_spacing = 10,
-                                    bar_labels = [ ( 'gnomad', lit_marker_d, 1.2 ) ],
-                                    tight = False,
-                                    save_margin = 1,
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
-                                 )
-
-            sp.sat_subplots_wrapper( splai_ss_pr,
-                                    [ 'ss_acc_prob_' + str( config[ 'exon_start_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_end_pos' ] ) ] + \
-                                    [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
-                                    config[ 'merge_pos_col' ],
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
-                                    y_ax_lim = [ ( 0, 1 ) ],
-                                    y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
-                                    x_ax_title = config[ 'merge_pos_col' ],
-                                    tick_spacing = 10,
-                                    bar_labels = [ ( 'gnomad', lit_marker_d, 1.2 ) ],
-                                    tight = False,
-                                    save_margin = 1,
-                                    hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
-                                    )
-
-        if config[ 'maxentscan' ]:
-
-            sp.sat_lollipop_subplots_wrapper( splai_scores,
-                                             [ 'DS_maxm' ] + [ col for col in splai_scores if col.endswith( '_diff' ) ],
-                                             'coord_pos',
-                                             [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                             fig_size = ( 40, 2*( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ),
-                                             share_y = False,
-                                             y_ax_lim = [ ( 0, 1 ) ] + [ ( -15, 15 ) ]*len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ),
-                                             y_ax_title = [ 'SplAI' ] + [ col[ 7: ] for col in splai_scores if col.endswith( '_diff' ) ],
-                                             x_ax_title = 'Coord pos',
-                                             hlines = [ ( 0, 'black', 'solid' ) for i in range( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ],
-                                             tick_spacing = 10,
-                                             cml = True,
-                                             savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_maxent_' + date_string + '.pdf',
-                                             )
-
-    else:
-
-        splai_scores[ 'pos' ] = -splai_scores.pos
-
-        sp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
-                                                                  'ref': 'r',
-                                                                  'alt_c': 'alt',
-                                                                  'ref_c': 'ref' } ),
+        sp.sat_subplots_wrapper( splai_scores,
                                 [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                'coord_pos',
+                                config[ 'merge_pos_col' ],
                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
                                 fig_size = ( 40, 12 ),
                                 y_ax_lim = [ ( 0, 1 ) ],
                                 y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                x_ax_title = 'Coordinate position',
+                                x_ax_title = config[ 'merge_pos_col' ],
                                 tick_spacing = 10,
+                                bar_labels = [ ( 'gnomad', lit_marker_d, 1.2 ) ],
+                                tight = False,
+                                save_margin = 1,
                                 cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_' + date_string + '.pdf',
-                                )
-
-        wt_probs = [ float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_end_pos' ] ].wt_acc_pr ),
-                     float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_start_pos' ] ].wt_don_pr ), ] + \
-                   [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_acc_pr ) for ss in alt_ss ] + \
-                   [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_don_pr ) for ss in alt_ss ]
-
-        sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
-                                                                 'ref': 'r',
-                                                                 'alt_c': 'alt',
-                                                                 'ref_c': 'ref' } ),
-                                [ 'ss_acc_prob_' + str( config[ 'exon_end_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_start_pos' ] ) ] +\
-                                [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
-                                'coord_pos',
-                                [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
-                                y_ax_lim = [ ( 0, 1 ) ],
-                                y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
-                                x_ax_title = 'Coordinate position',
-                                tick_spacing = 10,
-                                hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
-                                cml = True,
-                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
-                                )
-
-        if config[ 'clinvar_file' ]:
-
-            lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 200 ),
-                             'LPP': ( '^', 'black', 'face', 1.5, 200 ),
-                             'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
-
-            sp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
-                                                                      'ref': 'r',
-                                                                      'alt_c': 'alt',
-                                                                      'ref_c': 'ref' } ),
-                                    [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    config[ 'merge_pos_col' ],
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 12 ),
-                                    y_ax_lim = [ ( 0, 1 ) ],
-                                    y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    x_ax_title = config[ 'merge_pos_col' ],
-                                    tick_spacing = 10,
-                                    bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
-                                    tight = False,
-                                    save_margin = 1,
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_clinvar_' + date_string + '.pdf',
+                                savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
                                  )
 
-            sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
-                                                                     'ref': 'r',
-                                                                     'alt_c': 'alt',
-                                                                     'ref_c': 'ref' } ),
-                                    [ 'ss_acc_prob_' + str( config[ 'exon_end_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_start_pos' ] ) ] + \
-                                    [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
-                                    config[ 'merge_pos_col' ],
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
-                                    y_ax_lim = [ ( 0, 1 ) ],
-                                    y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
-                                    x_ax_title = config[ 'merge_pos_col' ],
-                                    tick_spacing = 10,
-                                    bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
-                                    tight = False,
-                                    save_margin = 1,
-                                    hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
-                                    )
-
-        if config[ 'gnomad2_file' ]:
-
-            lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
-
-            sp.sat_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
-                                                                      'ref': 'r',
-                                                                      'alt_c': 'alt',
-                                                                      'ref_c': 'ref' } ),
-                                    [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    config[ 'merge_pos_col' ],
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 12 ),
-                                    y_ax_lim = [ ( 0, 1 ) ],
-                                    y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
-                                    x_ax_title = config[ 'merge_pos_col' ],
-                                    tick_spacing = 10,
-                                    bar_labels = [ ( 'gnomad', lit_marker_d, 1.2 ) ],
-                                    tight = False,
-                                    save_margin = 1,
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_gnomad_' + date_string + '.pdf',
-                                 )
-
-            sp.sat_subplots_wrapper( splai_ss_pr.rename( columns = { 'alt': 'a',
-                                                                     'ref': 'r',
-                                                                     'alt_c': 'alt',
-                                                                     'ref_c': 'ref' } ),
-                                    [ 'ss_acc_prob_' + str( config[ 'exon_end_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_start_pos' ] ) ] + \
+        if ss_list:
+            sp.sat_subplots_wrapper( splai_ss_pr,
+                                    [ 'ss_acc_prob_' + str( config[ 'exon_acceptor_pos' ] ), 'ss_don_prob_' + str( config[ 'exon_donor_pos' ] ) ] + \
                                     [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                     config[ 'merge_pos_col' ],
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -676,16 +558,13 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
                                     )
 
-        if config[ 'maxentscan' ]:
+    if config[ 'maxentscan' ]:
 
-            sp.sat_lollipop_subplots_wrapper( splai_scores.rename( columns = { 'alt': 'a',
-                                                                      'ref': 'r',
-                                                                      'alt_c': 'alt',
-                                                                      'ref_c': 'ref' } ),
-                                             [ 'DS_maxm' ] + [ col for col in splai_scores if col.endswith( '_diff' ) ],
-                                             'coord_pos',
-                                             [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                             fig_size = ( 40, 2*( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ),
+        sp.sat_lollipop_subplots_wrapper( splai_scores,
+                                            [ 'DS_maxm' ] + [ col for col in splai_scores if col.endswith( '_diff' ) ],
+                                            'coord_pos',
+                                            [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
+                                            fig_size = ( 40, 2*( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ),
                                              share_y = False,
                                              y_ax_lim = [ ( 0, 1 ) ] + [ ( -15, 15 ) ]*len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ),
                                              y_ax_title = [ 'SplAI' ] + [ col[ 7: ] for col in splai_scores if col.endswith( '_diff' ) ],
