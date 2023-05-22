@@ -467,7 +467,7 @@ def main():
 
         msamp_byvartbl_allisos_snvs[ samp ][ 'hgvs_pos' ] = cd.pos_to_hgvspos( msamp_byvartbl_allisos_snvs[ samp ].pos,
                                                                             ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
-                                                                            [ incl_iso ],
+                                                                            [ incl_iso[ 0 ] ],
                                                                             [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
                                                                               )
 
@@ -498,16 +498,16 @@ def main():
 
         msamp_byvartbl_snvs[ samp ][ 'hgvs_pos' ] = cd.pos_to_hgvspos( msamp_byvartbl_snvs[ samp ].pos,
                                                                     ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
-                                                                    [ incl_iso ],
+                                                                    [ incl_iso[ 0 ] ],
                                                                     [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
                                                                    )
 
     for samp in msamp_byvartbl_snvs:
 
         msamp_byvartbl_snvs[ samp ][ 'hg19_pos' ] = cd.vpos_to_gpos( msamp_byvartbl_snvs[ samp ].pos,
-                                                                  incl_iso,
-                                                                  [ config[ 'exon_hg19_start' ], config[ 'exon_hg19_end' ] ],
-                                                                  rev_strand = config[ 'strand' ] == '-' )
+                                                                    ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
+                                                                    [ config[ 'exon_hg19_start' ], config[ 'exon_hg19_end' ] ],
+                                                                    rev_strand = config[ 'strand' ] == '-' )
 
     byvartbl_long = mbcs.combine_rep_pervartbls_long( [ msamp_byvartbl_snvs[ samp ] for samp in msamp_byvartbl_snvs ],
                                                   [ samp for samp in msamp_byvartbl_snvs ] )
@@ -675,7 +675,7 @@ def main():
     for samp in sat_by_samp:
         sat_by_samp[ samp ][ 'hgvs_pos' ] = pos_to_hgvspos( sat_by_samp[ samp ].pos,
                                                             ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
-                                                            [ incl_iso ],
+                                                            [ incl_iso[ 0 ] ],
                                                             [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
                                                       )
 
@@ -689,11 +689,12 @@ def main():
                                     [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ],
                                     'hgvs_pos',
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 2*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
+                                    fig_size = ( 40, 3*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
                                     share_y = False,
                                     y_ax_lim = [ ( 0, 1 ), ]*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] ) + [ ( -1, 4 ) ],
                                     y_ax_title = [ col[ 6: ] for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_log10' ],
                                     x_ax_title = 'cDNA position',
+                                    y_label_rotation = 0,
                                     tick_spacing = 10,
                                     cml = True,
                                     savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_' + samp + '_isoform_psis.' + date_string + '.pdf',
@@ -707,11 +708,12 @@ def main():
                                     [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ],
                                     'hgvs_pos',
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 2*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
+                                    fig_size = ( 40, 3*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
                                     share_y = False,
                                     y_ax_lim = [ ( 0, 1 ), ]*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] ) + [ ( -1, 4 ) ],
                                     y_ax_title = [ col[ 6: ] for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_log10' ],
                                     x_ax_title = 'cDNA position',
+                                    y_label_rotation = 0,
                                     tick_spacing = 10,
                                     cml = True,
                                     savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_' + samp + '_isoform_psis.' + date_string + '.pdf',
@@ -780,7 +782,7 @@ def main():
     #have to put back the hgvs positions
     byvartbl_wide_sat[ 'hgvs_pos' ] = cd.pos_to_hgvspos( byvartbl_wide_sat.pos,
                                                       ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
-                                                      [ incl_iso ],
+                                                      [ incl_iso[ 0 ] ],
                                                       [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ] )
 
     max_y = byvartbl_wide.n_bc_passfilt_mean.max()
@@ -788,8 +790,12 @@ def main():
 
     wmean_cols = [ col for col in byvartbl_wide_sat if col.startswith( 'wmean_' ) ]
 
-    if config[ 'strand' ] == '+':
-        sp.split_ax_bcs( byvartbl_wide_sat,
+    if config[ 'strand' ] == '-':
+        byvartbl_wide_sat = byvartbl_wide_sat.rename( columns = { 'ref': 'r',
+                                                                  'alt': 'a',
+                                                                  'ref_c': 'ref',
+                                                                  'alt_c': 'alt' } )
+    sp.split_ax_bcs( byvartbl_wide_sat,
                       [ 'n_bc_passfilt_mean' ],
                       'hgvs_pos',
                       [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
@@ -802,35 +808,37 @@ def main():
                       savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_bcs_filt_by_pos.' + date_string + '.pdf',
                   )
 
-        sp.sat_subplots_wrapper( byvartbl_wide_sat,
+    sp.sat_subplots_wrapper( byvartbl_wide_sat,
                               wmean_cols,
                               'hgvs_pos',
                               [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                              fig_size = ( 40, 2*len( wmean_cols ) ),
+                              fig_size = ( 40, 3*len( wmean_cols ) ),
                               share_y = True,
                               legend = False,
                               y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
                               y_ax_title = [ col[ 6: ] for col in wmean_cols ],
                               x_ax_title = 'cDNA position',
+                              y_label_rotation = 0,
                               tick_spacing = 10,
                               cml = True,
                               savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_isoform_psis.' + date_string + '.pdf',
                           )
 
-        if config[ 'gnomad2_file' ]:
+    if config[ 'gnomad2_file' ]:
 
-            lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
+        lit_marker_d = { True: ( 'o', 'white', 'black', 3, 200 ), }
 
-            sp.sat_subplots_wrapper( byvartbl_wide_sat,
+        sp.sat_subplots_wrapper( byvartbl_wide_sat,
                                  wmean_cols,
                                  'hgvs_pos',
                                  [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                 fig_size = ( 40, 2*len( wmean_cols ) ),
+                                 fig_size = ( 40, 3*len( wmean_cols ) ),
                                  share_y = True,
                                  legend = False,
                                  y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
                                  y_ax_title = [ col[ 6: ] for col in wmean_cols ],
                                  x_ax_title = 'cDNA position',
+                                 y_label_rotation = 0,
                                  tick_spacing = 10,
                                  bar_labels = [ ( 'gnomad', lit_marker_d, 1.2 ) ],
                                  tight = False,
@@ -839,22 +847,23 @@ def main():
                                  savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_isoform_psis_gnomad.' + date_string + '.pdf',
                                  )
 
-        if config[ 'clinvar_file' ]:
+    if config[ 'clinvar_file' ]:
 
-            lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 200 ),
-                             'LPP': ( '^', 'black', 'face', 1.5, 200 ),
-                             'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
+        lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 100 ),
+                             'LPP': ( '^', 'black', 'face', 1.5, 100 ),
+                             'VUS': ( 'd', 'black', 'face', 1.5, 100 ) }
 
-            sp.sat_subplots_wrapper( byvartbl_wide_sat,
+        sp.sat_subplots_wrapper( byvartbl_wide_sat,
                                  wmean_cols,
                                  'hgvs_pos',
                                  [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                 fig_size = ( 40, 2*len( wmean_cols ) ),
+                                 fig_size = ( 40, 3*len( wmean_cols ) ),
                                  share_y = True,
                                  legend = False,
                                  y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
                                  y_ax_title = [ col[ 6: ] for col in wmean_cols ],
                                  x_ax_title = 'cDNA position',
+                                 y_label_rotation = 0,
                                  tick_spacing = 10,
                                  bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
                                  tight = False,
@@ -863,106 +872,26 @@ def main():
                                  savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_isoform_psis_clinvar.' + date_string + '.pdf',
                                  )
 
-        if config[ 'maxentscan' ]:
+    if config[ 'maxentscan' ]:
 
-            sp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat,
+        sp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat,
                                              wmean_cols + [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ],
                                              'hgvs_pos',
                                              [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                             fig_size = ( 40, 2*( len( wmean_cols ) + len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ) )),
+                                             fig_size = ( 40, 3*( len( wmean_cols ) + len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ) )),
                                              share_y = False,
                                              legend = False,
+                                             lollipop_size = 6,
+                                             linewidth = 3,
                                              y_ax_lim = [ ( 0, 1 ) ]*len( wmean_cols ) + [ ( -15, 15 ) ]*len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ),
                                              y_ax_title = [ col[ 6: ] for col in wmean_cols ] + [ col[ 7: ] for col in byvartbl_wide_sat if col.endswith( '_diff' ) ],
                                              x_ax_title = 'hgvs position',
+                                             y_label_rotation = 0,
                                              hlines = [ ( 0, 'black', 'solid' ) for i in range( len( wmean_cols ) + len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ) ) ],
                                              tick_spacing = 10,
                                              cml = True,
                                              savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_maxent.' + date_string + '.pdf',
                                              )
-
-    elif config[ 'strand' ] == '-':
-        sp.split_ax_bcs( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
-                                                            'ref': 'r',
-                                                             'alt_c': 'alt',
-                                                             'ref_c': 'ref' } ),
-                      [ 'n_bc_passfilt_mean' ],
-                      'hgvs_pos',
-                      [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                      [ ( median_y + ( ( max_y - median_y ) / 2 ) + .5, max_y ), ( 0, median_y + ( ( max_y - median_y ) / 2 ) ) ],
-                      fig_size = ( 40, 7.5 ),
-                      legend = False,
-                      hratios = [ 1, 4 ],
-                      x_ax_title = 'cDNA position',
-                      cml = True,
-                      savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_bcs_filt_by_pos.' + date_string + '.pdf',
-                      )
-
-        sp.sat_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
-                                                                    'ref': 'r',
-                                                                    'alt_c': 'alt',
-                                                                    'ref_c': 'ref' } ),
-                              wmean_cols,
-                              'hgvs_pos',
-                              [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                              fig_size = ( 40, 2*len( wmean_cols ) ),
-                              share_y = True,
-                              legend = False,
-                              y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
-                              y_ax_title = [ col[ 6: ] for col in wmean_cols ],
-                              x_ax_title = 'cDNA position',
-                              tick_spacing = 10,
-                              cml = True,
-                              savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_isoform_psis.' + date_string + '.pdf',
-                               )
-
-        if config[ 'clinvar_file' ]:
-
-            lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 200 ),
-                             'LPP': ( '^', 'black', 'face', 1.5, 200 ),
-                             'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
-
-            sp.sat_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
-                                                                        'ref': 'r',
-                                                                         'alt_c': 'alt',
-                                                                         'ref_c': 'ref' } ),
-                                 wmean_cols,
-                                 'hgvs_pos',
-                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                 fig_size = ( 40, 2*len( wmean_cols ) ),
-                                 share_y = True,
-                                 legend = False,
-                                 y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
-                                 y_ax_title = [ col[ 6: ] for col in wmean_cols ],
-                                 x_ax_title = 'cDNA position',
-                                 tick_spacing = 10,
-                                 bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
-                                 tight = False,
-                                 save_margin = 1,
-                                 cml = True,
-                                 savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_isoform_psis_clinvar.' + date_string + '.pdf',
-                                 )
-
-            if config[ 'maxentscan' ]:
-
-                sp.sat_lollipop_subplots_wrapper( byvartbl_wide_sat.rename( columns = { 'alt': 'a',
-                                                                                        'ref': 'r',
-                                                                                        'alt_c': 'alt',
-                                                                                        'ref_c': 'ref' } ),
-                                                 wmean_cols + [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ],
-                                                 'hgvs_pos',
-                                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                                 fig_size = ( 40, 2*( len( wmean_cols ) + len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ) ) ),
-                                                 share_y = False,
-                                                 legend = False,
-                                                 y_ax_lim = [ ( 0, 1 ) ]*len( wmean_cols ) + [ ( -15, 15 ) ]*len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ),
-                                                 y_ax_title = [ col[ 6: ] for col in wmean_cols ] + [ col[ 7: ] for col in byvartbl_wide_sat if col.endswith( '_diff' ) ],
-                                                 x_ax_title = 'hgvs position',
-                                                 hlines = [ ( 0, 'black', 'solid' ) for i in range( len( wmean_cols ) + len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ) ) ],
-                                                 tick_spacing = 10,
-                                                 cml = True,
-                                                 savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_maxent.' + date_string + '.pdf',
-                                                 )
 
     if config[ 'clinvar_file' ]:
 
