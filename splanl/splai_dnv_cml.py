@@ -6,14 +6,10 @@ import time
 import csv
 from keras.models import load_model
 from pkg_resources import resource_filename
-import splanl.plots as sp
 import splanl.post_processing as pp
 import splanl.coords as cd
 import splanl.annots as ann
-import splanl.create_vcf as vcf
 import splanl.custom_splai_scores as css
-import splanl.scrape_public_data as spd
-import splanl.score_motifs as sm
 
 def main():
 
@@ -30,7 +26,7 @@ def main():
                          help = 'Scored distance (default is exon length + 10) (int)' )
     parser.add_argument( '-sspr', '--score_ss_probs',
                          action = 'store_false',
-                         help = 'Compute SS probabilities? Turn off if not running over whole exon!' )
+                         help = 'Compute SS probabilities?' )
     parser.add_argument( '-altss', '--score_alt_ss',
                          help = 'Compute SS probabilities for a site other than the exon bds (comma sep ints - ie 1234,)' )
     parser.add_argument( '-v', '--verbose',
@@ -76,8 +72,13 @@ def main():
         config[ 'plots_out_dir' ] = config[ 'plots_out_dir' ] + '/'
     if not config[ 'data_out_dir' ].endswith( '/' ):
         config[ 'data_out_dir' ] = config[ 'data_out_dir' ] + '/'
-    if config[ 'vcf_out_dir' ] and not config[ 'vcf_out_dir' ].endswith( '/' ):
-        config[ 'vcf_out_dir' ] = config[ 'vcf_out_dir' ] + '/'
+
+    if config[ 'strand' ] == '+':
+        assert config[ 'exon_acceptor_pos' ] < config[ 'exon_donor_pos' ], \
+        'Acceptor should have a LOWER position than the donor for + strand! Check you exon_acceptor and exon_donor positions!'
+    elif config[ 'strand' ] == '-':
+        assert config[ 'exon_donor_pos' ] < config[ 'exon_acceptor_pos' ], \
+        'Acceptor should have a HIGHER position than the donor for - strand! Check you exon_acceptor and exon_donor positions!'
 
     if config[ 'score_alt_ss' ] is not None:
         with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
@@ -163,7 +164,7 @@ def main():
 
     if config[ 'verbose' ]:
         print( 'Whirling up SpliceAI - takes a few minutes..' )
-        print( 'No need to worry about the training configuration warning!' )
+        print( '\nNo need to worry about the training configuration warning!\n' )
 
     paths = ('models/spliceai{}.h5'.format(x) for x in range(1, 6))
     models = [load_model(resource_filename('spliceai', x)) for x in paths]
@@ -190,7 +191,7 @@ def main():
 
     print( 'Scoring all DNVs!' )
     print( 'This will use ~13 GB of memory and take ~1.5 seconds per variant' )
-    print( 'You are scoring %i DNVs so expect at least %2.f hours runtime! Might want to use tmux!' % ( len( dnvs_centers ), ( len( dnvs_centers )*1.5 ) / 60 / 60  ) )
+    print( 'You are scoring %i DNVs so expect at least %.2f hours runtime! Might want to use tmux!' % ( len( dnvs_centers ), ( len( dnvs_centers )*1.5 ) / 60 / 60  ) )
 
     t0 = time.time()
 
@@ -215,10 +216,10 @@ def main():
     t1 = time.time()
 
     if config[ 'verbose' ]:
-        print( 'Scored %i DNVs in %.2f hours!' % ( len( centers ), ( t1 - t0 ) / 60 / 60 ) )
+        print( 'Scored %i DNVs in %.2f hours!' % ( len( dnvs_centers ), ( t1 - t0 ) / 60 / 60 ) )
 
     with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
-        f.write( 'Scored %i DNVs in %.2f hours!\n' % ( len( centers ), ( t1 - t0 ) / 60 / 60 ) )
+        f.write( 'Scored %i DNVs in %.2f hours!\n' % ( len( dnvs_centers ), ( t1 - t0 ) / 60 / 60 ) )
 
     if config[ 'score_ss_probs' ]:
 
@@ -291,7 +292,7 @@ def main():
         print( 'Completing scoring in %.2f hours!' % ( ( T1 - T0 ) / 60 / 60 ) )
 
     with open( config[ 'data_out_dir' ] + 'splai_dnv_log.' + date_string + '.txt', 'a' ) as f:
-        f.write( '\nCompleting scoring in %.2f hours!' % ( ( T1 - T0 ) / 60 / 60 ) )
+        f.write( '\nCompleting scoring in %.2f hours!\n\n' % ( ( T1 - T0 ) / 60 / 60 ) )
 
     print( 'See ya next time on The Splice is Right - DNV spin off!' )
 

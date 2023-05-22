@@ -632,14 +632,14 @@ def maxent_score_wt( refseq,
 
     if not rev_strand:
 
-        outtbl[ 'wt_acc_pr' ] = [ maxent.score3( refseq[ pos - 1 - 20: pos - 1 + 3 ] ) for pos in pos_l ]
-        outtbl[ 'wt_don_pr' ] = [ maxent.score5( refseq[ pos - 1 - 2: pos - 1 + 7 ] ) for pos in pos_l ]
+        outtbl[ 'maxent_wt_acc' ] = [ maxent.score3( refseq[ pos - 1 - 20: pos - 1 + 3 ] ) for pos in pos_l ]
+        outtbl[ 'maxent_wt_don' ] = [ maxent.score5( refseq[ pos - 1 - 2: pos - 1 + 7 ] ) for pos in pos_l ]
 
     else:
 
-        outtbl[ 'wt_acc_pr' ] = [ maxent.score3( cd.rev_complement( refseq[ pos - 1 - 2: pos - 1 + 21 ] ) )
+        outtbl[ 'maxent_wt_acc' ] = [ maxent.score3( cd.rev_complement( refseq[ pos - 1 - 2: pos - 1 + 21 ] ) )
                                   for pos in pos_l ]
-        outtbl[ 'wt_don_pr' ] = [ maxent.score5( cd.rev_complement( refseq[ pos - 1 - 6: pos - 1 + 3 ] ) )
+        outtbl[ 'maxent_wt_don' ] = [ maxent.score5( cd.rev_complement( refseq[ pos - 1 - 6: pos - 1 + 3 ] ) )
                                   for pos in pos_l ]
 
     outdf = pd.DataFrame( outtbl )
@@ -683,12 +683,12 @@ def maxent_score_donors( refseq,
 
                 if not rev_strand:
 
-                    assert ref.upper() == refseq[ p ].upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    assert ref.upper() == refseq[ p ].upper(), 'Refseq does not match for %i:%s>%s: refseq has %s as reference' % ( p + 1, ref, alt, refseq[ p ].upper() )
                     maxent_scores[ dpos ].append( maxent.score5( refseq[ m_pos[ dpos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ dpos ][ 1 ] ] ) )
 
                 else:
 
-                    assert ref.upper() == cd.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    assert cd.rev_complement( ref.upper() ) == cd.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s: refseq has %s as reference' % ( p + 1, ref, alt, refseq[ p ].upper() )
                     maxent_scores[ dpos ].append( maxent.score5( cd.rev_complement( refseq[ m_pos[ dpos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ dpos ][ 1 ] ] ) ) )
 
     return maxent_scores
@@ -728,12 +728,12 @@ def maxent_score_acceptors( refseq,
 
                 if not rev_strand:
 
-                    assert ref.upper() == refseq[ p ].upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    assert ref.upper() == refseq[ p ].upper(), 'Refseq does not match for %i:%s>%s: refseq has %s as reference' % ( p + 1, ref, alt, refseq[ p ].upper() )
                     maxent_scores[ apos ].append( maxent.score3( refseq[ m_pos[ apos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ apos ][ 1 ] ] ) )
 
                 else:
 
-                    assert ref.upper() == cd.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s' % ( p + 1, ref, alt )
+                    assert cd.rev_complement( ref ).upper() == cd.rev_complement( refseq[ p ] ).upper(), 'Refseq does not match for %i:%s>%s: refseq has %s as reference' % ( p + 1, ref, alt, refseq[ p ].upper() )
                     maxent_scores[ apos ].append( maxent.score3( cd.rev_complement( refseq[ m_pos[ apos ][ 0 ]: p ] + alt + refseq[ p + 1: m_pos[ apos ][ 1 ] ] ) ) )
 
     return maxent_scores

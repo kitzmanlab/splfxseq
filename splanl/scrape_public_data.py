@@ -257,9 +257,11 @@ def merge_data_clinvar( psi_df,
     psi = psi_df.set_index( indexcols ).copy()
     clinvar = clinvar_df.set_index( indexcols ).copy()
 
-    if 'chrom' not in indexcols:
+    if 'chrom' not in indexcols and 'chrom' in clinvar:
         clinvar = clinvar.drop( columns = [ 'chrom' ] )
 
     out = psi.join( clinvar[ keep_cols ], how = 'left' ).reset_index()
+
+    out[ 'clinvar' ] = out.clinvar_interp.notnull()
 
     return out

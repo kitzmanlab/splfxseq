@@ -9,9 +9,9 @@ import time
 import splanl.plots as sp
 import splanl.coords as cd
 import splanl.post_processing as pp
-import mpsa_pipe.junction_scores as jn
-import mpsa_pipe.aggregate_vars as av
-import mpsa_pipe.scrape_public_data as spd
+import splanl.junction_scorer as jn
+import splanl.merge_bcs as mbcs
+import splanl.scrape_public_data as spd
 
 def main():
 
@@ -146,6 +146,8 @@ def main():
     args = parser.parse_args()
     config = vars(args)
 
+    T0 = time.time()
+
     if not config[ 'softclip_out_dir' ].endswith( '/' ):
         config[ 'softclip_out_dir' ] = config[ 'softclip_out_dir' ] + '/'
     if not config[ 'plots_out_dir' ].endswith( '/' ):
@@ -177,7 +179,10 @@ def main():
         assert config[ 'refseqname' ] in refseq_d, 'Refseqname (-rn) not in provided fasta file!'
         refseq = refseq_d[ config[ 'refseqname' ] ]
     elif len( refseq_d ) == 1:
-        print( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
+        if config[ 'verbose' ]:
+            print( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+            f.write( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] + '\n' )
         refseq = list( refseq_d.values() )[ 0 ]
     else:
         sys.exit( 'Multiple sequences in fasta file! Please provide the name of the sequence in the fasta file using the -rn argument' )
@@ -188,7 +193,10 @@ def main():
         assert config[ 'chrom_refseqname' ] in refseq_d, 'Chromosome refseqname (-crn) not in provided fasta file!'
         chrom_refseq = refseq_d[ config[ 'chrom_refseqname' ] ]
     elif len( refseq_d ) == 1:
-        print( 'No refseqname (-crn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
+        if config[ 'verbose' ]:
+            print( 'No refseqname (-crn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+            f.write( 'No refseqname (-crn) provided - using ' + list( refseq_d.keys() )[ 0 ] + '\n' )
         chrom_refseq = list( refseq_d.values() )[ 0 ]
     else:
         sys.exit( 'Multiple sequences in chromosome fasta file! Please provide the name of the sequence in the fasta file using the -crn argument' )
@@ -226,7 +234,10 @@ def main():
 
     t1 = time.time()
 
-    print( 'Collected isoforms across samples in %.2f minutes!' % ( ( t1 - t0 ) / 60 ) )
+    if config[ 'verbose' ]:
+        print( 'Collected isoforms across samples in %.2f minutes!' % ( ( t1 - t0 ) / 60 ) )
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+        f.write( 'Collected isoforms across samples in %.2f minutes!\n' % ( ( t1 - t0 ) / 60 ) )
 
     if config[ 'unmapped_bam_file_dir' ]:
 
@@ -256,8 +267,13 @@ def main():
 
     isos = jn.make_junction_graph( exonbed )
 
-    print( 'Known isoforms from provided exon bedfile: ')
-    print( isos )
+    if config[ 'verbose' ]:
+        print( 'Known isoforms from provided exon bedfile: ')
+        print( isos )
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+        f.write( 'Known isoforms from provided exon bedfile:\n' )
+        print( isos, file = f )
+        f.write( '\n' )
 
     unique_jns = list( { jn for grp,jn_tups in isos.items() for jn_tup in jn_tups for jn in jn_tup
                          if cnst_exons[ 0 ][ 1 ] < jn < cnst_exons[ 1 ][ 0 ] } )
@@ -265,7 +281,9 @@ def main():
     msamp_rnabam = { samp : pysam.AlignmentFile( msamp_fn[ samp ], 'rb' ) for samp in msamp_fn }
 
     canonical_isos = list( set( [ iso[ 1:-1 ] for iso in isos.values() if len( iso ) > 2 ] \
-                                + [ (), ( config[ 'exon_vstart' ], config[ 'exon_vend' ] ) ] ) )
+                                + [ (), ( ( config[ 'exon_vstart' ], config[ 'exon_vend' ] ), ) ] ) )
+
+    print( canonical_isos )
 
     print( 'Getting isoform statistics - this takes some time...' )
 
@@ -288,7 +306,10 @@ def main():
 
     t1 = time.time()
 
-    print( 'Collected isoform statistics in %.2f minutes!' % ( ( t1 - t0 ) / 60 ) )
+    if config[ 'verbose' ]:
+        print( 'Collected isoform statistics in %.2f minutes!' % ( ( t1 - t0 ) / 60 ) )
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+        f.write( 'Collected isoform statistics in %.2f minutes!\n' % ( ( t1 - t0 ) / 60 ) )
 
     iso_df_stats.reset_index().to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_isoforms.' + date_string + '.txt',
                                         sep = '\t',
@@ -323,23 +344,29 @@ def main():
         f.write( 'Percentage of reads in isoforms passing filters in ALL samples %.2f\n' % ( ( iso_df_stats.loc[ iso_df_stats.total_passfilt == len( msamp_fn ) ].total_read_count.sum() / iso_df_stats.total_read_count.sum() )*100 ) )
         f.write( 'Percentage of barcodes in isoforms passing filters in ALL samples %.2f\n' % ( ( iso_df_stats.loc[ iso_df_stats.total_passfilt == len( msamp_fn ) ].total_num_bcs.sum() / iso_df_stats.total_num_bcs.sum() )*100 ) )
 
-    isogrpdict = { samp: jn.create_iso_dict_no_cnst( iso_df_stats.query( samp + '_filter!=0' ) )
+    isogrpdict = { samp: jn.create_iso_dict_no_cnst( iso_df_stats.query( samp + '_filter!=0' ),
+                                                     string_isos = False )
                    for samp in msamp_fn }
 
-    incl_iso = ( config[ 'exon_vstart' ], config[ 'exon_vend' ] )
+    incl_iso = ( ( config[ 'exon_vstart' ], config[ 'exon_vend' ] ), )
     isonamedict = { 'CAN_ISO' + str( i ): [ iso ]
                     for i,iso in enumerate( canonical_isos ) if iso != () and iso != incl_iso }
-    isonamedict[ 'SKIP' ] = []
-    isonamedict[ 'INCL' ] = [ incl_iso ]
+    isonamedict[ 'SKIP' ] = [ ]
+    isonamedict[ 'INCL' ] = [ incl_iso[ 0 ] ]
 
-    print( 'Named isoforms are: ', isonamedict )
+    if config[ 'verbose' ]:
+        print( 'Named isoforms are: ', isonamedict )
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+        f.write( 'Named isoforms are:\n' )
+        print( isonamedict, file = f )
+        f.write( '\n' )
 
     namedisogrps = { samp: jn.create_named_isogrps( isogrpdict[ samp ],
-                                                 isonamedict,
-                                                 [],
-                                                 cnst_exons[ 1 ][ 1 ] - cnst_exons[ 1 ][ 0 ],
-                                                 config[ 'read_length' ],
-                                                 config[ 'splicing_err_tol' ] )
+                                                    isonamedict,
+                                                    [],
+                                                    cnst_exons[ 1 ][ 1 ] - cnst_exons[ 1 ][ 0 ],
+                                                    config[ 'read_length' ],
+                                                    config[ 'splicing_err_tol' ] )
                      for samp in msamp_fn }
 
     msamp_rnabam = { samp : pysam.AlignmentFile( msamp_fn[ samp ], 'rb' ) for samp in msamp_fn }
@@ -358,7 +385,8 @@ def main():
     waterfall_thresh.sort()
 
     print( 'Merging barcodes now...' )
-    msamp_bcs_processed = { samp: av.process_bcs_wrapper( samp,
+
+    msamp_bcs_processed = { samp: mbcs.process_bcs_wrapper( samp,
                                                        msamp_rnabam[ samp ],
                                                        isogrpdict[ samp ],
                                                        namedisogrps[ samp ],
@@ -379,7 +407,7 @@ def main():
                                                        plot_out =  config[ 'plots_out_dir' ] + samp + '_waterfall.pdf'  )
                            for samp in msamp_rnabam }
 
-    read_cut_unfilt = av.create_read_count_df( msamp_bcs_processed,
+    read_cut_unfilt = mbcs.create_read_count_df( msamp_bcs_processed,
                                             waterfall_thresh )
 
     read_cut_unfilt.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + 'n_bcs_bysamp.' + date_string + '.txt',
@@ -400,32 +428,34 @@ def main():
         msamp_bcs_processed[ samp ][ 'msamp_varbcrnatbl_flen_allisos' ].to_csv( config[ 'data_out_dir' ] + samp + '_' + config[ 'exon_name' ] + '_by_bc_effects_allvars_allisos-' + date_string + '.txt',
                                                                                 sep = '\t' )
 
-    msamp_varbcrnatbl_flen_rename = { samp: av.merge_subasm_and_rna_tbls( satbl,
+    msamp_varbcrnatbl_flen_rename = { samp: mbcs.merge_subasm_and_rna_tbls( satbl,
                                                                        msamp_bcs_processed[ samp ][ 'msamp_bcrnatbl_rename' ] )
                                       for samp in msamp_bcs_processed }
 
     msamp_varbcrnatbl_flen_rename_filt = { samp: msamp_varbcrnatbl_flen_rename[ samp ].loc[ msamp_varbcrnatbl_flen_rename[ samp ].usable_reads > cut_dict[ samp ] ].copy()
                                            for samp in msamp_varbcrnatbl_flen_rename }
 
-    bybcvartbl_filt_long = av.combine_rep_perbctbls_long( [ msamp_varbcrnatbl_flen_rename_filt[ samp ] for samp in msamp_varbcrnatbl_flen_rename_filt ],
+    bybcvartbl_filt_long = mbcs.combine_rep_perbctbls_long( [ msamp_varbcrnatbl_flen_rename_filt[ samp ] for samp in msamp_varbcrnatbl_flen_rename_filt ],
                                                        [ samp for samp in msamp_varbcrnatbl_flen_rename_filt ] )
 
-    bybcvartbl_long = av.combine_rep_perbctbls_long( [ msamp_varbcrnatbl_flen_rename[ samp ] for samp in msamp_varbcrnatbl_flen_rename ],
+    bybcvartbl_long = mbcs.combine_rep_perbctbls_long( [ msamp_varbcrnatbl_flen_rename[ samp ] for samp in msamp_varbcrnatbl_flen_rename ],
                                                   [ samp for samp in msamp_varbcrnatbl_flen_rename ] )
 
     bybcvartbl_long.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_by_bc_effects_allvars-' + date_string + '.txt',
                                 sep='\t'
                                 )
 
-    msamp_byvartbl_allisos_snvs = { samp: av.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
+    msamp_byvartbl_allisos_snvs = { samp: mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
                                     for samp in msamp_bcs_processed }
 
     if min( msamp_byvartbl_allisos_snvs[ samp ].pos.min() for samp in msamp_byvartbl_allisos_snvs ) < config[ 'cloned_vstart' ] \
        or max( msamp_byvartbl_allisos_snvs[ samp ].pos.max() for samp in msamp_byvartbl_allisos_snvs ) > config[ 'cloned_vend' ]:
 
-       print( 'Your data goes outside the specified cloned vector end or cloned vector start positions - truncating or else the plots will be funny' )
+       if config[ 'verbose' ]:
+           print( 'Your data goes outside the specified cloned vector end or cloned vector start positions - truncating or else the plots will be funny' )
 
        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+           f.write( 'Your data goes outside the specified cloned vector end or cloned vector start positions - truncating or else the plots will be funny\n' )
            for samp in msamp_byvartbl_allisos_snvs:
                samp_len = len( msamp_byvartbl_allisos_snvs[ samp ] )
                msamp_byvartbl_allisos_snvs[ samp ] = msamp_byvartbl_allisos_snvs[ samp ].loc[ ( msamp_byvartbl_allisos_snvs[ samp ].pos >= config[ 'cloned_vstart' ] ) \
@@ -441,7 +471,7 @@ def main():
                                                                             [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
                                                                               )
 
-    byvartbl_allisos_long = av.combine_allisos_pervartbls_long( [ msamp_byvartbl_allisos_snvs[ samp ] for samp in msamp_byvartbl_allisos_snvs ],
+    byvartbl_allisos_long = mbcs.combine_allisos_pervartbls_long( [ msamp_byvartbl_allisos_snvs[ samp ] for samp in msamp_byvartbl_allisos_snvs ],
                                                              [ samp for samp in msamp_byvartbl_allisos_snvs ] )
 
     byvartbl_allisos_long.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_by_var_effects_allisos_snvs-' + date_string + '.txt',
@@ -449,14 +479,14 @@ def main():
                                   index = False
                                 )
 
-    msamp_byvartbl = { samp: av.summarize_byvar_singlevaronly_pe( satbl,
+    msamp_byvartbl = { samp: mbcs.summarize_byvar_singlevaronly_pe( satbl,
                                                                 msamp_bcs_processed[ samp ][ 'msamp_bcrnatbl_rename' ],
                                                                 cut_dict[ samp ],
                                                                 [ 'secondary_reads', 'unpaired_reads', 'unmapped_reads', 'bad_starts', 'bad_ends', 'soft_clipped', 'other_isoform', 'usable_reads', ],
                                                                 list( isonamedict.keys() ) + [ 'OTHER' ] )
                       for samp in msamp_bcs_processed }
 
-    msamp_byvartbl_snvs = { samp: av.filter_byvartbl_snvonly( msamp_byvartbl[ samp ] )
+    msamp_byvartbl_snvs = { samp: mbcs.filter_byvartbl_snvonly( msamp_byvartbl[ samp ] )
                             for samp in msamp_byvartbl }
 
     for samp in msamp_byvartbl_snvs:
@@ -479,7 +509,7 @@ def main():
                                                                   [ config[ 'exon_hg19_start' ], config[ 'exon_hg19_end' ] ],
                                                                   rev_strand = config[ 'strand' ] == '-' )
 
-    byvartbl_long = av.combine_rep_pervartbls_long( [ msamp_byvartbl_snvs[ samp ] for samp in msamp_byvartbl_snvs ],
+    byvartbl_long = mbcs.combine_rep_pervartbls_long( [ msamp_byvartbl_snvs[ samp ] for samp in msamp_byvartbl_snvs ],
                                                   [ samp for samp in msamp_byvartbl_snvs ] )
 
     byvartbl_long[ 'exon_num' ] = config[ 'exon_number' ]
@@ -492,20 +522,20 @@ def main():
         byvartbl_long[ 'ref' ] = [ cd.rev_complement( r ) for r in byvartbl_long.ref_c ]
         byvartbl_long[ 'alt' ] = [ cd.rev_complement( a ) for a in byvartbl_long.alt_c ]
 
-    byvartbl_wide = av.combine_rep_pervartbls_wide( [ byvartbl_long.loc[ byvartbl_long[ 'sample' ] == samp ][ [ col for col in byvartbl_long if col != 'sample' ] ]
+    byvartbl_wide = mbcs.combine_rep_pervartbls_wide( [ byvartbl_long.loc[ byvartbl_long[ 'sample' ] == samp ][ [ col for col in byvartbl_long if col != 'sample' ] ]
                                                     for samp in byvartbl_long[ 'sample' ].unique() ],
                                                     [ samp for samp in byvartbl_long[ 'sample' ].unique() ],
                                                     indexcols=[ 'chrom','hg19_pos','hgvs_pos','pos','ref','alt','varlist','exon_num','exon' ] + ( config[ 'strand' ] == '-')*[ 'ref_c', 'alt_c' ],
                                                     group_cols_by_samp = True )
 
-    byvartbl_wide = av.create_variables_across_samples( byvartbl_wide,
+    byvartbl_wide = mbcs.create_variables_across_samples( byvartbl_wide,
                                                      [ samp for samp in byvartbl_long[ 'sample' ].unique() ],
                                                      mean_cols = [ 'n_bc','n_bc_passfilt', 'sum_reads','sum_reads_passfilt', ],
                                                      median_cols = [ 'n_bc','n_bc_passfilt', 'sum_reads','sum_reads_passfilt', ],
                                                      sum_cols = [ 'sum_reads','sum_reads_passfilt', ],
                                                      max_cols = [ 'n_bc','n_bc_passfilt', 'sum_reads','sum_reads_passfilt', ] )
 
-    byvartbl_wide = av.compute_bc_weighted_psi( byvartbl_wide,
+    byvartbl_wide = mbcs.compute_bc_weighted_psi( byvartbl_wide,
                                              [ samp for samp in byvartbl_long[ 'sample' ].unique() ],
                                              list( isonamedict.keys() ) + [ 'OTHER' ],
                                              'n_bc_passfilt',
@@ -555,61 +585,44 @@ def main():
 
     if config[ 'maxentscan' ]:
 
-        acceptors = [ isojn[ 0 ] for iso in canonical_isos for isojn in iso if isojn != () ]
-        donors = [ isojn[ 1 ] for iso in canonical_isos for isojn in iso if isojn != () ]
+        print( canonical_isos )
 
-        maxent_wt = spd.maxent_score_wt( refseq,
+        acceptors = list( set( [ iso[ 0 ] for iso in canonical_isos if iso != () ] ) )
+        donors = list( set( [ iso[ 1 ] for iso in canonical_isos if iso != () ] ) )
+
+        maxent_wt = sm.maxent_score_wt( refseq,
                                          byvartbl_wide.pos.unique().tolist() )
 
         if config[ 'strand' ] == '+':
-
-            acceptor_d = spd.maxent_score_acceptors( refseq,
-                                                    byvartbl_wide,
-                                                    'pos',
-                                                    'ref',
-                                                    'alt',
-                                                    acceptors,
-                                                 )
-            donor_d = spd.maxent_score_donors( refseq,
-                                               byvartbl_wide,
-                                               'pos',
-                                               'ref',
-                                               'alt',
-                                               donors,
-                                               )
-            byvartbl_wide = byvartbl_wide.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
-                                                                            how = 'left',
-                                                                            left_index = True,
-                                                                            right_index = True ).reset_index()
-            byvartbl_long = byvartbl_long.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
-                                                                            how = 'left',
-                                                                            left_index = True,
-                                                                            right_index = True ).reset_index()
-
+            ref_col = 'ref'
+            alt_col = 'alt'
         elif config[ 'strand' ] == '-':
+            ref_col = 'ref_c'
+            alt_col = 'alt_c'
+            maxent_wt = maxent_wt.rename( columns = { 'ref': 'ref_c' } )
 
-            acceptor_d = spd.maxent_score_acceptors( refseq,
-                                                     byvartbl_wide,
-                                                     'pos',
-                                                     'ref_c',
-                                                     'alt_c',
-                                                     donors,
-                                                     )
-            donor_d = spd.maxent_score_donors( refseq,
+        acceptor_d = sm.maxent_score_acceptors( refseq,
                                                 byvartbl_wide,
                                                 'pos',
-                                                'ref_c',
-                                                'alt_c',
+                                                ref_col,
+                                                alt_col,
                                                 acceptors,
-                                                )
-            byvartbl_wide = byvartbl_wide.set_index( 'pos', 'ref_c' ).merge( maxent_wt.set_index( 'pos', 'ref_c' ),
-                                                                           how = 'left',
-                                                                           left_index = True,
-                                                                           right_index = True ).reset_index()
-            byvartbl_long = byvartbl_long.set_index( 'pos', 'ref_c' ).merge( maxent_wt.set_index( 'pos', 'ref_c' ),
-                                                                           how = 'left',
-                                                                           left_index = True,
-                                                                           right_index = True ).reset_index()
+                                            )
+        donor_d = sm.maxent_score_donors( refseq,
+                                          byvartbl_wide,
+                                          'pos',
+                                          ref_col,
+                                          alt_col,
+                                          donors,
+                                        )
+        byvartbl_wide = byvartbl_wide.set_index( 'pos', ref_col ).merge( maxent_wt.set_index( 'pos', ref_col ),
+                                                                            how = 'left',
+                                                                            left_index = True,
+                                                                            right_index = True ).reset_index()
+        byvartbl_long = byvartbl_long.set_index( 'pos', ref_col ).merge( maxent_wt.set_index( 'pos', ref_col ),
+                                                                       how = 'left',
+                                                                       left_index = True,
+                                                                       right_index = True ).reset_index()
 
         for acc in acceptor_d:
             byvartbl_wide[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
@@ -704,7 +717,7 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_' + samp + '_isoform_psis.' + date_string + '.pdf',
                                 )
 
-    sample_stats = av.across_sample_stats( [ byvartbl_long ],
+    sample_stats = mbcs.across_sample_stats( [ byvartbl_long ],
                                         { 'all': byvartbl_long_bs_filt[ 'sample' ].unique().tolist() },
                                         [ col for col in byvartbl_long if col.startswith( 'wmean_' ) ]
                                       )
@@ -981,11 +994,17 @@ def main():
                                     savefig = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_clinvar.' + date_string + '.pdf'
                                     )
 
+    T1 = time.time()
+
+    if config[ 'verbose' ]:
+        print( 'Total runtime: %.2f hours!' % ( ( T1 - T1 ) / 60 / 60 ) )
+
     with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+        f.write( 'Total runtime: %.2f hours\n' % ( ( T1 - T1 ) / 60 / 60 ) )
         f.write( '\nFigure legends:\n' )
         f.write( 'Alt colors: A = Blue, C = Orange, G = Green, T = Purple\n' )
         f.write( 'gnomAD plots: In gnomAD = open circle\n')
-        f.write( 'ClinVar plots: LBB = open square, LPP = black triangle, VUS = black diamond\n')
+        f.write( 'ClinVar plots: LBB = open square, LPP = black triangle, VUS = black diamond\n' )
 
     return
 

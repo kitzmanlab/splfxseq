@@ -1,11 +1,12 @@
-import os
 import pandas as pd
 import numpy as np
+import pysam
+import time
 import scipy.stats as ss
 from collections import OrderedDict as odict  # default is for keys to come back out in order after I think python 3.7
 from collections import Counter
-import splanl.coords as cds
-
+import splanl.plots as sp
+import splanl.junction_scorer as jn
 
 # make (ordered) dict of lists
 def blanktbl(colnames):
@@ -59,14 +60,6 @@ def compute_psi_values(
     iso_col = None,
     read_count_col = 'usable_reads'
 ):
-    """
-
-    Args:
-
-
-    Returns:
-
-    """
 
     out_df = in_df.copy()
 
@@ -621,7 +614,6 @@ def combine_rep_perbctbls_long(
 
     return tblout
 
-
 def combine_allisos_pervartbls_long(
                                     ltbls,
                                     lsampnames,
@@ -733,3 +725,311 @@ def create_sparse_df( large_df,
         out_df = out_df.astype( pd.SparseDtype( "float", sparse_val ) )
 
     return out_df.reset_index()
+
+def process_bcs_wrapper( sample,
+                         pysam_align,
+                         all_isogrpdict,
+                         named_isogrpdict,
+                         cnst_exons,
+                         satbl,
+                         spl_tol = 3,
+                         indel_tol = 20,
+                         min_matches_for = 70,
+                         min_matches_rev = 50,
+                         tol_first_last = 0,
+                         min_reads = 1,
+                         other_isos_usable = False,
+                         bc_tag = 'RX',
+                         max_bc_len = 30,
+                         unmapped_pysam = None,
+                         unmap_bc_split_char = '_BC=',
+                         unmap_col = 'unmapped_reads',
+                         read_tot_col = 'num_reads',
+                         usable_read_col = 'usable_reads',
+                         other_cols = [ 'secondary_reads', 'unpaired_reads', 'bad_starts', 'bad_ends', 'soft_clipped', 'other_isoform' ],
+                         waterfall_thresh = [ 75, 95 ],
+                         bc_read_cut_thresh = 95,
+                         verbose = False,
+                         cml = False,
+                         plot_out = None, ):
+
+    assert bc_read_cut_thresh in waterfall_thresh, 'BC read cut off thresholds must be a subset of waterfall thresholds!'
+
+    t0 = time.time()
+
+    print( 'Processing sample %s' % sample )
+
+    msamp_bcrnatbl = jn.compute_isoform_counts_pe( pysam_align,
+                                                all_isogrpdict,
+                                                cnst_exons,
+                                                spl_tol = spl_tol,
+                                                indel_tol = indel_tol,
+                                                min_matches_for = min_matches_for,
+                                                min_matches_rev = min_matches_rev,
+                                                bc_tag = bc_tag,
+                                                verbose = verbose )
+
+    pysam_align.close()
+
+    msamp_bcrnatbl_flen = filter_on_barc_len( msamp_bcrnatbl,
+                                              max_len = max_bc_len )
+
+    if unmapped_pysam:
+
+        msamp_bcrnatbl_flen = merge_unmapped_bcs( msamp_bcrnatbl_flen,
+                                                  unmapped_pysam,
+                                                  bc_split_char = unmap_bc_split_char,
+                                                  unmap_col = unmap_col,
+                                                  read_tot_col = read_tot_col )
+
+    msamp_bcrnatbl_rename = combine_isogrps_pe( named_isogrpdict,
+                                                msamp_bcrnatbl_flen,
+                                                keep_cols = [ read_tot_col, usable_read_col, unmap_col ] + other_cols  )
+
+    msamp_varbcrnatbl_flen_allisos = merge_subasm_and_rna_tbls( satbl,
+                                                                msamp_bcrnatbl_flen )
+
+    x_cuts,y_cuts = sp.waterfall_plot( msamp_bcrnatbl_flen,
+                                    usable_read_col,
+                                    waterfall_thresh,
+                                    verbose = verbose,
+                                    cml = cml,
+                                    savefig = plot_out )
+
+    cut_d = { 'x': x_cuts, 'y': y_cuts }
+
+    msamp_byvartbl_allisos = summarize_byvar_singlevaronly_pe( satbl,
+                                                               msamp_bcrnatbl_flen,
+                                                               cut_d[ 'y' ][ bc_read_cut_thresh ],
+                                                               [ usable_read_col, unmap_col ] + other_cols )
+
+    t1 = time.time()
+
+    print( 'Finished processing sample %s in %.2f minutes' % ( sample, ( t1 - t0 ) / 60 ) )
+
+    return { 'msamp_bcrnatbl_rename': msamp_bcrnatbl_rename,
+             'msamp_varbcrnatbl_flen_allisos': msamp_varbcrnatbl_flen_allisos,
+             'msamp_byvartbl_allisos': msamp_byvartbl_allisos,
+             'bc_read_cutoffs': cut_d }
+
+def filter_on_barc_len( jxnbybctbl, max_len=35 ):
+    li = jxnbybctbl.index.str.len() <= max_len
+    subtbl = jxnbybctbl.loc[li].copy()
+    return subtbl
+
+def merge_unmapped_bcs( tbl_by_bc,
+                        unmapped_m1,
+                        bc_split_char = '_BC=',
+                        unmap_col = 'unmapped_reads',
+                        read_tot_col = 'num_reads'
+                        ):
+
+    tbb = tbl_by_bc.drop( columns = unmap_col ).copy()
+
+    bc_cnt_m1 = pd.Series( Counter( [ entry.name.split( bc_split_char )[ -1 ] for entry in unmapped_m1 ] ),
+                           name = unmap_col )
+
+    unmapped_m1.close()
+
+    bc_intsect = bc_cnt_m1.index.intersection( tbb.index )
+
+    bc_cnt_m1 = bc_cnt_m1.loc[ bc_intsect ].copy()
+
+    tbb[ unmap_col ] = bc_cnt_m1
+
+    tbb[ unmap_col ] = tbb[ unmap_col ].fillna( value = 0 ).astype( int )
+
+    tbb[ read_tot_col ] += tbb[ unmap_col ]
+
+    return tbb
+
+def combine_isogrps_pe( new_grpnames_to_old_grpnames,
+                        jxnbybctbl,
+                        keep_cols = ['num_reads','secondary_reads', 'unpaired_reads', 'unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform','usable_reads'] ):
+    """ combine barcode groups
+    Arguments:
+        new_grpnames_to_old_grpnames {[type]} -- [description]
+    """
+
+    chg_cols = [ isocol for isocol_l in new_grpnames_to_old_grpnames.values()
+                        for isocol in isocol_l ]
+
+    other_cols = [ col for col in jxnbybctbl.columns
+                   if col not in chg_cols ]
+
+    if keep_cols != other_cols:
+
+        missing_cols = list( set( other_cols ).difference( set( keep_cols ) ) )
+
+        print( '%i columns will be removed during this process.\nColumns: ' % len( missing_cols ), missing_cols )
+
+    newtbl = pd.DataFrame()
+    for c in keep_cols:
+        newtbl[c] = jxnbybctbl[c]
+
+    for newgrp in new_grpnames_to_old_grpnames:
+        oldgrp = new_grpnames_to_old_grpnames[ newgrp ]
+
+        if type(oldgrp)==str:
+            oldgrp=[oldgrp]
+        else:
+            assert type(oldgrp)==list
+
+        if len(oldgrp)==1:
+            newtbl[newgrp] = jxnbybctbl[oldgrp]
+        else:
+            newtbl[newgrp] = jxnbybctbl[oldgrp].sum(axis=1)
+
+    for newgrp in new_grpnames_to_old_grpnames:
+        newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
+
+    #fills in missing PSI values with 0 so we can create sparse datasets
+    newtbl = newtbl.fillna(0)
+
+    return newtbl
+
+def combine_isogrps( new_grpnames_to_old_grpnames,
+                     jxnbybctbl,
+                     keep_cols = ['num_reads','unmapped_reads','bad_starts','bad_ends','soft_clipped','other_isoform','usable_reads'],
+                     ):
+    """ combine barcode groups
+    Arguments:
+        new_grpnames_to_old_grpnames {[type]} -- [description]
+    """
+
+    chg_cols = [ isocol for isocol_l in new_grpnames_to_old_grpnames.values()
+                        for isocol in isocol_l ]
+
+    other_cols = [ col for col in jxnbybctbl.columns
+                   if col not in chg_cols ]
+
+    if keep_cols != other_cols:
+
+        missing_cols = list( set( other_cols ).difference( set( keep_cols ) ) )
+
+        print( '%i columns will be removed during this process.\nColumns: ' % len( missing_cols ), missing_cols )
+
+    newtbl = pd.DataFrame()
+    for c in keep_cols:
+        newtbl[c] = jxnbybctbl[c]
+
+    for newgrp in new_grpnames_to_old_grpnames:
+        oldgrp = new_grpnames_to_old_grpnames[ newgrp ]
+
+        if type(oldgrp)==str:
+            oldgrp=[oldgrp]
+        else:
+            assert type(oldgrp)==list
+
+        if len(oldgrp)==1:
+            newtbl[newgrp] = jxnbybctbl[oldgrp]
+        else:
+            newtbl[newgrp] = jxnbybctbl[oldgrp].sum(axis=1)
+
+    for newgrp in new_grpnames_to_old_grpnames:
+        newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
+
+    #fills in missing PSI values with 0 so we can create sparse datasets
+    newtbl = newtbl.fillna(0)
+
+    return newtbl
+
+def create_read_count_df( bysamp_bc_dict,
+                          thresholds,
+                          read_cutoff_key = 'bc_read_cutoffs' ):
+
+    out_dict = { 'sample': [] }
+
+    for thresh in thresholds:
+
+        out_dict[ str( thresh ) + '_x' ] = []
+        out_dict[ str( thresh ) + '_y' ] = []
+
+    for samp in bysamp_bc_dict:
+
+        out_dict[ 'sample' ].append( samp )
+
+        for thresh in thresholds:
+
+            out_dict[ str( thresh ) + '_x' ].append( 10**( bysamp_bc_dict[ samp ][ read_cutoff_key ][ 'x' ][ thresh ] ) )
+            out_dict[ str( thresh ) + '_y' ].append( bysamp_bc_dict[ samp ][ read_cutoff_key ][ 'y' ][ thresh ] )
+
+    outdf = pd.DataFrame( out_dict )
+
+    for col in outdf.columns:
+
+        if col.endswith( '_x' ):
+
+            outdf[ col + '_log10' ] = np.log10( outdf[ col ].tolist() )
+
+    return outdf
+
+def across_sample_stats(ltbls,
+                        lsampnames,
+                        med_col_names):
+
+    out_tbl = { 'sample_group':[],
+                'sample':[],
+                'psbl_var':[],
+                'n_var':[],
+                'n_var_ex':[],
+                'n_var_in':[],
+                'n_reads':[],
+                'n_reads_passfilt':[],
+                'n_usable_reads':[],
+                'n_bc':[],
+                'n_bc_passfilt':[],
+                'n_unmapped':[],
+                'n_badstart':[],
+                'n_badend':[],
+                'n_softclip':[],
+                'n_otheriso':[],
+                }
+
+    for col in med_col_names:
+        out_tbl['med_'+col] = []
+
+    i=0
+    for grp, _lsamp in lsampnames.items():
+        for lsamp in _lsamp:
+
+            lsamp_df = ltbls[ i ].query( 'sample=="%s"' % lsamp ).copy()
+            lsamp_filt_df = lsamp_df.query( 'n_bc_passfilt > 0' )
+
+            out_tbl['sample_group'].append( grp )
+            out_tbl['sample'].append( grp+'_'+lsamp )
+            out_tbl['psbl_var'].append( 3*( lsamp_df.pos.max() - lsamp_df.pos.min() ) )
+            out_tbl['n_var'].append( int( lsamp_filt_df.shape[0] ) )
+            out_tbl['n_var_ex'].append( int( lsamp_filt_df.loc[ lsamp_filt_df.exon ].shape[0] ) )
+            out_tbl['n_var_ex'].append( int( lsamp_filt_df.loc[ ~lsamp_filt_df.exon ].shape[0] ) )
+            out_tbl['n_reads'].append( int( lsamp_df.sum_reads.sum() ) )
+            out_tbl['n_reads_passfilt'].append( int( lsamp_df.sum_reads_passfilt.sum() ) )
+            out_tbl['n_usable_reads'].append( int( lsamp_df.sum_usable_reads.sum() ) )
+            out_tbl['n_bc'].append( int( lsamp_df.n_bc.sum() ) )
+            out_tbl['n_bc_passfilt'].append( int( lsamp_df.n_bc_passfilt.sum() ) )
+            out_tbl['n_unmapped'].append( int( lsamp_df.sum_unmapped_reads.sum() ) )
+            out_tbl['n_badstart'].append( int( lsamp_df.sum_bad_starts.sum() ) )
+            out_tbl['n_badend'].append( int( lsamp_df.sum_bad_ends.sum() ) )
+            out_tbl['n_softclip'].append( int( lsamp_df.sum_soft_clipped.sum() ) )
+            out_tbl['n_otheriso'].append( int( lsamp_df.sum_other_isoform.sum() ) )
+
+            for col in med_col_names:
+                out_tbl['med_'+col].append( float( lsamp_df[ col ].median() ) )
+
+        i+=1
+
+    out_tbl = pd.DataFrame( out_tbl )
+
+    out_tbl['per_var_seen'] = 100*( out_tbl.n_var / out_tbl.psbl_var )
+    out_tbl['per_var_ex'] = 100*( out_tbl.n_var_ex / out_tbl.n_var )
+    out_tbl['per_var_int'] = 100*( out_tbl.n_var_int / out_tbl.n_var )
+    out_tbl['per_reads_passfilt'] = 100*( out_tbl.n_reads_passfilt / out_tbl.n_reads )
+    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    out_tbl['per_usable'] = 100*( out_tbl.n_usable_reads / out_tbl.n_reads_passfilt )
+    out_tbl['per_unmapped'] = 100*( out_tbl.n_unmapped / out_tbl.n_reads_passfilt )
+    out_tbl['per_badstart'] = 100*( out_tbl.n_badstart / out_tbl.n_reads_passfilt )
+    out_tbl['per_badend'] = 100*( out_tbl.n_badend / out_tbl.n_reads_passfilt )
+    out_tbl['per_softclip'] = 100*( out_tbl.n_softclip / out_tbl.n_reads_passfilt )
+    out_tbl['per_otheriso'] = 100*( out_tbl.n_otheriso / out_tbl.n_reads_passfilt )
+
+    return out_tbl

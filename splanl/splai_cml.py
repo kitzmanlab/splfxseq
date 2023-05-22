@@ -89,6 +89,13 @@ def main():
     if config[ 'vcf_out_dir' ] and not config[ 'vcf_out_dir' ].endswith( '/' ):
         config[ 'vcf_out_dir' ] = config[ 'vcf_out_dir' ] + '/'
 
+    if config[ 'strand' ] == '+':
+        assert config[ 'exon_acceptor_pos' ] < config[ 'exon_donor_pos' ], \
+        'Acceptor should have a LOWER position than the donor for + strand! Check you exon_acceptor and exon_donor positions!'
+    elif config[ 'strand' ] == '-':
+        assert config[ 'exon_donor_pos' ] < config[ 'exon_acceptor_pos' ], \
+        'Acceptor should have a HIGHER position than the donor for - strand! Check you exon_acceptor and exon_donor positions!'
+
     if config[ 'gnomad2_file' ]:
         assert config[ 'gnomad3_file' ], 'This script assumes you entered both versions of gnomAD or neither! Add gnomAD3!'
         gnomad2 = pd.read_table( config[ 'gnomad2_file' ] )
@@ -202,8 +209,8 @@ def main():
             f.write( 'VCFs created and saved at %s\n' % config[ 'vcf_out_dir' ] )
 
     if config[ 'verbose' ]:
-        print( 'Whirling up SpliceAI - takes a few minutes..' )
-        print( 'No need to worry about the training configuration warning!' )
+        print( 'Whirling up SpliceAI - takes a few minutes..\n' )
+        print( 'No need to worry about the training configuration warning!\n' )
 
     paths = ('models/spliceai{}.h5'.format(x) for x in range(1, 6))
     models = [load_model(resource_filename('spliceai', x)) for x in paths]
@@ -223,6 +230,9 @@ def main():
 
     t0 = time.time()
 
+    save_stdout = sys.stdout
+    sys.stdout = open('trash', 'w')
+
     splai_scores = css.splai_score_mult_variants_onegene( annot,
                                                             models,
                                                             refseq,
@@ -231,7 +241,8 @@ def main():
                                                             centers,
                                                             scored_context = dist,
                                                             rev_strand = config[ 'strand' ] == '-' )
-
+    sys.stdout = save_stdout
+    
     if config[ 'strand' ] == '-':
         splai_scores[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_scores.ref ]
         splai_scores[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_scores.alt ]
@@ -263,12 +274,12 @@ def main():
         alt_ss = []
     else:
         alt_ss = [ int( p ) for p in config[ 'score_alt_ss' ].split( ',' )
-                    if p != '' and p >= config[ 'score_start_pos' ] and p <= config[ 'score_end_pos' ] ]
+                    if p != '' and int( p ) >= config[ 'score_start_pos' ] and int( p ) <= config[ 'score_end_pos' ] ]
         ss_list += alt_ss
         if config[ 'verbose' ]:
-            print( 'Scoring alternate splice sites at %s' % ( ', '.join( alt_ss ) ) )
+            print( 'Scoring alternate splice sites at %s' % ( ', '.join( [ str( ss ) for ss in alt_ss ] ) ) )
         with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
-            f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( alt_ss ) ) )
+            f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( [ str( ss ) for ss in alt_ss ] ) ) )
 
     splai_wt_pr  =  css.splai_score_wt_onegene( annot,
                                                   models,
@@ -377,6 +388,7 @@ def main():
                                                  acceptors,
                                                  rev_strand = config[ 'strand' ] == '-'
                                                  )
+
         donor_d = sm.maxent_score_donors( refseq,
                                           splai_scores,
                                           'pos',
@@ -386,17 +398,12 @@ def main():
                                           rev_strand = config[ 'strand' ] == '-'
                                             )
 
-        if config[ 'strand' ] == '+':
-            merge_ref = 'ref'
-        elif config[ 'strand' ] == '-':
-            merge_ref = 'ref_c'
-
-        splai_scores = splai_scores.set_index( 'pos', merge_ref ).merge( maxent_wt.set_index( 'pos', merge_ref ),
+        splai_scores = splai_scores.set_index( [ 'pos', 'ref' ] ).merge( maxent_wt.set_index( [ 'pos', 'ref' ] ),
                                                                      how = 'left',
                                                                      left_index = True,
                                                                       right_index = True ).reset_index()
         if ss_list:
-            splai_ss_pr = splai_ss_pr.set_index( 'pos', 'ref' ).merge( maxent_wt.set_index( 'pos', 'ref' ),
+            splai_ss_pr = splai_ss_pr.set_index( [ 'pos', 'ref' ] ).merge( maxent_wt.set_index( [ 'pos', 'ref' ] ),
                                                                         how = 'left',
                                                                         left_index = True,
                                                                         right_index = True ).reset_index()
@@ -428,8 +435,6 @@ def main():
     github_colors = '3182bd6baed69ecae1c6dbefe6550dfd8d3cfdae6bfdd0a231a35474c476a1d99bc7e9c0756bb19e9ac8bcbddcdadaeb636363969696bdbdbdd9d9d9'
     light_colors = [ '#' + github_colors[i:i+6] for i in range( 0, len( github_colors ), 6 ) ]
 
-    splai_scores[ 'coord_pos' ] = splai_scores.pos
-
     wt_probs = [ float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_acceptor_pos' ] ].wt_acc_pr ),
                  float( splai_wt_pr.loc[ splai_wt_pr.pos == config[ 'exon_donor_pos' ] ].wt_don_pr ), ] + \
                [ float( splai_wt_pr.loc[ splai_wt_pr.pos == ss ].wt_acc_pr ) for ss in alt_ss ] + \
@@ -449,6 +454,9 @@ def main():
                                                           'alt_c': 'alt',
                                                           'ref_c': 'ref' } )
 
+    splai_scores[ 'coord_pos' ] = splai_scores.pos
+    if ss_list:
+        splai_ss_pr[ 'coord_pos' ] = splai_ss_pr.pos
 
     sp.sat_subplots_wrapper( splai_scores,
                             [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
@@ -587,7 +595,7 @@ def main():
         print( 'Completing scoring and plots in %.2f minutes!' % ( ( T1 - T0 ) / 60 ) )
 
     with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
-        f.write( '\nCompleting scoring and plots in %.2f minutes!' % ( ( T1 - T0 ) / 60 ) )
+        f.write( '\nCompleting scoring and plots in %.2f minutes!\n\n' % ( ( T1 - T0 ) / 60 ) )
 
     print( 'See ya next time on The Splice is Right!' )
 

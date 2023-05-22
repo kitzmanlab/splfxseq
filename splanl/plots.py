@@ -3174,6 +3174,7 @@ def sat_subplots_wrapper( var_df,
                                  bar_labels = bar_labels,
                                  hatch_missing = hatch_dict[ idx ],
                                  hlines = hline_dict[ idx ],
+                                 cml = cml,
                                  tight = tight,
                                  save_margin = save_margin )
 
@@ -3203,6 +3204,7 @@ def sat_subplots_wrapper( var_df,
                                  bar_labels = bar_labels,
                                  hatch_missing = hatch_dict[ idx ],
                                  hlines = hline_dict[ idx ],
+                                 cml = cml,
                                  tight = tight,
                                  save_margin = save_margin )
 
@@ -3251,7 +3253,7 @@ def sat_subplots_wrapper( var_df,
                                  hlines = hline_dict[ idx ],
                                  tight = tight, )
 
-    if savefig:
+    if savefile:
         plt.savefig( savefile,
                     bbox_inches = 'tight',
                     pad_inches = save_margin,
@@ -3293,6 +3295,7 @@ def sat_subplot_psi_by_alt(   var_df,
                           bar_labels = None,
                           hatch_missing = False,
                           hlines = None,
+                          cml = False,
                           tight = True,
                           save_margin = .1 ):
 
@@ -3420,7 +3423,9 @@ def sat_subplot_psi_by_alt(   var_df,
 
     if bar_labels:
 
-        print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
+        if not cml:
+
+            print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
 
         if save_margin <= .1:
 
@@ -4848,6 +4853,7 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
                                       hatch_missing = False,
                                       color_missing = False,
                                       hlines = None,
+                                      cml = False,
                                       tight = True,
                                       save_margin = .1 ):
 
@@ -5010,7 +5016,9 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
 
     if bar_labels:
 
-        print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
+        if not cml:
+
+            print( 'Your labels might not show up in the notebook! Check saved pdf before butchering code!')
 
         if save_margin <= .1:
 
@@ -5238,6 +5246,7 @@ def sat_lollipop_subplots_wrapper( var_df,
                                               hatch_missing = hatch_dict[ idx ],
                                               color_missing = color_dict[ idx ],
                                               hlines = hline_dict[ idx ],
+                                              cml = cml,
                                               tight = tight,
                                               save_margin = save_margin )
 
@@ -5272,6 +5281,7 @@ def sat_lollipop_subplots_wrapper( var_df,
                                               hatch_missing = hatch_dict[ idx ],
                                               color_missing = color_dict[ idx ],
                                               hlines = hline_dict[ idx ],
+                                              cml = cml,
                                               tight = tight,
                                               save_margin = save_margin )
 
