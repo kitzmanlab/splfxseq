@@ -195,6 +195,10 @@ def main():
 
     t0 = time.time()
 
+    #hacky way to suppress the tensorflow messages
+    save_stdout = sys.stdout
+    sys.stdout = open('trash', 'w')
+
     splai_scores = css.splai_score_mult_variants_onegene( annot,
                                                             models,
                                                             refseq,
@@ -204,6 +208,8 @@ def main():
                                                             haplotypes = dnvs_haps,
                                                             scored_context = dist,
                                                             rev_strand = config[ 'strand' ] == '-' )
+
+    sys.stdout = save_stdout
 
     if config[ 'strand' ] == '-':
         splai_scores[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_scores.ref ]
@@ -246,6 +252,11 @@ def main():
                 f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( alt_ss ) ) )
 
         if ss_list:
+
+            #hacky way to suppress the tensorflow messages
+            save_stdout = sys.stdout
+            sys.stdout = open('trash', 'w')
+
             splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
                                                                                                 models,
                                                                                                 refseq,
@@ -256,6 +267,8 @@ def main():
                                                                                                 scored_context = dist,
                                                                                                 haplotypes = dnvs_haps,
                                                                                                 rev_strand = config[ 'strand' ] == '-' )
+
+            sys.stdout = save_stdout
 
             if config[ 'strand' ] == '-':
                 splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]

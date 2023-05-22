@@ -230,6 +230,7 @@ def main():
 
     t0 = time.time()
 
+    #hacky way to suppress the tensorflow messages
     save_stdout = sys.stdout
     sys.stdout = open('trash', 'w')
 
@@ -242,7 +243,7 @@ def main():
                                                             scored_context = dist,
                                                             rev_strand = config[ 'strand' ] == '-' )
     sys.stdout = save_stdout
-    
+
     if config[ 'strand' ] == '-':
         splai_scores[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_scores.ref ]
         splai_scores[ 'alt_c' ] = [ cd.rev_complement( a ) for a in splai_scores.alt ]
@@ -281,6 +282,9 @@ def main():
         with open( config[ 'data_out_dir' ] + 'splai_log.' + date_string + '.txt', 'a' ) as f:
             f.write( 'Scoring alternate splice sites at %s\n' % ( ', '.join( [ str( ss ) for ss in alt_ss ] ) ) )
 
+    save_stdout = sys.stdout
+    sys.stdout = open('trash', 'w')
+
     splai_wt_pr  =  css.splai_score_wt_onegene( annot,
                                                   models,
                                                   refseq,
@@ -290,11 +294,16 @@ def main():
                                                   scored_context = dist,
                                                   rev_strand = config[ 'strand' ] == '-' )
 
+    sys.stdout = save_stdout
+
     splai_wt_pr.to_csv( config[ 'data_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_WT_' + date_string + '.txt',
                          sep = '\t',
                          index = False )
 
     if ss_list:
+
+        save_stdout = sys.stdout
+        sys.stdout = open('trash', 'w')
 
         splai_ss_pr, splai_acc_pr, splai_don_pr = css.splai_ss_prob_mult_variants_onegene( annot,
                                                                                             models,
@@ -305,6 +314,8 @@ def main():
                                                                                             ss_list,
                                                                                             scored_context = dist,
                                                                                             rev_strand = config[ 'strand' ] == '-' )
+
+        sys.stdout = save_stdout
 
         if config[ 'strand' ] == '-':
             splai_ss_pr[ 'ref_c' ] = [ cd.rev_complement( r ) for r in splai_ss_pr.ref ]
@@ -462,7 +473,7 @@ def main():
                             [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                             'coord_pos',
                             [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                            fig_size = ( 40, 12 ),
+                            fig_size = ( 40, 15 ),
                             y_ax_lim = [ ( 0, 1 ) ],
                             y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                             x_ax_title = 'Coordinate position',
@@ -476,11 +487,12 @@ def main():
                                 [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                 'coord_pos',
                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
+                                fig_size = ( 40, 3*( 2 + 2*len( alt_ss ) ) ),
                                 y_ax_lim = [ ( 0, 1 ) ],
                                 y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
                                 x_ax_title = 'Coordinate position',
                                 tick_spacing = 10,
+                                y_label_rotation = 0,
                                 hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                 cml = True,
                                 savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_' + date_string + '.pdf',
@@ -488,15 +500,15 @@ def main():
 
     if config[ 'clinvar_file' ]:
 
-        lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 200 ),
-                         'LPP': ( '^', 'black', 'face', 1.5, 200 ),
-                         'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
+        lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 100 ),
+                         'LPP': ( '^', 'black', 'face', 1.5, 100 ),
+                         'VUS': ( 'd', 'black', 'face', 1.5, 100 ) }
 
         sp.sat_subplots_wrapper( splai_scores,
                                 [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                 config[ 'merge_pos_col' ],
                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                fig_size = ( 40, 12 ),
+                                fig_size = ( 40, 15 ),
                                 y_ax_lim = [ ( 0, 1 ) ],
                                 y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                 x_ax_title = config[ 'merge_pos_col' ],
@@ -514,7 +526,7 @@ def main():
                                     [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                     config[ 'merge_pos_col' ],
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
+                                    fig_size = ( 40, 3*( 2 + 2*len( alt_ss ) ) ),
                                     y_ax_lim = [ ( 0, 1 ) ],
                                     y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
                                     x_ax_title = config[ 'merge_pos_col' ],
@@ -522,6 +534,7 @@ def main():
                                     bar_labels = [ ( 'clinvar_abbrev', lit_marker_d, 1.2 ) ],
                                     tight = False,
                                     save_margin = 1,
+                                    y_label_rotation = 0,
                                     hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                     cml = True,
                                     savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_clinvar_' + date_string + '.pdf',
@@ -535,7 +548,7 @@ def main():
                                 [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                 config[ 'merge_pos_col' ],
                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                fig_size = ( 40, 12 ),
+                                fig_size = ( 40, 15 ),
                                 y_ax_lim = [ ( 0, 1 ) ],
                                 y_ax_title = [ 'DS_maxm', 'DS_ALm', 'DS_AGm', 'DS_DLm', 'DS_DGm', ],
                                 x_ax_title = config[ 'merge_pos_col' ],
@@ -553,7 +566,7 @@ def main():
                                     [ 'ss_acc_prob_' + str( ss ) for ss in alt_ss  ] +  [ 'ss_don_prob_' + str( ss ) for ss in alt_ss  ],
                                     config[ 'merge_pos_col' ],
                                     [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 2*( 2 + 2*len( alt_ss ) ) ),
+                                    fig_size = ( 40, 3*( 2 + 2*len( alt_ss ) ) ),
                                     y_ax_lim = [ ( 0, 1 ) ],
                                     y_ax_title = [ 'ACC', 'DON', ] + [ 'ACC_' + str( ss ) for ss in alt_ss ] + [ 'DON_' + str( ss ) for ss in alt_ss ],
                                     x_ax_title = config[ 'merge_pos_col' ],
@@ -561,6 +574,7 @@ def main():
                                     bar_labels = [ ( 'gnomad', lit_marker_d, 1.2 ) ],
                                     tight = False,
                                     save_margin = 1,
+                                    y_label_rotation = 0,
                                     hlines = [ ( wt_pr, 'gray', 'solid' ) for wt_pr in wt_probs ],
                                     cml = True,
                                     savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SS_probs_gnomad_' + date_string + '.pdf',
@@ -572,13 +586,16 @@ def main():
                                             [ 'DS_maxm' ] + [ col for col in splai_scores if col.endswith( '_diff' ) ],
                                             'coord_pos',
                                             [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                            fig_size = ( 40, 2*( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ),
+                                            fig_size = ( 40, 3*( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ),
                                              share_y = False,
+                                             lollipop_size = 6,
+                                             linewidth = 3,
                                              y_ax_lim = [ ( 0, 1 ) ] + [ ( -15, 15 ) ]*len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ),
                                              y_ax_title = [ 'SplAI' ] + [ col[ 7: ] for col in splai_scores if col.endswith( '_diff' ) ],
                                              x_ax_title = 'Coord pos',
                                              hlines = [ ( 0, 'black', 'solid' ) for i in range( 1 + len( [ col for col in splai_scores if col.endswith( '_diff' ) ] ) ) ],
                                              tick_spacing = 10,
+                                             y_label_rotation = 0,
                                              cml = True,
                                              savefile = config[ 'plots_out_dir' ] + config[ 'gencode_transcript_id' ] + '_splai_SNVs_maxent_' + date_string + '.pdf',
                                              )
