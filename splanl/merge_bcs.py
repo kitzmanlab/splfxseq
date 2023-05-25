@@ -851,10 +851,12 @@ def combine_isogrps_pe( new_grpnames_to_old_grpnames,
         new_grpnames_to_old_grpnames {[type]} -- [description]
     """
 
+    bctbl = jxnbybctbl.copy()
+
     chg_cols = [ isocol for isocol_l in new_grpnames_to_old_grpnames.values()
                         for isocol in isocol_l ]
 
-    other_cols = [ col for col in jxnbybctbl.columns
+    other_cols = [ col for col in bctbl.columns
                    if col not in chg_cols ]
 
     if keep_cols != other_cols:
@@ -863,25 +865,38 @@ def combine_isogrps_pe( new_grpnames_to_old_grpnames,
 
         print( '%i columns will be removed during this process.\nColumns: ' % len( missing_cols ), missing_cols )
 
-    newtbl = pd.DataFrame()
-    for c in keep_cols:
-        newtbl[c] = jxnbybctbl[c]
+    new_d = { col: bctbl[ col ].tolist() for col in keep_cols }
+    #for c in keep_cols:
+        #newtbl[c] = jxnbybctbl[c]
 
     for newgrp in new_grpnames_to_old_grpnames:
         oldgrp = new_grpnames_to_old_grpnames[ newgrp ]
 
-        if type(oldgrp)==str:
-            oldgrp=[oldgrp]
-        else:
+        #if type(oldgrp)==str:
+            #oldgrp=[oldgrp]
+        #else:
+            #assert type(oldgrp)==list
+        if type(oldgrp)!=str:
             assert type(oldgrp)==list
-
-        if len(oldgrp)==1:
-            newtbl[newgrp] = jxnbybctbl[oldgrp]
+            new_d[ newgrp ] = bctbl[ oldgrp ].sum( axis = 1 ).tolist()
         else:
-            newtbl[newgrp] = jxnbybctbl[oldgrp].sum(axis=1)
+            new_d[ newgrp ] = bctbl[ oldgrp ].tolist()
+
+        #if len(oldgrp)==1:
+            #new_d[ newgrp ] = bctbl[ oldgrp ].values.tolist()
+            #newtbl[newgrp] = bctbl[oldgrp]
+        #else:
+            #new_d[ newgrp ] = bctbl[ oldgrp ].sum( axis = 1 ).values.tolist()
+            #newtbl[newgrp] = bctbl[oldgrp].sum(axis=1)
+
+    newtbl = pd.DataFrame( new_d )
 
     for newgrp in new_grpnames_to_old_grpnames:
-        newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
+
+        newtbl[ newgrp+'_psi' ] = newtbl[ newgrp ] / newtbl[ 'usable_reads' ]
+
+    #for newgrp in new_grpnames_to_old_grpnames:
+        #newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
 
     #fills in missing PSI values with 0 so we can create sparse datasets
     newtbl = newtbl.fillna(0)
@@ -973,7 +988,7 @@ def across_sample_stats(ltbls,
                 'psbl_var':[],
                 'n_var':[],
                 'n_var_ex':[],
-                'n_var_in':[],
+                'n_var_int':[],
                 'n_reads':[],
                 'n_reads_passfilt':[],
                 'n_usable_reads':[],
@@ -1001,7 +1016,7 @@ def across_sample_stats(ltbls,
             out_tbl['psbl_var'].append( 3*( lsamp_df.pos.max() - lsamp_df.pos.min() ) )
             out_tbl['n_var'].append( int( lsamp_filt_df.shape[0] ) )
             out_tbl['n_var_ex'].append( int( lsamp_filt_df.loc[ lsamp_filt_df.exon ].shape[0] ) )
-            out_tbl['n_var_ex'].append( int( lsamp_filt_df.loc[ ~lsamp_filt_df.exon ].shape[0] ) )
+            out_tbl['n_var_int'].append( int( lsamp_filt_df.loc[ ~lsamp_filt_df.exon ].shape[0] ) )
             out_tbl['n_reads'].append( int( lsamp_df.sum_reads.sum() ) )
             out_tbl['n_reads_passfilt'].append( int( lsamp_df.sum_reads_passfilt.sum() ) )
             out_tbl['n_usable_reads'].append( int( lsamp_df.sum_usable_reads.sum() ) )

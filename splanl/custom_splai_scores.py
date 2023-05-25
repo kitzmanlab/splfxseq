@@ -36,7 +36,7 @@ def get_gene_bds( annots_df,
                       & ( ann_df.STRAND == strand ) ]
 
     if len( idx ) != 1:
-        print( 'The chromosome and position is not matching exactly one gene at %s:%i!' % ( chrom, position ) )
+        print( 'The chromosome and position is not matching exactly one gene at %s:%i!\nThis usually indicates your variant is outside the transcript range!' % ( chrom, position ) )
 
     tx_startsd = position - ( ann_df.at[ idx[ 0 ], 'TX_START' ] + 1 )
 
@@ -74,7 +74,7 @@ def get_2exon_bds( annots_df,
                       & ( ann_df.TX_END >= position ) ]
 
     assert len( idx ) == 1, \
-    'The chromosome and position is not matching exactly one gene!'
+    'The chromosome and position is not matching exactly one gene!\nThis usually indicates your variant is outside the transcript range!'
 
     #add 1 to adjust to 0-based coords
     #compute distance to center variant
@@ -123,7 +123,7 @@ def get_allexon_dist( annots_df,
                       & ( ann_df.TX_END >= position ) ]
 
     assert len( idx ) == 1, \
-    'The chromosome and position is not matching exactly one gene!'
+    'The chromosome and position is not matching exactly one gene!\nThis usually indicates your variant is outside the transcript range!'
 
     #add 1 to adjust to 0-based coords
     #compute distance to center variant
@@ -722,7 +722,7 @@ def get_allexon_bds( annots_df,
                       & ( ann_df.STRAND >= strand ) ]
 
     if len( idx ) != 1:
-        print( 'The chromosome and position is not matching exactly one gene at %s:%i!' % ( chrom, position ) )
+        print( 'The chromosome and position is not matching exactly one gene at %s:%i!\nThis usually indicates your variant is outside the transcript range!' % ( chrom, position ) )
 
     exon_starts = ann_df.at[ idx[ 0 ], 'EXON_START' ].split( ',' )
 

@@ -11,6 +11,7 @@ import splanl.coords as cd
 import splanl.post_processing as pp
 import splanl.junction_scorer as jn
 import splanl.merge_bcs as mbcs
+import splanl.score_motifs as sm
 import splanl.scrape_public_data as spd
 
 def main():
@@ -65,6 +66,8 @@ def main():
                          help = 'Directory + file of gnomAD3 processed by scrape_public_data module - MUST HAVE hg19 coords as hg19_pos column!' )
     parser.add_argument( '-cl', '--clinvar_file',
                          help = 'Directory + file of ClinVar processed by scrape_public_data module - MUST HAVE hg19 coords as hg19_pos column!' )
+    parser.add_argument( '-spl', '--spliceai_file',
+                         help = 'Directory + file of SpliceAI file computed by custom_spliceai_scores module - MUST HAVE hg19 coords as hg19_pos column!' )
     parser.add_argument( '-me', '--maxentscan',
                          action = 'store_true',
                          help = 'Include MaxEntScan scores?' )
@@ -80,7 +83,7 @@ def main():
     parser.add_argument( 'exonbed',
                          help = 'Exon bedfile: dir + filename (str) - used to create list of known isoforms' )
     parser.add_argument( 'reference_table',
-                         help = 'File containing sample names by exon: dir + filename (str)' )
+                         help = 'File containing sample names by exon (needs column named exon!!!): dir + filename (str)' )
     parser.add_argument( 'exon_name',
                          help = 'Exon name used in exon columns of the reference table (str)' )
     parser.add_argument( 'samp_to_bam_table',
@@ -170,6 +173,10 @@ def main():
     if config[ 'clinvar_file' ]:
         clinvar = pd.read_table( config[ 'clinvar_file' ] )
         assert 'hg19_pos' in clinvar, 'Your ClinVar dataframe must have hg19_pos as one of the columns!'
+
+    if config[ 'spliceai_file' ]:
+        splai = pd.read_table( config[ 'spliceai_file' ] )
+        assert 'hg19_pos' in splai, 'Your SpliceAI dataframe must have hg19_pos as one of the columns!'
 
     date_string = time.strftime( '%Y-%m%d', time.localtime() )
 
@@ -282,8 +289,6 @@ def main():
 
     canonical_isos = list( set( [ iso[ 1:-1 ] for iso in isos.values() if len( iso ) > 2 ] \
                                 + [ (), ( ( config[ 'exon_vstart' ], config[ 'exon_vend' ] ), ) ] ) )
-
-    print( canonical_isos )
 
     print( 'Getting isoform statistics - this takes some time...' )
 
@@ -410,7 +415,7 @@ def main():
     read_cut_unfilt = mbcs.create_read_count_df( msamp_bcs_processed,
                                             waterfall_thresh )
 
-    read_cut_unfilt.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + 'n_bcs_bysamp.' + date_string + '.txt',
+    read_cut_unfilt.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '.n_bcs_bysamp.' + date_string + '.txt',
                             sep = '\t',
                             index = False )
 
@@ -445,8 +450,21 @@ def main():
                                 sep='\t'
                                 )
 
-    msamp_byvartbl_allisos_snvs = { samp: mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
-                                    for samp in msamp_bcs_processed }
+    for samp in msamp_bcs_processed:
+        print( samp, len( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] ), msamp_bcs_processed[ samp ][ 'bc_read_cutoffs' ] )
+
+    for samp in msamp_bcs_processed:
+        print( samp, len( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] ) )
+
+        print( 'ref', msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ].ref.unique() )
+        print( 'alt', msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ].alt.unique() )
+
+        mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
+
+        print( 'Did it!' )
+
+    #msamp_byvartbl_allisos_snvs = { samp: mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
+                                    #for samp in msamp_bcs_processed }
 
     if min( msamp_byvartbl_allisos_snvs[ samp ].pos.min() for samp in msamp_byvartbl_allisos_snvs ) < config[ 'cloned_vstart' ] \
        or max( msamp_byvartbl_allisos_snvs[ samp ].pos.max() for samp in msamp_byvartbl_allisos_snvs ) > config[ 'cloned_vend' ]:
@@ -505,7 +523,7 @@ def main():
     for samp in msamp_byvartbl_snvs:
 
         msamp_byvartbl_snvs[ samp ][ 'hg19_pos' ] = cd.vpos_to_gpos( msamp_byvartbl_snvs[ samp ].pos,
-                                                                    ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
+                                                                    incl_iso[ 0 ],
                                                                     [ config[ 'exon_hg19_start' ], config[ 'exon_hg19_end' ] ],
                                                                     rev_strand = config[ 'strand' ] == '-' )
 
@@ -587,8 +605,8 @@ def main():
 
         print( canonical_isos )
 
-        acceptors = list( set( [ iso[ 0 ] for iso in canonical_isos if iso != () ] ) )
-        donors = list( set( [ iso[ 1 ] for iso in canonical_isos if iso != () ] ) )
+        acceptors = list( set( [ iso[ 0 ][ 0 ] for iso in canonical_isos if iso != () ] ) )
+        donors = list( set( [ iso[ 0 ][ 1 ] for iso in canonical_isos if iso != () ] ) )
 
         maxent_wt = sm.maxent_score_wt( refseq,
                                          byvartbl_wide.pos.unique().tolist() )
@@ -615,11 +633,11 @@ def main():
                                           alt_col,
                                           donors,
                                         )
-        byvartbl_wide = byvartbl_wide.set_index( 'pos', ref_col ).merge( maxent_wt.set_index( 'pos', ref_col ),
+        byvartbl_wide = byvartbl_wide.set_index( [ 'pos', ref_col ] ).merge( maxent_wt.set_index( [ 'pos', ref_col ] ),
                                                                             how = 'left',
                                                                             left_index = True,
                                                                             right_index = True ).reset_index()
-        byvartbl_long = byvartbl_long.set_index( 'pos', ref_col ).merge( maxent_wt.set_index( 'pos', ref_col ),
+        byvartbl_long = byvartbl_long.set_index( [ 'pos', ref_col ] ).merge( maxent_wt.set_index( [ 'pos', ref_col ] ),
                                                                        how = 'left',
                                                                        left_index = True,
                                                                        right_index = True ).reset_index()
@@ -634,6 +652,17 @@ def main():
             byvartbl_wide[ 'maxent_don_%i_diff' % don ] = byvartbl_wide[ 'maxent_don_%i' % don ] - byvartbl_wide.loc[ byvartbl_wide.pos == don ].maxent_wt_don.mean()
             byvartbl_long[ 'maxent_don_%i' % don ] = donor_d[ don ]
             byvartbl_long[ 'maxent_don_%i_diff' % don ] = byvartbl_long[ 'maxent_don_%i' % don ] - byvartbl_long.loc[ byvartbl_long.pos == don ].maxent_wt_don.mean()
+
+    if config[ 'spliceai_file' ]:
+        byvartbl_wide = sm.merge_splai( byvartbl_wide,
+                                        splai,
+                                        index_cols = [ 'hg19_pos', 'ref', 'alt' ] )
+        byvartbl_long = sm.merge_splai( byvartbl_long,
+                                        splai,
+                                        index_cols = [ 'hg19_pos', 'ref', 'alt' ] )
+
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+                    f.write( '%i variants classified as SDV at SpliceAI threshold of .2\n' % ( ( byvartbl_wide.DS_maxm >= .2 ).sum() ) )
 
     byvartbl_long.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_by_var_effects_snvs-' + date_string + '.txt',
                           sep = '\t',
@@ -892,6 +921,24 @@ def main():
                                              cml = True,
                                              savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_maxent.' + date_string + '.pdf',
                                              )
+
+    if config[ 'spliceai_file' ]:
+
+        sp.sat_subplots_wrapper( byvartbl_wide_sat,
+                                  wmean_cols + [ 'DS_maxm' ],
+                                  'hgvs_pos',
+                                  [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
+                                  fig_size = ( 40, 3*( len( wmean_cols ) + 1 ) ),
+                                  share_y = True,
+                                  legend = False,
+                                  y_ax_lim = [ ( 0, 1 ), ]*( len( wmean_cols ) + 1 ),
+                                  y_ax_title = [ col[ 6: ] for col in wmean_cols ] + [ 'DS_maxm' ],
+                                  x_ax_title = 'cDNA position',
+                                  y_label_rotation = 0,
+                                  tick_spacing = 10,
+                                  cml = True,
+                                  savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_isoform_psis_spliceai.' + date_string + '.pdf',
+                              )
 
     if config[ 'clinvar_file' ]:
 
