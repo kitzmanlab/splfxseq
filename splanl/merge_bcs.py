@@ -70,15 +70,15 @@ def compute_psi_values(
 
     assert read_count_col in out_df.columns, '%s is not within %s' % ( read_count_col, str( in_df ) )
 
-    out_d = { col + '_psi': out_df[ col ] / out_df[ read_count_col ]
-              for col in iso_col }
+    #out_d = { col + '_psi': out_df[ col ] / out_df[ read_count_col ]
+              #for col in iso_col }
 
-    psi_df = pd.DataFrame( out_d )
+    #psi_df = pd.DataFrame( out_d )
 
-    out_df = pd.concat( [ out_df, psi_df ],
-                        axis = 1 )
-    #for col in iso_col:
-        #out_df[ col + '_psi' ] = out_df[ col ] / out_df[ read_count_col ]
+    #out_df = pd.concat( [ out_df, psi_df ],
+                        #axis = 1 )
+    for col in iso_col:
+        out_df[ col + '_psi' ] = out_df[ col ] / out_df[ read_count_col ]
 
     return out_df
 
@@ -189,32 +189,32 @@ def summarize_byvar_singlevaronly(
     out_tbl = count_bcs_per_var_sa( out_tbl,
                                     sa_filt )
 
-    per_values = {}
+    #per_values = {}
     #these two are have the total barcode/read count in the denominator
-    per_values['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
-    per_values['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
-    #out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
-    #out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    #per_values['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    #per_values['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
 
     #these columns are based of barcodes which are passing the filter
     #so only reads from barcodes passing the filter are used in the denominator
-    per_values['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
-    per_values['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
-    per_values['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
-    per_values['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
-    per_values['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
-    per_values['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
-    #out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
-    #out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
-    #out_tbl['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
-    #out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
-    #out_tbl['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
-    #out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
+    #per_values['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
+    #per_values['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    #per_values['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
+    #per_values['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    #per_values['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
+    #per_values['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
+    out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
+    out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
 
-    per_df = pd.DataFrame( per_values )
+    #per_df = pd.DataFrame( per_values )
 
-    out_tbl = pd.concat( [ out_tbl, per_df ],
-                         axis = 1 )
+    #out_tbl = pd.concat( [ out_tbl, per_df ],
+                         #axis = 1 )
 
     return out_tbl
 
@@ -310,23 +310,23 @@ def summarize_byvar_singlevaronly_pe( subasm_tbl,
     out_tbl = count_bcs_per_var_sa( out_tbl,
                                     sa_filt )
 
-    per_tbl = {}
+    #per_tbl = {}
     #these two are have the total barcode/read count in the denominator
-    #out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
-    #out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
-    per_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
-    per_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    #per_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    #per_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
 
     #these columns are based of barcodes which are passing the filter
     #so only reads from barcodes passing the filter are used in the denominator
     for col in summary_cols:
-        #out_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
-        per_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
+        out_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
+        #per_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
 
-    per_df = pd.DataFrame( per_tbl )
+    #per_df = pd.DataFrame( per_tbl )
 
-    out_tbl = pd.concat( [ out_tbl, per_df ],
-                         axis = 1 )
+    #out_tbl = pd.concat( [ out_tbl, per_df ],
+                         #axis = 1 )
 
     return out_tbl
 
