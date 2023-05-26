@@ -44,7 +44,7 @@ def merge_subasm_and_rna_tbls(
     loc = subasm_tbl
     loc_remove = [ 'ref_target_length','minbq' ] + [c for c in loc if c.startswith('nbp_ge_') ]
     loc = [ c for c in loc if c not in loc_remove ]
-    subasm_tbl2 = subasm_tbl[ loc ]
+    subasm_tbl2 = subasm_tbl[ loc ].copy()
 
     join_tbl = pd.merge( subasm_tbl2,
                          rna_tbl,
@@ -70,8 +70,15 @@ def compute_psi_values(
 
     assert read_count_col in out_df.columns, '%s is not within %s' % ( read_count_col, str( in_df ) )
 
-    for col in iso_col:
-        out_df[ col + '_psi' ] = out_df[ col ] / out_df[ read_count_col ]
+    out_d = { col + '_psi': out_df[ col ] / out_df[ read_count_col ]
+              for col in iso_col }
+
+    psi_df = pd.DataFrame( out_d )
+
+    out_df = pd.concat( [ out_df, psi_df ],
+                        axis = 1 )
+    #for col in iso_col:
+        #out_df[ col + '_psi' ] = out_df[ col ] / out_df[ read_count_col ]
 
     return out_df
 
@@ -182,19 +189,32 @@ def summarize_byvar_singlevaronly(
     out_tbl = count_bcs_per_var_sa( out_tbl,
                                     sa_filt )
 
+    per_values = {}
     #these two are have the total barcode/read count in the denominator
-    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
-    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    per_values['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    per_values['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    #out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    #out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
 
     #these columns are based of barcodes which are passing the filter
     #so only reads from barcodes passing the filter are used in the denominator
-    out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
-    out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
-    out_tbl['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
-    out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
-    out_tbl['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
-    out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
+    per_values['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
+    per_values['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    per_values['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
+    per_values['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    per_values['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
+    per_values['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
+    #out_tbl['per_reads_usable'] = 100*( out_tbl.sum_usable_reads / out_tbl.sum_reads_passfilt )
+    #out_tbl['per_unmapped'] = 100*( out_tbl.sum_unmapped_reads / out_tbl.sum_reads_passfilt )
+    #out_tbl['per_badend'] = 100*( out_tbl.sum_badend_reads / out_tbl.sum_reads_passfilt )
+    #out_tbl['per_badstart'] = 100*( out_tbl.sum_badstart_reads / out_tbl.sum_reads_passfilt )
+    #out_tbl['per_softclipped'] = 100*( out_tbl.sum_softclipped_reads / out_tbl.sum_reads_passfilt )
+    #out_tbl['per_otheriso'] = 100*( out_tbl.sum_otheriso / out_tbl.sum_reads_passfilt )
 
+    per_df = pd.DataFrame( per_values )
+
+    out_tbl = pd.concat( [ out_tbl, per_df ],
+                         axis = 1 )
 
     return out_tbl
 
@@ -290,14 +310,23 @@ def summarize_byvar_singlevaronly_pe( subasm_tbl,
     out_tbl = count_bcs_per_var_sa( out_tbl,
                                     sa_filt )
 
+    per_tbl = {}
     #these two are have the total barcode/read count in the denominator
-    out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
-    out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    #out_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    #out_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
+    per_tbl['per_bc_passfilt'] = 100*( out_tbl.n_bc_passfilt / out_tbl.n_bc )
+    per_tbl['per_reads_passfilt'] = 100*( out_tbl.sum_reads_passfilt / out_tbl.sum_reads )
 
     #these columns are based of barcodes which are passing the filter
     #so only reads from barcodes passing the filter are used in the denominator
     for col in summary_cols:
-        out_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
+        #out_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
+        per_tbl[ f'per_{col}' ] = 100*( out_tbl[ f'sum_{col}' ] / out_tbl.sum_reads_passfilt )
+
+    per_df = pd.DataFrame( per_tbl )
+
+    out_tbl = pd.concat( [ out_tbl, per_df ],
+                         axis = 1 )
 
     return out_tbl
 
@@ -746,6 +775,7 @@ def process_bcs_wrapper( sample,
                          unmap_col = 'unmapped_reads',
                          read_tot_col = 'num_reads',
                          usable_read_col = 'usable_reads',
+                         #bc_col = 'barcode',
                          other_cols = [ 'secondary_reads', 'unpaired_reads', 'bad_starts', 'bad_ends', 'soft_clipped', 'other_isoform' ],
                          waterfall_thresh = [ 75, 95 ],
                          bc_read_cut_thresh = 95,
@@ -859,44 +889,28 @@ def combine_isogrps_pe( new_grpnames_to_old_grpnames,
     other_cols = [ col for col in bctbl.columns
                    if col not in chg_cols ]
 
-    if keep_cols != other_cols:
+    if set( keep_cols ) != set( other_cols ):
 
         missing_cols = list( set( other_cols ).difference( set( keep_cols ) ) )
 
         print( '%i columns will be removed during this process.\nColumns: ' % len( missing_cols ), missing_cols )
 
     new_d = { col: bctbl[ col ].tolist() for col in keep_cols }
-    #for c in keep_cols:
-        #newtbl[c] = jxnbybctbl[c]
 
     for newgrp in new_grpnames_to_old_grpnames:
         oldgrp = new_grpnames_to_old_grpnames[ newgrp ]
 
-        #if type(oldgrp)==str:
-            #oldgrp=[oldgrp]
-        #else:
-            #assert type(oldgrp)==list
         if type(oldgrp)!=str:
             assert type(oldgrp)==list
             new_d[ newgrp ] = bctbl[ oldgrp ].sum( axis = 1 ).tolist()
         else:
             new_d[ newgrp ] = bctbl[ oldgrp ].tolist()
 
-        #if len(oldgrp)==1:
-            #new_d[ newgrp ] = bctbl[ oldgrp ].values.tolist()
-            #newtbl[newgrp] = bctbl[oldgrp]
-        #else:
-            #new_d[ newgrp ] = bctbl[ oldgrp ].sum( axis = 1 ).values.tolist()
-            #newtbl[newgrp] = bctbl[oldgrp].sum(axis=1)
-
-    newtbl = pd.DataFrame( new_d )
+    newtbl = pd.DataFrame( new_d, index = bctbl.index )
 
     for newgrp in new_grpnames_to_old_grpnames:
 
         newtbl[ newgrp+'_psi' ] = newtbl[ newgrp ] / newtbl[ 'usable_reads' ]
-
-    #for newgrp in new_grpnames_to_old_grpnames:
-        #newtbl[newgrp+'_psi'] = newtbl[newgrp] / newtbl['usable_reads']
 
     #fills in missing PSI values with 0 so we can create sparse datasets
     newtbl = newtbl.fillna(0)

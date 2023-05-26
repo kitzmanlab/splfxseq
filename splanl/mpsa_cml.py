@@ -67,7 +67,10 @@ def main():
     parser.add_argument( '-cl', '--clinvar_file',
                          help = 'Directory + file of ClinVar processed by scrape_public_data module - MUST HAVE hg19 coords as hg19_pos column!' )
     parser.add_argument( '-spl', '--spliceai_file',
-                         help = 'Directory + file of SpliceAI file computed by custom_spliceai_scores module - MUST HAVE hg19 coords as hg19_pos column!' )
+                         help = 'Directory + file of SpliceAI file computed by custom_spliceai_scores module' )
+    parser.add_argument( '-splcol', '--merge_splai_basic_cols_only',
+                         action = 'store_false',
+                         help = 'Merge the SpliceAI DS columns only - turn on if the SpliceAI file has additional columns to drop')
     parser.add_argument( '-me', '--maxentscan',
                          action = 'store_true',
                          help = 'Include MaxEntScan scores?' )
@@ -131,6 +134,8 @@ def main():
     parser.add_argument( 'exon_hg19_end',
                          type = int,
                          help = 'hg19 end position of exon (int)' )
+    parser.add_argument( 'chrom',
+                         help = 'Chromosome - can be with or without chr (str)' )
     parser.add_argument( 'strand',
                          choices = [ '+', '-' ],
                          help = 'Strand - either + or - (str)' )
@@ -175,24 +180,41 @@ def main():
         assert 'hg19_pos' in clinvar, 'Your ClinVar dataframe must have hg19_pos as one of the columns!'
 
     if config[ 'spliceai_file' ]:
-        splai = pd.read_table( config[ 'spliceai_file' ] )
-        assert 'hg19_pos' in splai, 'Your SpliceAI dataframe must have hg19_pos as one of the columns!'
+        splai = pd.read_table( config[ 'spliceai_file' ],
+                               dtype = { 'chrom': object } )
+        if config[ 'merge_splai_basic_cols_only' ]:
+            splai = splai[ [ 'chrom', 'pos', 'ref', 'alt' ] + [ col for col in splai if col.startswith( 'DS_' ) or col.startswith( 'DP_' ) ] ].copy()
+
+    chrom = config[ 'chrom' ] if not config[ 'chrom' ].startswith( 'chr' ) else config[ 'chrom' ][ 3: ]
+    chrom_chr = config[ 'chrom' ] if config[ 'chrom' ].startswith( 'chr' ) else 'chr' + config[ 'chrom' ]
 
     date_string = time.strftime( '%Y-%m%d', time.localtime() )
 
     refseq_d = pp.get_refseq( config[ 'vector_fafile' ] )
 
     if config[ 'refseqname' ]:
-        assert config[ 'refseqname' ] in refseq_d, 'Refseqname (-rn) not in provided fasta file!'
-        refseq = refseq_d[ config[ 'refseqname' ] ]
+        if config[ 'refseqname' ] in refseq_d:
+            refseq = refseq_d[ config[ 'refseqname' ] ]
+        else:
+            if config[ 'verbose' ]:
+                print( 'Refseqname (-rn) %s not in fasta - trying %s' % ( config[ 'refseqname' ], chrom_chr  ) )
+            with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+                f.write( 'Refseqname (-rn) %s not in fasta - trying %s\n' % ( config[ 'refseqname' ], chrom_chr  ) )
+            assert chrom_chr in refseq_d, 'Refseqname (-rn) %s and chromosome %s not in provided fasta file - only %s!' % ( config[ 'refseqname' ], chrom_chr, ', '.join( list( refseq_d.keys() ) ) )
+            refseq = refseq_d[ chrom_chr ]
     elif len( refseq_d ) == 1:
         if config[ 'verbose' ]:
-            print( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
-        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
-            f.write( 'No refseqname (-rn) provided - using ' + list( refseq_d.keys() )[ 0 ] + '\n' )
+            print( 'No refseqname (-rn) provided - using %s' % list( refseq_d.keys() )[ 0 ] )
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( 'No refseqname (-rn) provided - using %s\n' % list( refseq_d.keys() )[ 0 ] )
         refseq = list( refseq_d.values() )[ 0 ]
     else:
-        sys.exit( 'Multiple sequences in fasta file! Please provide the name of the sequence in the fasta file using the -rn argument' )
+        if config[ 'verbose' ]:
+            print( 'No refseqname (-rn) provided - trying %s' % chrom_chr  )
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( 'No refseqname (-rn) provided - trying %s\n' % chrom_chr )
+        assert chrom_chr in refseq_d, 'Chromosome %s not in provided fasta file - only %s! Try specifying refseqname (-rn)...' % ( chrom_chr, ', '.join( list( refseq_d.keys() ) ) )
+        refseq = refseq_d[ chrom_chr ]
 
     refseq_d = pp.get_refseq( config[ 'genomic_fafile' ] )
 
@@ -202,7 +224,7 @@ def main():
     elif len( refseq_d ) == 1:
         if config[ 'verbose' ]:
             print( 'No refseqname (-crn) provided - using ' + list( refseq_d.keys() )[ 0 ] )
-        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
             f.write( 'No refseqname (-crn) provided - using ' + list( refseq_d.keys() )[ 0 ] + '\n' )
         chrom_refseq = list( refseq_d.values() )[ 0 ]
     else:
@@ -243,7 +265,7 @@ def main():
 
     if config[ 'verbose' ]:
         print( 'Collected isoforms across samples in %.2f minutes!' % ( ( t1 - t0 ) / 60 ) )
-    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
         f.write( 'Collected isoforms across samples in %.2f minutes!\n' % ( ( t1 - t0 ) / 60 ) )
 
     if config[ 'unmapped_bam_file_dir' ]:
@@ -277,7 +299,7 @@ def main():
     if config[ 'verbose' ]:
         print( 'Known isoforms from provided exon bedfile: ')
         print( isos )
-    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
         f.write( 'Known isoforms from provided exon bedfile:\n' )
         print( isos, file = f )
         f.write( '\n' )
@@ -313,7 +335,7 @@ def main():
 
     if config[ 'verbose' ]:
         print( 'Collected isoform statistics in %.2f minutes!' % ( ( t1 - t0 ) / 60 ) )
-    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
         f.write( 'Collected isoform statistics in %.2f minutes!\n' % ( ( t1 - t0 ) / 60 ) )
 
     iso_df_stats.reset_index().to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_isoforms.' + date_string + '.txt',
@@ -340,7 +362,7 @@ def main():
         print( 'Percentage of reads in isoforms passing filters in ALL samples %.2f' % ( iso_df_stats.loc[ iso_df_stats.total_passfilt == len( msamp_fn ) ].total_read_count.sum() / iso_df_stats.total_read_count.sum() )*100 )
         print( 'Percentage of barcodes in isoforms passing filters in ALL samples %.2f' % ( iso_df_stats.loc[ iso_df_stats.total_passfilt == len( msamp_fn ) ].total_num_bcs.sum() / iso_df_stats.total_num_bcs.sum() )*100 )
 
-    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
         f.write( 'Total isoforms collected: %i\n' % iso_df_stats.shape[ 0 ] )
         f.write( 'Total isoforms passing filters in at least one sample: %i\n' % iso_df_stats.query( 'total_passfilt > 0' ).shape[ 0 ] )
         f.write( 'Percentage of reads in isoforms NOT passing filters: %.2f\n' % ( ( iso_df_stats.query( 'total_passfilt == 0' ).total_read_count.sum() / iso_df_stats.total_read_count.sum() )*100 ) )
@@ -354,14 +376,14 @@ def main():
                    for samp in msamp_fn }
 
     incl_iso = ( ( config[ 'exon_vstart' ], config[ 'exon_vend' ] ), )
-    isonamedict = { 'CAN_ISO' + str( i ): [ iso ]
+    isonamedict = { 'CAN_ISO' + str( i ): [ iso[ 0 ] ]
                     for i,iso in enumerate( canonical_isos ) if iso != () and iso != incl_iso }
     isonamedict[ 'SKIP' ] = [ ]
     isonamedict[ 'INCL' ] = [ incl_iso[ 0 ] ]
 
     if config[ 'verbose' ]:
         print( 'Named isoforms are: ', isonamedict )
-    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'w' ) as f:
+    with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
         f.write( 'Named isoforms are:\n' )
         print( isonamedict, file = f )
         f.write( '\n' )
@@ -450,21 +472,8 @@ def main():
                                 sep='\t'
                                 )
 
-    for samp in msamp_bcs_processed:
-        print( samp, len( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] ), msamp_bcs_processed[ samp ][ 'bc_read_cutoffs' ] )
-
-    for samp in msamp_bcs_processed:
-        print( samp, len( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] ) )
-
-        print( 'ref', msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ].ref.unique() )
-        print( 'alt', msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ].alt.unique() )
-
-        mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
-
-        print( 'Did it!' )
-
-    #msamp_byvartbl_allisos_snvs = { samp: mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
-                                    #for samp in msamp_bcs_processed }
+    msamp_byvartbl_allisos_snvs = { samp: mbcs.filter_byvartbl_snvonly( msamp_bcs_processed[ samp ][ 'msamp_byvartbl_allisos' ] )
+                                    for samp in msamp_bcs_processed }
 
     if min( msamp_byvartbl_allisos_snvs[ samp ].pos.min() for samp in msamp_byvartbl_allisos_snvs ) < config[ 'cloned_vstart' ] \
        or max( msamp_byvartbl_allisos_snvs[ samp ].pos.max() for samp in msamp_byvartbl_allisos_snvs ) > config[ 'cloned_vend' ]:
@@ -603,8 +612,6 @@ def main():
 
     if config[ 'maxentscan' ]:
 
-        print( canonical_isos )
-
         acceptors = list( set( [ iso[ 0 ][ 0 ] for iso in canonical_isos if iso != () ] ) )
         donors = list( set( [ iso[ 0 ][ 1 ] for iso in canonical_isos if iso != () ] ) )
 
@@ -619,15 +626,29 @@ def main():
             alt_col = 'alt_c'
             maxent_wt = maxent_wt.rename( columns = { 'ref': 'ref_c' } )
 
-        acceptor_d = sm.maxent_score_acceptors( refseq,
+        acceptor_dw = sm.maxent_score_acceptors( refseq,
                                                 byvartbl_wide,
                                                 'pos',
                                                 ref_col,
                                                 alt_col,
                                                 acceptors,
                                             )
-        donor_d = sm.maxent_score_donors( refseq,
+        acceptor_dl = sm.maxent_score_acceptors( refseq,
+                                                byvartbl_long,
+                                                'pos',
+                                                ref_col,
+                                                alt_col,
+                                                acceptors,
+                                            )
+        donor_dw = sm.maxent_score_donors( refseq,
                                           byvartbl_wide,
+                                          'pos',
+                                          ref_col,
+                                          alt_col,
+                                          donors,
+                                        )
+        donor_dl = sm.maxent_score_donors( refseq,
+                                          byvartbl_long,
                                           'pos',
                                           ref_col,
                                           alt_col,
@@ -642,24 +663,38 @@ def main():
                                                                        left_index = True,
                                                                        right_index = True ).reset_index()
 
-        for acc in acceptor_d:
-            byvartbl_wide[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
+        for acc in acceptor_dw:
+            byvartbl_wide[ 'maxent_acc_%i' % acc ] = acceptor_dw[ acc ]
             byvartbl_wide[ 'maxent_acc_%i_diff' % acc ] = byvartbl_wide[ 'maxent_acc_%i' % acc ] - byvartbl_wide.loc[ byvartbl_wide.pos == acc ].maxent_wt_acc.mean()
-            byvartbl_long[ 'maxent_acc_%i' % acc ] = acceptor_d[ acc ]
+            byvartbl_long[ 'maxent_acc_%i' % acc ] = acceptor_dl[ acc ]
             byvartbl_long[ 'maxent_acc_%i_diff' % acc ] = byvartbl_long[ 'maxent_acc_%i' % acc ] - byvartbl_long.loc[ byvartbl_long.pos == acc ].maxent_wt_acc.mean()
-        for don in donor_d:
-            byvartbl_wide[ 'maxent_don_%i' % don ] = donor_d[ don ]
+        for don in donor_dw:
+            byvartbl_wide[ 'maxent_don_%i' % don ] = donor_dw[ don ]
             byvartbl_wide[ 'maxent_don_%i_diff' % don ] = byvartbl_wide[ 'maxent_don_%i' % don ] - byvartbl_wide.loc[ byvartbl_wide.pos == don ].maxent_wt_don.mean()
-            byvartbl_long[ 'maxent_don_%i' % don ] = donor_d[ don ]
+            byvartbl_long[ 'maxent_don_%i' % don ] = donor_dl[ don ]
             byvartbl_long[ 'maxent_don_%i_diff' % don ] = byvartbl_long[ 'maxent_don_%i' % don ] - byvartbl_long.loc[ byvartbl_long.pos == don ].maxent_wt_don.mean()
 
+    byvartbl_long.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_by_var_effects_snvs-' + date_string + '.txt',
+                          sep = '\t',
+                          index = False )
+
+    byvartbl_wide.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_by_var_effects_snvs_wide-' + date_string + '.txt',
+                          sep = '\t',
+                          index = False )
+
+
     if config[ 'spliceai_file' ]:
+        if len( splai.chrom.unique() ) == 1 and 'chr' in splai.chrom.unique()[ 0 ]:
+            byvartbl_wide[ 'chrom' ] = chrom_chr
+            byvartbl_long[ 'chrom' ] = chrom_chr
+        elif len( splai.chrom.unique() ) == 1 and 'chr' not in splai.chrom.unique()[ 0 ]:
+            byvartbl_wide[ 'chrom' ] = chrom
+            byvartbl_long[ 'chrom' ] = chrom
+
         byvartbl_wide = sm.merge_splai( byvartbl_wide,
-                                        splai,
-                                        index_cols = [ 'hg19_pos', 'ref', 'alt' ] )
+                                        splai, )
         byvartbl_long = sm.merge_splai( byvartbl_long,
-                                        splai,
-                                        index_cols = [ 'hg19_pos', 'ref', 'alt' ] )
+                                        splai, )
 
         with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
                     f.write( '%i variants classified as SDV at SpliceAI threshold of .2\n' % ( ( byvartbl_wide.DS_maxm >= .2 ).sum() ) )
@@ -702,7 +737,7 @@ def main():
 
     #have to put back the hgvs positions
     for samp in sat_by_samp:
-        sat_by_samp[ samp ][ 'hgvs_pos' ] = pos_to_hgvspos( sat_by_samp[ samp ].pos,
+        sat_by_samp[ samp ][ 'hgvs_pos' ] = cd.pos_to_hgvspos( sat_by_samp[ samp ].pos,
                                                             ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
                                                             [ incl_iso[ 0 ] ],
                                                             [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
@@ -981,6 +1016,12 @@ def main():
         f.write( 'Alt colors: A = Blue, C = Orange, G = Green, T = Purple\n' )
         f.write( 'gnomAD plots: In gnomAD = open circle\n')
         f.write( 'ClinVar plots: LBB = open square, LPP = black triangle, VUS = black diamond\n' )
+        f.write( 'Calling variants as SDV takes some time and consideration - do it in a notebook!\n' )
+        f.write(  'Check out a post_processing notebook as an example of how to call SDV\n' )
+
+    print( 'Calling variants as SDV takes some time and consideration - do it in a notebook!' )
+    print( 'Check out a post_processing notebook as an example of how to call SDV' )
+    print( 'See ya next time on The Splice is Right - MPSA edition!' )
 
     return
 

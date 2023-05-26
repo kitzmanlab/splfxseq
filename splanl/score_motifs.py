@@ -576,11 +576,15 @@ def merge_scap( tbl_by_var,
 
 def merge_splai( tbl_by_var,
                  splai_scores,
-                 index_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+                 index_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ],
+                 pos_col_idx = 1, ):
 
     tbv = tbl_by_var.set_index( index_cols ).copy()
 
-    splai = splai_scores.rename( columns = { 'pos': index_cols[ 1 ] } ).set_index( index_cols ).copy()
+    if index_cols[ pos_col_idx ] not in splai_scores:
+        splai_scores = splai_scores.rename( columns = { 'pos': index_cols[ pos_col_idx ] } )
+
+    splai = splai_scores.set_index( index_cols ).copy()
 
     outdf = tbv.merge( splai,
                        how = 'left',
