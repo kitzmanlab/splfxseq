@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 def rev_complement( seq ):
     """
@@ -107,7 +108,10 @@ def create_liftover_bed( chrom,
                          end,
                          coords = 'hg19' ):
 
-    assert chrom.startswith( 'c' ), 'Please enter your chromosome starting with chr'
+    if not chrom.startswith( 'chr' ):
+        chrom_chr = 'chr' + str( chrom )
+    else:
+        chrom_chr = chrom
 
     out_d = { 'chrom': [],
               coords + '_pos': [],
@@ -116,7 +120,7 @@ def create_liftover_bed( chrom,
 
     for pos in range( start, end + 1 ):
 
-        out_d[ 'chrom' ].append( chrom )
+        out_d[ 'chrom' ].append( chrom_chr )
         out_d[ coords + '_pos' ].append( pos )
         out_d[ 'end' ].append( pos + 1 )
         out_d[ 'name' ].append( out_d[ 'chrom' ][ -1 ] + ':' + str( pos ) )
@@ -124,6 +128,29 @@ def create_liftover_bed( chrom,
     outdf = pd.DataFrame( out_d )
 
     return outdf
+
+def liftover_hg38_to_hg19( tbl_by_var_hg38,
+                           liftover_bed ):
+
+    tbv = tbl_by_var_hg38.copy()
+
+    assert 'hg38_pos' in tbv, 'Your original table needs to have hg38_pos as a column!'
+    assert 'chrom' in tbv, 'Your original table needs to have chrom as a column!'
+
+    lift = liftover_bed.copy()
+
+    hg38tohg19_lift = { chrom: { hg38:hg19
+                                 for hg38, hg19 in zip( chrom_df.hg38_pos, chrom_df.hg19_pos ) }
+                         for chrom, chrom_df in lift.groupby( 'chrom' ) }
+
+    for chrom in tbv.chrom.unique():
+
+        assert chrom in hg38tohg19_lift, 'Your chromosomes are not matching - do you need to add or remove chr?'
+
+    tbv[ 'hg19_pos' ] = [ hg38tohg19_lift[ chrom ][ hg38 ] if hg38 in hg38tohg19_lift[ chrom ] else np.nan
+                          for chrom,hg38 in zip( tbv.chrom, tbv.hg38_pos ) ]
+
+    return tbv
 
 def create_liftover_bed_byvar( tbl_by_var,
                                chrom_col = 'chrom',

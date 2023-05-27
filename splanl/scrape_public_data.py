@@ -19,30 +19,74 @@ def create_gnomad_df( gnomad_tbx,
 
     for row in gnomad_tbx.fetch( chrom ,
                                  coords[0],
-                                 coords[1],
-                                 parser=pysam.asVCF() ):
+                                 coords[1], ):
 
-        out_tbl[ 'chrom' ].append( chrom )
-        #add one to account for stupid 0 and 1 based indexing issues
-        out_tbl[ genome + '_pos' ].append( row.pos + 1 )
+        if 'PASS' not in row.filter.keys() and '.' not in row.filter.keys():
+            continue
+
+        out_tbl[ 'chrom' ].append( row.chrom )
+        out_tbl[ genome + '_pos' ].append( row.pos )
 
         out_tbl[ 'ref' ].append( row.ref )
-        out_tbl[ 'alt' ].append( row.alt )
-
-        linfo = row.info.split(';')
-        #turn it into a dictionary so we can grab based on key names
-        dinfo = { i.split( '=' )[ 0 ]: i.split( '=' )[1] for i in linfo if '=' in i }
+        assert len( row.alts ) == 1, 'Unexpectedly, more than one alt - check data carefully and alter code if needed.'
+        out_tbl[ 'alt' ].append( row.alts[ 0 ] )
 
         #keep int counts to avoid any loss of info for small allele freq
-        out_tbl[ 'n_alt' ].append( int( dinfo['AC'] ) )
-        out_tbl[ 'n_allele' ].append( int( dinfo['AN'] ) )
-        out_tbl[ 'n_homo' ].append( int( dinfo['nhomalt'] ) )
+        assert len( row.info['AC'] ) == 1, 'Unexpectedly, more than one alt allele count - check data carefully and alter code if needed.'
+        out_tbl[ 'n_alt' ].append( int( row.info['AC'][ 0 ] ) )
+        out_tbl[ 'n_allele' ].append( int( row.info['AN'] ) )
+        assert len( row.info['nhomalt'] ) == 1, 'Unexpectedly, more than one homozygotes count - check data carefully and alter code if needed.'
+        out_tbl[ 'n_homo' ].append( int( row.info['nhomalt'][ 0 ] ) )
 
     out_df = pd.DataFrame( out_tbl )
 
     out_df[ 'af' ] = out_df.n_alt / out_df.n_allele
 
     return out_df
+
+def merge_gnomad2_data( gnomad2_genomes,
+                        gnomad2_exomes,
+                        merge_cols = [ 'chrom', 'hg19_pos', 'ref', 'alt' ] ):
+
+    gen = gnomad2_genomes.set_index( merge_cols ).copy()
+    ex = gnomad2_exomes.set_index( merge_cols ).copy()
+
+    #so no overlapping entries - just merge normally!
+    if len( gen.index.intersection( ex.index ) ) == 0:
+        outdf = gen.merge( ex,
+                           how = 'outer',
+                           left_index = True,
+                           right_index = True ).reset_index()
+    else:
+        out_d = { col: [] for col in merge_cols + gen.columns.tolist() if col != 'af' }
+
+        idx_all = gen.index.union( ex.index )
+
+        for idx in idx_all:
+
+            out_d[ 'chrom' ].append( idx[ 0 ] )
+            out_d[ 'hg19_pos' ].append( idx[ 1 ] )
+            out_d[ 'ref' ].append( idx[ 2 ] )
+            out_d[ 'alt' ].append( idx[ 3 ] )
+
+            if idx in gen.index and idx in ex.index:
+                out_d[ 'n_alt' ].append( int( gen.loc[ idx ].n_alt ) + int( ex.loc[ idx ].n_alt ) )
+                out_d[ 'n_allele' ].append( int( gen.loc[ idx ].n_allele ) + int( ex.loc[ idx ].n_allele ) )
+                out_d[ 'n_homo' ].append( int( gen.loc[ idx ].n_homo ) + int( ex.loc[ idx ].n_homo ) )
+            elif idx in gen.index:
+                out_d[ 'n_alt' ].append( int( gen.loc[ idx ].n_alt ) )
+                out_d[ 'n_allele' ].append( int( gen.loc[ idx ].n_allele ) )
+                out_d[ 'n_homo' ].append( int( gen.loc[ idx ].n_homo ) )
+            elif idx in ex.index:
+                out_d[ 'n_alt' ].append( int( ex.loc[ idx ].n_alt ) )
+                out_d[ 'n_allele' ].append( int( ex.loc[ idx ].n_allele ) )
+                out_d[ 'n_homo' ].append( int( ex.loc[ idx ].n_homo ) )
+
+        outdf = pd.DataFrame( out_d )
+
+        outdf[ 'af' ] = outdf.n_alt / outdf.n_allele
+
+    return outdf
 
 def is_int( str ):
   try:
