@@ -4775,7 +4775,7 @@ def plot_clinvar_by_interp( tbl_by_var,
 
             if row_label:
 
-                ax[ j ][ 0 ].set_ylabel( ycol )
+                ax[ j ][ 0 ].set_ylabel( row_label[ j ] )
 
             #my stupid markers keep getting cut off
             x_l,x_r = ax[ j ][ i ].get_xlim()

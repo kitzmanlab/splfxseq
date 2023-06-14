@@ -447,7 +447,7 @@ def main():
     sp.plot_waterfall_bysamp( read_cut_unfilt,
                            cutoffs = tuple( waterfall_thresh ),
                            cml = True,
-                           savefig = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + 'waterfall_cutoffs_bysamp.pdf',
+                           savefig = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_waterfall_cutoffs_bysamp.pdf',
                              )
 
     for samp in msamp_bcs_processed:
@@ -567,6 +567,14 @@ def main():
                                              list( isonamedict.keys() ) + [ 'OTHER' ],
                                              'n_bc_passfilt',
                                             )
+    if config[ 'strand' ] == '+':
+        byvartbl_wide[ 'hgvs_var' ] = [ p + r + '>' + a
+                                        for p,( r, a ) in zip( byvartbl_wide.hgvs_pos,
+                                                               zip( byvartbl_wide.ref, byvartbl_wide.alt ) ) ]
+    elif config[ 'strand' ] == '-':
+        byvartbl_wide[ 'hgvs_var' ] = [ p + r + '>' + a
+                                        for p,( r, a ) in zip( byvartbl_wide.hgvs_pos,
+                                                               zip( byvartbl_wide.ref_c, byvartbl_wide.alt_c ) ) ]
     print( 'Adding in public data and bioinformatics predictions if requested..' )
 
     if config[ 'gnomad2_file' ]:
@@ -604,6 +612,8 @@ def main():
 
         byvartbl_wide.loc[ byvartbl_wide.clinvar_interp.isnull(), 'clinvar_abbrev' ] = ''
         byvartbl_long.loc[ byvartbl_long.clinvar_interp.isnull(), 'clinvar_abbrev' ] = ''
+        byvartbl_wide.loc[ byvartbl_wide.clinvar_interp.isnull(), 'clinvar_interp' ] = ''
+        byvartbl_long.loc[ byvartbl_long.clinvar_interp.isnull(), 'clinvar_interp' ] = ''
 
         with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
                     f.write( '%i variants intersect with ClinVar entries\n' % ( byvartbl_wide.clinvar_interp != '' ).sum() )
@@ -612,11 +622,19 @@ def main():
 
     if config[ 'maxentscan' ]:
 
-        acceptors = list( set( [ iso[ 0 ][ 0 ] for iso in canonical_isos if iso != () ] ) )
-        donors = list( set( [ iso[ 0 ][ 1 ] for iso in canonical_isos if iso != () ] ) )
+        maxent_wt = sm.maxent_score_wt( chrom_refseq,
+                                         byvartbl_wide.hg19_pos.unique().tolist(),
+                                         rev_strand = config[ 'strand' ] == '-',
+                                         pos_out_col = 'hg19_pos' )
 
-        maxent_wt = sm.maxent_score_wt( refseq,
-                                         byvartbl_wide.pos.unique().tolist() )
+        byvartbl_wide = byvartbl_wide.set_index( [ 'hg19_pos', 'ref' ] ).merge( maxent_wt.set_index( [ 'hg19_pos', 'ref' ] ),
+                                                                            how = 'left',
+                                                                            left_index = True,
+                                                                            right_index = True ).reset_index()
+        byvartbl_long = byvartbl_long.set_index( [ 'hg19_pos', 'ref' ] ).merge( maxent_wt.set_index( [ 'hg19_pos', 'ref' ] ),
+                                                                       how = 'left',
+                                                                       left_index = True,
+                                                                       right_index = True ).reset_index()
 
         if config[ 'strand' ] == '+':
             ref_col = 'ref'
@@ -624,7 +642,9 @@ def main():
         elif config[ 'strand' ] == '-':
             ref_col = 'ref_c'
             alt_col = 'alt_c'
-            maxent_wt = maxent_wt.rename( columns = { 'ref': 'ref_c' } )
+
+        acceptors = list( set( [ iso[ 0 ][ 0 ] for iso in canonical_isos if iso != () ] ) )
+        donors = list( set( [ iso[ 0 ][ 1 ] for iso in canonical_isos if iso != () ] ) )
 
         acceptor_dw = sm.maxent_score_acceptors( refseq,
                                                 byvartbl_wide,
@@ -654,14 +674,6 @@ def main():
                                           alt_col,
                                           donors,
                                         )
-        byvartbl_wide = byvartbl_wide.set_index( [ 'pos', ref_col ] ).merge( maxent_wt.set_index( [ 'pos', ref_col ] ),
-                                                                            how = 'left',
-                                                                            left_index = True,
-                                                                            right_index = True ).reset_index()
-        byvartbl_long = byvartbl_long.set_index( [ 'pos', ref_col ] ).merge( maxent_wt.set_index( [ 'pos', ref_col ] ),
-                                                                       how = 'left',
-                                                                       left_index = True,
-                                                                       right_index = True ).reset_index()
 
         for acc in acceptor_dw:
             byvartbl_wide[ 'maxent_acc_%i' % acc ] = acceptor_dw[ acc ]
@@ -697,7 +709,7 @@ def main():
                                         splai, )
 
         with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
-                    f.write( '%i variants classified as SDV at SpliceAI threshold of .2\n' % ( ( byvartbl_wide.DS_maxm >= .2 ).sum() ) )
+            f.write( '%i variants classified as SDV at SpliceAI threshold of .2\n' % ( ( byvartbl_wide.DS_maxm >= .2 ).sum() ) )
 
     byvartbl_long.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_by_var_effects_snvs-' + date_string + '.txt',
                           sep = '\t',
@@ -711,86 +723,90 @@ def main():
 
     byvartbl_long[ 'n_bc_passfilt_log10' ] = np.log10( byvartbl_long[ 'n_bc_passfilt' ] + .1 )
 
-    sat_by_samp = { samp: sp.saturate_variants( byvartbl_long.loc[ byvartbl_long[ 'sample' ] == samp ],
+    #variants that don't match the genomic reference screw up a lot of the plots
+    ref_idx = pd.DataFrame( { 'hg19_pos': [ p for p in range( byvartbl_long.hg19_pos.min(), byvartbl_long.hg19_pos.max() + 1 ) ],
+                              'ref': [ chrom_refseq[ p - 1 ] for p in range( byvartbl_long.hg19_pos.min(), byvartbl_long.hg19_pos.max() + 1 ) ] } )
+    ref_idx = ref_idx.set_index( [ 'hg19_pos', 'ref' ] )
+    keep_idx = ref_idx.index.intersection( byvartbl_long.set_index( [ 'hg19_pos', 'ref' ] ).index )
+    byvartbl_long_filt = byvartbl_long.set_index( [ 'hg19_pos', 'ref' ] ).loc[ keep_idx ].reset_index().copy()
+
+    sat_by_samp = { samp: sp.saturate_variants( byvartbl_long_filt.loc[ byvartbl_long_filt[ 'sample' ] == samp ],
                                              chrom_refseq,
                                              'hg19_pos',
                                              'exon_num',
                                              rev_strand = config[ 'strand' ] == '-' )[ config[ 'exon_number' ] ]
-                    for samp in byvartbl_long[ 'sample' ].unique() }
+                    for samp in byvartbl_long_filt[ 'sample' ].unique() }
 
     #we need the position filled in even if the variant isn't present...
     if config[ 'strand' ] == '+':
         offset = byvartbl_long.hg19_pos - byvartbl_long.pos
-
     elif config[ 'strand' ] == '-':
-        offset = byvartbl_long.hg19_pos - byvartbl_long.pos - 2*( byvartbl_long.hg19_pos - byvartbl_long.hg19_pos.min() )
+        offset = 2*byvartbl_long.hg19_pos.min() - byvartbl_long.hg19_pos - byvartbl_long.pos
 
     for samp in sat_by_samp:
-        sat_by_samp[ samp ].pos = sat_by_samp[ samp ].hg19_pos - offset.median()
+        if config[ 'strand' ] == '+':
+            sat_by_samp[ samp ].pos = sat_by_samp[ samp ].hg19_pos - int( offset.median() )
+        elif config[ 'strand' ] == '-':
+            sat_by_samp[ samp ].pos = sat_by_samp[ samp ].hg19_pos - int( offset.median() ) - 2*( sat_by_samp[ samp ].hg19_pos - sat_by_samp[ samp ].hg19_pos.min() )
 
     #check that you didn't alter the positions!
-    pos19 = byvartbl_long.iloc[ 0 ].hg19_pos
-    posv = byvartbl_long.iloc[ 0 ].pos
+    pos19 = int( byvartbl_long.hg19_pos.sample() )
+    posv = int( byvartbl_long.loc[ byvartbl_long.hg19_pos == pos19 ].pos.unique()[ 0 ] )
     for samp in sat_by_samp:
-        if pos19 in sat_by_samp[ samp ].hg19_pos:
-            assert sat_by_samp[ samp ].loc[ sat_by_samp.hg19_pos == pos19 ].pos == posv, 'Positioning is off in saturated data!'
+        if pos19 in sat_by_samp[ samp ].hg19_pos.values:
+            assert sat_by_samp[ samp ].loc[ sat_by_samp[ samp ].hg19_pos == pos19 ].pos.unique()[ 0 ] == posv, 'Positioning is off in saturated data!'
 
-    #have to put back the hgvs positions
+    #have to put back the hgvs positions for new variants that are missing in the data but included in the saturated data
     for samp in sat_by_samp:
         sat_by_samp[ samp ][ 'hgvs_pos' ] = cd.pos_to_hgvspos( sat_by_samp[ samp ].pos,
-                                                            ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
-                                                            [ incl_iso[ 0 ] ],
-                                                            [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
+                                                               ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
+                                                               [ incl_iso[ 0 ] ],
+                                                               [ ( config[ 'exon_hgvs_start' ], config[ 'exon_hgvs_end' ] ), ]
                                                       )
+
+    #want to plot the transcribed base
+    if config[ 'strand' ] == '-':
+        for samp in sat_by_samp:
+            sat_by_samp[ samp ] = sat_by_samp[ samp ].rename( columns = { 'ref': 'r',
+                                                                          'alt': 'a',
+                                                                          'ref_c': 'ref',
+                                                                          'alt_c': 'alt' } )
 
     github_colors = '3182bd6baed69ecae1c6dbefe6550dfd8d3cfdae6bfdd0a231a35474c476a1d99bc7e9c0756bb19e9ac8bcbddcdadaeb636363969696bdbdbdd9d9d9'
     light_colors = [ '#' + github_colors[i:i+6] for i in range( 0, len( github_colors ), 6 ) ]
 
     for samp in sat_by_samp:
 
-        if config[ 'strand' ] == '+':
-            sp.sat_subplots_wrapper( sat_by_samp[ samp ],
-                                    [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ],
-                                    'hgvs_pos',
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 3*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
-                                    share_y = False,
-                                    y_ax_lim = [ ( 0, 1 ), ]*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] ) + [ ( -1, 4 ) ],
-                                    y_ax_title = [ col[ 6: ] for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_log10' ],
-                                    x_ax_title = 'cDNA position',
-                                    y_label_rotation = 0,
-                                    tick_spacing = 10,
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_' + samp + '_isoform_psis.' + date_string + '.pdf',
-                                )
-
-        elif config[ 'strand' ] == '-':
-            sp.sat_subplots_wrapper( sat_by_samp[ samp ].rename( columns = { 'ref': 'r',
-                                                                          'alt': 'a',
-                                                                          'ref_c': 'ref',
-                                                                          'alt_c': 'alt' } ),
-                                    [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ],
-                                    'hgvs_pos',
-                                    [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
-                                    fig_size = ( 40, 3*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
-                                    share_y = False,
-                                    y_ax_lim = [ ( 0, 1 ), ]*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] ) + [ ( -1, 4 ) ],
-                                    y_ax_title = [ col[ 6: ] for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_log10' ],
-                                    x_ax_title = 'cDNA position',
-                                    y_label_rotation = 0,
-                                    tick_spacing = 10,
-                                    cml = True,
-                                    savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_' + samp + '_isoform_psis.' + date_string + '.pdf',
+        sp.sat_subplots_wrapper( sat_by_samp[ samp ],
+                                 [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ],
+                                 'hgvs_pos',
+                                 [ l for idx,l in enumerate( light_colors ) if idx%4 == 0 ],
+                                 fig_size = ( 40, 3*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_passfilt_log10' ] ) ),
+                                 share_y = False,
+                                 y_ax_lim = [ ( 0, 1 ), ]*len( [ col for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] ) + [ ( -1, 4 ) ],
+                                 y_ax_title = [ col[ 6: ] for col in sat_by_samp[ samp ] if col.startswith( 'wmean_' ) ] + [ 'n_bc_log10' ],
+                                 x_ax_title = 'cDNA position',
+                                 y_label_rotation = 0,
+                                 tick_spacing = 10,
+                                 cml = True,
+                                 savefile = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_' + samp + '_isoform_psis.' + date_string + '.pdf',
                                 )
 
     sample_stats = mbcs.across_sample_stats( [ byvartbl_long ],
-                                        { 'all': byvartbl_long_bs_filt[ 'sample' ].unique().tolist() },
-                                        [ col for col in byvartbl_long if col.startswith( 'wmean_' ) ]
-                                      )
+                                            { 'all': byvartbl_long[ 'sample' ].unique().tolist() },
+                                            [ col for col in byvartbl_long if col.startswith( 'wmean_' ) ]
+                                            )
+
+    sample_stats.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_filtered_read_summary_stats.' + date_string + '.txt',
+                        sep = '\t',
+                        index = False )
 
     for col in sample_stats:
 
         if sample_stats[ col ].notnull().sum() == 0:
+            continue
+        #checks if that the column is numeric - i is int, u is unsigned int, f is float
+        elif sample_stats[ col ].dtype.kind not in 'iuf':
             continue
         elif col.startswith( 'per_' ):
             sp.barplot_across_samples( sample_stats,
@@ -831,19 +847,31 @@ def main():
                                     savefile = config[ 'plots_out_dir' ] + 'filtered_sampsummary_' + col + '_counts.pdf',
                                  )
 
-    sample_stats.to_csv( config[ 'data_out_dir' ] + config[ 'exon_name' ] + '_filtered_read_summary_stats.' + date_string + '.txt',
-                        sep = '\t',
-                        index = False )
+    byvartbl_wide_filt = byvartbl_wide.set_index( [ 'hg19_pos', 'ref' ] ).loc[ keep_idx ].reset_index().copy()
 
-    byvartbl_wide_sat = sp.saturate_variants( byvartbl_wide,
+    if len( byvartbl_wide ) != len( byvartbl_wide_filt ):
+        if config[ 'verbose' ]:
+            print( '%i variants do not match the genomic reference base - removing for plots but they are in the saved files!' % ( len( byvartbl_wide ) - len( byvartbl_wide_filt ) ) )
+        with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
+            f.write( '%i variants do not match the genomic reference base - removing for plots but they are in the saved files!\n' % ( len( byvartbl_wide ) - len( byvartbl_wide_filt ) ) )
+
+    byvartbl_wide_sat = sp.saturate_variants( byvartbl_wide_filt,
                                               chrom_refseq,
                                               'hg19_pos',
                                               'exon_num',
-                                              rev_strand = config[ 'strand' ] == '-' )[ config[ 'exon_num' ] ]
+                                              rev_strand = config[ 'strand' ] == '-' )[ config[ 'exon_number' ] ]
 
-    byvartbl_wide_sat[ samp ].pos = byvartbl_wide_sat[ samp ].hg19_pos - offset.median()
+    if config[ 'strand' ] == '+':
+        byvartbl_wide_sat.pos = byvartbl_wide_sat.hg19_pos - int( offset.median() )
+    elif config[ 'strand' ] == '-':
+        byvartbl_wide_sat.pos = byvartbl_wide_sat.hg19_pos - int( offset.median() ) - 2*( byvartbl_wide_sat.hg19_pos - byvartbl_wide_sat.hg19_pos.min() )
 
-    #have to put back the hgvs positions
+    #check that you didn't alter the positions!
+    pos19 = int( byvartbl_wide.hg19_pos.sample() )
+    posv = int( byvartbl_wide.loc[ byvartbl_wide.hg19_pos == pos19 ].pos.unique()[ 0 ] )
+    assert byvartbl_wide_sat.loc[ byvartbl_wide_sat.hg19_pos == pos19 ].pos.unique()[ 0 ] == posv, 'Positioning is off in saturated data!'
+
+    #have to put back the hgvs positions for any variants missing in measured dataset
     byvartbl_wide_sat[ 'hgvs_pos' ] = cd.pos_to_hgvspos( byvartbl_wide_sat.pos,
                                                       ( config[ 'cloned_vstart' ], config[ 'cloned_vend' ] ),
                                                       [ incl_iso[ 0 ] ],
@@ -854,11 +882,13 @@ def main():
 
     wmean_cols = [ col for col in byvartbl_wide_sat if col.startswith( 'wmean_' ) ]
 
+    #this makes sure we're plotting base subs on the transcribed strand
     if config[ 'strand' ] == '-':
         byvartbl_wide_sat = byvartbl_wide_sat.rename( columns = { 'ref': 'r',
                                                                   'alt': 'a',
                                                                   'ref_c': 'ref',
                                                                   'alt_c': 'alt' } )
+
     sp.split_ax_bcs( byvartbl_wide_sat,
                       [ 'n_bc_passfilt_mean' ],
                       'hgvs_pos',
@@ -879,7 +909,7 @@ def main():
                               fig_size = ( 40, 3*len( wmean_cols ) ),
                               share_y = True,
                               legend = False,
-                              y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
+                              y_ax_lim = [ ( 0, 1 ), ],
                               y_ax_title = [ col[ 6: ] for col in wmean_cols ],
                               x_ax_title = 'cDNA position',
                               y_label_rotation = 0,
@@ -899,7 +929,7 @@ def main():
                                  fig_size = ( 40, 3*len( wmean_cols ) ),
                                  share_y = True,
                                  legend = False,
-                                 y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
+                                 y_ax_lim = [ ( 0, 1 ), ],
                                  y_ax_title = [ col[ 6: ] for col in wmean_cols ],
                                  x_ax_title = 'cDNA position',
                                  y_label_rotation = 0,
@@ -913,6 +943,8 @@ def main():
 
     if config[ 'clinvar_file' ]:
 
+        byvartbl_wide_sat[ 'clinvar_abbrev' ] = byvartbl_wide_sat.clinvar_abbrev.fillna( '' )
+
         lit_marker_d = { 'LBB': ( 's', 'white', 'black', 3, 100 ),
                              'LPP': ( '^', 'black', 'face', 1.5, 100 ),
                              'VUS': ( 'd', 'black', 'face', 1.5, 100 ) }
@@ -924,7 +956,7 @@ def main():
                                  fig_size = ( 40, 3*len( wmean_cols ) ),
                                  share_y = True,
                                  legend = False,
-                                 y_ax_lim = [ ( 0, 1 ), ]*len( wmean_cols ),
+                                 y_ax_lim = [ ( 0, 1 ), ],
                                  y_ax_title = [ col[ 6: ] for col in wmean_cols ],
                                  x_ax_title = 'cDNA position',
                                  y_label_rotation = 0,
@@ -945,8 +977,8 @@ def main():
                                              fig_size = ( 40, 3*( len( wmean_cols ) + len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ) )),
                                              share_y = False,
                                              legend = False,
-                                             lollipop_size = 6,
-                                             linewidth = 3,
+                                             lollipop_size = 8,
+                                             linewidth = 4,
                                              y_ax_lim = [ ( 0, 1 ) ]*len( wmean_cols ) + [ ( -15, 15 ) ]*len( [ col for col in byvartbl_wide_sat if col.endswith( '_diff' ) ] ),
                                              y_ax_title = [ col[ 6: ] for col in wmean_cols ] + [ col[ 7: ] for col in byvartbl_wide_sat if col.endswith( '_diff' ) ],
                                              x_ax_title = 'hgvs position',
@@ -966,7 +998,7 @@ def main():
                                   fig_size = ( 40, 3*( len( wmean_cols ) + 1 ) ),
                                   share_y = True,
                                   legend = False,
-                                  y_ax_lim = [ ( 0, 1 ), ]*( len( wmean_cols ) + 1 ),
+                                  y_ax_lim = [ ( 0, 1 ), ],
                                   y_ax_title = [ col[ 6: ] for col in wmean_cols ] + [ 'DS_maxm' ],
                                   x_ax_title = 'cDNA position',
                                   y_label_rotation = 0,
@@ -981,13 +1013,15 @@ def main():
                          'LPP': ( '^', 'black', 'face', 1.5, 200 ),
                          'VUS': ( 'd', 'black', 'face', 1.5, 200 ) }
 
-        if config[ 'gnomad2' ]:
+        if config[ 'gnomad2_file' ]:
 
             sp.plot_clinvar_by_interp( byvartbl_wide.loc[ ( byvartbl_wide.clinvar_abbrev != '' ) ],
                                     wmean_cols,
                                     lit_marker_d,
+                                    interp_col = 'clinvar_abbrev',
                                     figsize = ( ( byvartbl_wide.clinvar_abbrev != '' ).sum() / 2, 3*len( wmean_cols ) ),
                                     ylim = ( 0, 1 ),
+                                    row_label = [ col[ 6: ] for col in wmean_cols ],
                                     gnomad_labels = [ ( 'gnomad_af_max',
                                                       ( 'o', 'lightgray', 200 ),
                                                       1.3 ) ],
@@ -999,8 +1033,10 @@ def main():
             sp.plot_clinvar_by_interp( byvartbl_wide.loc[ ( byvartbl_wide.clinvar_abbrev != '' ) ],
                                     wmean_cols,
                                     lit_marker_d,
+                                    interp_col = 'clinvar_abbrev',
                                     figsize = ( ( byvartbl_wide.clinvar_abbrev != '' ).sum() / 2, 3*len( wmean_cols ) ),
                                     ylim = ( 0, 1 ),
+                                    row_label = [ col[ 6: ] for col in wmean_cols ],
                                     cml = True,
                                     savefig = config[ 'plots_out_dir' ] + config[ 'exon_name' ] + '_clinvar.' + date_string + '.pdf'
                                     )
@@ -1008,14 +1044,14 @@ def main():
     T1 = time.time()
 
     if config[ 'verbose' ]:
-        print( 'Total runtime: %.2f hours!' % ( ( T1 - T1 ) / 60 / 60 ) )
+        print( 'Total runtime: %.2f hours!' % ( ( T1 - T0 ) / 60 / 60 ) )
 
     with open( config[ 'data_out_dir' ] + 'mpsa_cml_log.' + date_string + '.txt', 'a' ) as f:
-        f.write( 'Total runtime: %.2f hours\n' % ( ( T1 - T1 ) / 60 / 60 ) )
+        f.write( 'Total runtime: %.2f hours\n' % ( ( T1 - T0 ) / 60 / 60 ) )
         f.write( '\nFigure legends:\n' )
         f.write( 'Alt colors: A = Blue, C = Orange, G = Green, T = Purple\n' )
         f.write( 'gnomAD plots: In gnomAD = open circle\n')
-        f.write( 'ClinVar plots: LBB = open square, LPP = black triangle, VUS = black diamond\n' )
+        f.write( 'ClinVar plots: LBB = open square, LPP = black triangle, VUS/Conflicting = black diamond\n' )
         f.write( 'Calling variants as SDV takes some time and consideration - do it in a notebook!\n' )
         f.write(  'Check out a post_processing notebook as an example of how to call SDV\n' )
 
