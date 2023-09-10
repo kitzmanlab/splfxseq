@@ -1,6 +1,19 @@
 import pandas as pd
 import numpy as np
 
+import pysam
+class SeqrefDict(dict):
+    def __init__(self,fn,*args,**kwargs):
+        self.fa = pysam.FastaFile(fn)
+        super().__init__(*args,**kwargs)
+    def __getitem__(self,key):
+        if key not in self: 
+            seq=self.fa.fetch(key)
+            super().__setitem__(key, seq)             
+        return super().__getitem__(key)
+    def __setitem__(self,key,value):
+        raise ValueError()
+
 def rev_complement( seq ):
     """
     Creates reverse complement of DNA string (not case sensitive)

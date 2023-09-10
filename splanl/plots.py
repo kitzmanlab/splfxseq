@@ -9,7 +9,6 @@ from matplotlib.artist import Artist as art
 from matplotlib import gridspec
 from collections import Counter
 import splanl.coords as cd
-import splanl.merge_bcs as mbcs
 import splanl.post_processing as pp
 from sklearn.metrics import roc_curve, precision_recall_curve, auc, f1_score, matthews_corrcoef
 import scipy.stats as ss
@@ -5045,7 +5044,7 @@ def sat_lollipop_subplot_psi_by_alt(  var_df,
             for val in marker_d:
 
                 marker, color, edgecolor, linewidth, size = marker_d[ val ]
-
+                # yvals = [ y_coords if label == val else np.nan for label in tbv[ label_col ] ]
                 ax.scatter( x_coords_per_bp,
                             [ y_coords if label == val else np.nan for label in tbv[ label_col ] ],
                             marker = marker,
