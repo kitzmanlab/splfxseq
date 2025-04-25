@@ -1,0 +1,319 @@
+######################################################
+# Configuration values you must specify:
+#
+#
+# > lib_table  
+#   one row per sequencing library to be processed
+#   required columns
+#   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to 
+#   - fastq_fwd  (path to forward read fastq file)
+#   - fastq_rev  (path to reverse read fastq file)
+#   - star_ref (name of a star reference)
+#
+# > ref_table
+#   - star_ref
+#   - ref_star_path
+#
+# > outdir
+# 
+#######################################################
+#  optional config values:
+#
+#   prefix 
+#
+#   star_options
+#
+#   stop_after_nreads - for debugging purposes, stop after this number of reads per library
+#
+
+#######################################################
+# For example, to run:
+#  
+
+import os.path as op
+import os
+import pandas as pd
+import pysam 
+import Bio.Seq
+
+import altair as alt 
+
+########
+
+localrules: outtbl, kmer_tbl
+
+assert 'lib_table' in config, 'must specify sample table'
+
+PREFIX = config['prefix'] if 'prefix' in config  else ''
+OUT_DIR = config['outdir']
+
+STAR_OPTIONS = config['star_options'] if 'star_options' in config else " --alignIntronMax 5000 "
+
+STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
+
+########
+# load and check sample table.
+
+l_reqd_cols = [ 'libname', 'fastq_fwd', 'fastq_rev', 'star_ref' ]
+tbl_lib = pd.read_table( config['lib_table'] )
+assert all( [ col in tbl_lib.columns for col in l_reqd_cols ] ), 'lib table must have columns: '+','.join(l_reqd_cols)
+assert len(set(tbl_lib['libname'])) == tbl_lib.shape[0], 'all libname entries must be unique'
+    
+tbl_lib = tbl_lib.set_index( 'libname',drop=False )
+
+lLibs = tbl_lib['libname'].unique()
+
+####
+# load and check ref table. 
+
+l_reqd_cols = 'star_ref,ref_star_path'.split(',')
+tbl_refs = pd.read_table( config['ref_table'] )
+assert all( [ col in tbl_refs.columns for col in l_reqd_cols ] ), 'ref table must have columns: '+','.join(l_reqd_cols)
+assert len(set(tbl_refs['star_ref'])) == tbl_refs.shape[0], 'all ref entries must be unique'
+    
+####
+# merge libs w/ refs 
+
+tbl_lib = pd.merge( 
+    tbl_lib,
+    tbl_refs,
+    left_on='star_ref',
+    right_on='star_ref',
+    how='left',
+)
+
+libs_refnotfound = list(tbl_lib.loc[  
+    tbl_lib['ref_star_path'].isnull()
+].libname)
+
+if len(libs_refnotfound) > 0:
+    raise ValueError('refs not found for these entries ' + ','.join(libs_refnotfound))
+
+tbl_lib = tbl_lib.set_index('libname',drop=False)
+
+########
+# expected output files
+
+assert 'outdir' in config, 'must specify output directory'
+
+# final output bam
+
+l_out_bam =  expand('{}/align/{}{{libname}}.s.bam'.format(OUT_DIR,PREFIX), libname=lLibs)
+
+outRpt = OUT_DIR+'/'+PREFIX+'align_report.txt'
+
+lOutFiles = [outRpt] + l_out_bam
+
+########
+
+rule all:
+    input:
+        lOutFiles
+
+rule star_align:
+    input:
+        fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
+        fq_rev = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_rev' ]
+    output:
+        temp_head_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.head.fq.gz' )),
+        temp_head_fq_rev = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.rev.head.fq.gz' )),
+        temp_align_dir = temp( directory( op.join( OUT_DIR, 'temp_align/'+PREFIX+'{libname}' )  )),
+        bam =  op.join(OUT_DIR,'align/'+PREFIX+'{libname}.s.bam'),
+    threads: 4
+    params:
+        star_path = lambda wc: tbl_lib.loc[ wc.libname, 'ref_star_path'] 
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="4", 
+        time="1:00:00"
+    run:
+        # sometimes STAR gets screwed up if we dont clean the read names... 
+        # if so then we need to pipe thru  
+        #   perl -pi -e 's/ /_/g' 
+        
+        if STOP_AFTER_NREADS:
+            nlines = 4 * STOP_AFTER_NREADS
+                
+            if TRIM_DOWNSTREAM:
+                shell("""   
+                    set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
+
+                    cutadapt -j {threads} {TRIM_FWD_AD} {TRIM_REV_AD} --action=retain {TRIM_OPTS} \
+                        -o {output.temp_head_fq_fwd} \
+                        -p {output.temp_head_fq_rev} \
+                        <(pigz -d -c -p8 {input.fq_fwd} | head -n {nlines}) <(pigz -d -c -p8 {input.fq_rev}|head -n {nlines})
+                """)
+                fns=(output.temp_head_fq_fwd, output.temp_head_fq_rev)
+            else:
+                shell("""   
+                    set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
+                    pigz -d -c -p8 {input.fq_fwd} | head -n {nlines}  | pigz -c -p 8 > {output.temp_head_fq_fwd}
+                    pigz -d -c -p8 {input.fq_rev} | head -n {nlines}  | pigz -c -p 8 > {output.temp_head_fq_rev}
+                """)
+                fns=(output.temp_head_fq_fwd, output.temp_head_fq_rev)
+        else:
+            if TRIM_DOWNSTREAM:
+                shell("""   
+                    set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
+
+                    cutadapt -j {threads} {TRIM_FWD_AD} {TRIM_REV_AD} --action=retain  {TRIM_OPTS} \
+                        -o {output.temp_head_fq_fwd} \
+                        -p {output.temp_head_fq_rev} \
+                        {input.fq_fwd} {input.fq_rev}
+                """)
+                fns=(output.temp_head_fq_fwd, output.temp_head_fq_rev)
+            else:
+                shell('touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev}')
+                fns=(input.fq_fwd,input.fq_rev)
+
+        # additional cutadapt step to remove bits of the fwd seq adapt that the reverse read may extend into
+        #  in the case of a SKIP 
+        shell("""
+            cutadapt -j {threads} {TRIM2_REV_SEQAD} --action=trim  -e 0.2 -O 15 --minimum-length 25:25 \
+                -o {output.temp2_head_fq_fwd} -p {output.temp2_head_fq_rev} \
+                {fns[0]} {fns[1]}
+        """)
+
+        shell("""
+            mkdir {output.temp_align_dir};
+            STAR \
+            --outSAMattributes All \
+            --outSAMtype BAM Unsorted \
+            --runThreadN {threads} \
+            --outReadsUnmapped Fastx \
+            --readFilesCommand zcat \
+            {STAR_OPTIONS} \
+            --outMultimapperOrder Random \
+            --genomeDir {params.star_path} \
+            --readFilesIn {output.temp2_head_fq_fwd} {output.temp2_head_fq_rev} \
+            --outFileNamePrefix  {output.temp_align_dir}/{PREFIX}{wildcards.libname};
+            
+            samtools sort -m2G -@{threads} -o {output.bam} {output.temp_align_dir}/{PREFIX}{wildcards.libname}Aligned.out.bam ;
+            
+            samtools index {output.bam}""")
+
+rule fastqc:
+    input:
+        fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
+        fq_rev = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_rev' ]
+    output:
+        fastqc_report_fwd = op.join( OUT_DIR, 'fastqc/'+PREFIX+'{libname}.fwd_fastqc.html' ),
+        fastqc_report_rev = op.join( OUT_DIR, 'fastqc/'+PREFIX+'{libname}.rev_fastqc.html' )
+    threads: 4
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="4", 
+        time="5:00:00"
+    run:
+        if input.fq_fwd.endswith('gz'):
+            cmd1 = 'zcat {input.fq_fwd}'
+        else:
+            cmd1 = 'cat {input.fq_fwd}'
+
+        if input.fq_rev.endswith('gz'):
+            cmd2 = 'zcat {input.fq_rev}'
+        else:
+            cmd2 = 'cat {input.fq_rev}'
+        
+        if STOP_AFTER_NREADS:
+            cmd1 = 'set +o pipefail; '+cmd1
+            cmd2 = 'set +o pipefail; '+cmd2
+            nlines = 4 * STOP_AFTER_NREADS
+            cmd1 += "| head -n {nlines} "
+            cmd2 += "| head -n {nlines} "
+
+        cmd1 = cmd1 + ' | fastqc -t {threads} --nogroup -o {OUT_DIR}/fastqc/ stdin:{PREFIX}{wildcards.libname}.fwd'
+        cmd2 = cmd2 + ' | fastqc -t {threads} --nogroup -o {OUT_DIR}/fastqc/ stdin:{PREFIX}{wildcards.libname}.rev'
+
+        shell(cmd1)
+        shell(cmd2)
+
+rule kmercounts:
+    input:
+        fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
+        fq_rev = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_rev' ]
+    output:
+        counts_tbl_r1 = op.join( OUT_DIR, 'kmercounts/'+PREFIX+'{libname}.r1.counts.txt' ),
+        counts_tbl_r2 = op.join( OUT_DIR, 'kmercounts/'+PREFIX+'{libname}.r2.counts.txt' ),
+        check_tbl_r1 = temp(op.join( OUT_DIR, 'kmercounts/'+PREFIX+'{libname}.r1check.txt' )),
+        check_tbl_r2 = temp(op.join( OUT_DIR, 'kmercounts/'+PREFIX+'{libname}.r2check.txt' )),
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="4", 
+        time="1:00:00"
+    run:
+        r1 = tbl_iso_kmer.query('whichread=="r1"')
+        r1.to_csv(output.check_tbl_r1,sep='\t',index=False)
+
+        if STOP_AFTER_NREADS:
+            prefix_r1 = 'set +o pipefail; '
+            nlines = 4 * STOP_AFTER_NREADS
+            r1cmd = "<( zcat {input.fq_fwd} | head -n {nlines} )"
+        else:
+            prefix_r1 = ''
+            r1cmd = '{input.fq_fwd}'
+
+        shell('{prefix_r1} kmer_match --libname "{wildcards.libname}" --in_fq %s --in_checktbl {output.check_tbl_r1} --out_counts {output.counts_tbl_r1}'%r1cmd)
+
+        ##
+
+        r2 = tbl_iso_kmer.query('whichread=="r2"')
+        r2.to_csv(output.check_tbl_r2,sep='\t',index=False)
+
+        if STOP_AFTER_NREADS:
+            prefix_r2 = 'set +o pipefail; '
+            nlines = 4 * STOP_AFTER_NREADS
+            r2cmd = "<( zcat {input.fq_rev} | head -n {nlines} )"
+        else:
+            prefix_r2 = ''
+            r2cmd = '{input.fq_rev}'
+
+        shell('{prefix_r2} kmer_match --libname "{wildcards.libname}" --in_fq %s --in_checktbl {output.check_tbl_r2} --out_counts {output.counts_tbl_r2}'%r2cmd)
+
+
+rule kmer_tbl:
+    input:
+        counts_tbl_r1 = expand( rules.kmercounts.output.counts_tbl_r1, libname=lLibs ),
+        counts_tbl_r2 = expand( rules.kmercounts.output.counts_tbl_r2, libname=lLibs ),
+    output:
+        table_out = kmerRpt,
+        plot_out = kmerPlot,
+    run:
+        ltbl_r1 = [ pd.read_table(fn) for fn in input.counts_tbl_r1 ]
+        ltbl_r1 = pd.concat(ltbl_r1)
+        ltbl_r2 = [ pd.read_table(fn) for fn in input.counts_tbl_r2 ]
+        ltbl_r2 = pd.concat(ltbl_r2)
+
+        ltbl_r1['whichread']='r1'
+        ltbl_r2['whichread']='r2'
+
+        ltbl = pd.concat( [ltbl_r1,ltbl_r2], ignore_index=True )
+        
+        ltbl.to_csv( output.table_out, sep='\t', index=False )
+
+        print(ltbl.head())
+
+        loc = list(ltbl.columns)
+
+        ch = alt.Chart(
+            ltbl
+        ).mark_rect(
+        ).encode(
+            alt.X('event:N'),
+            alt.Y('libname:N').axis(labelLimit=300),
+            alt.Color('count:Q'),
+            alt.Column('whichread'),
+            alt.Tooltip(loc)
+        ).resolve_scale(
+            x='independent',
+        )
+        
+        ch.save(output.plot_out)
+
+rule outtbl:
+    input:
+        bam = expand(rules.star_align.output.bam, libname=lLibs)
+    output:
+        table_out=outRpt
+    run:
+        shell( 'touch {output.table_out} ')

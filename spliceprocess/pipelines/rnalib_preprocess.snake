@@ -1,0 +1,311 @@
+######################################################
+# Configuration values you must specify:
+#
+#
+# > lib_table  
+#   one row per sequencing library to be processed
+#   required columns
+#   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to 
+#   - fastq_fwd  (path to forward read fastq file)
+#   - fastq_rev  (path to reverse read fastq file)
+#
+# > outdir
+# 
+#######################################################
+#  optional config values:
+#
+#   prefix 
+#
+#   cutadapt_stage1_opts  - options passed to cutadapt 
+#   cutadapt_stage2_opts  - options passed to cutadapt 
+#   
+#   starcode_options
+##
+#   stop_after_nreads - for debugging purposes, stop after this number of reads per library
+#
+#######################################################
+# For example, to run:
+#  
+
+import os.path as op
+import os
+import pandas as pd
+import pysam 
+import Bio.Seq
+
+import altair as alt 
+
+########
+
+localrules: outtbl
+
+assert 'lib_table' in config, 'must specify sample table'
+
+AD_1=' "GTGCCATCTTGGATCTCCA;min_overlap=16...CCACACCAGCCACCACCTC;min_overlap=16" '
+STAGE2_AD_FWDOPTIONAL = ' "ACCTGGAGATCTCCCGAGGGGACCCGACAGTCAGAAGGTGGTGGCTGGTGTGG;min_overlap=16" '
+STAGE2_AD_REV = ' "CCACACCAGCCACCACCTTC;min_overlap=16" '
+
+AD_1_PAQCISTUFF = ' "GTGCCATCTTGGATCTCCA;min_overlap=16...CCACAGATGCAGGTGCACC;min_overlap=16" '
+STAGE2_AD_FWDOPTIONAL_PAQCISTUFF = ' "GTGACTGAGCATCGGTGCACCTGCATCTGTGG;min_overlap=16" '
+STAGE2_AD_REV_PAQCISTUFF = ' "CCACAGATGCAGGTGCACCG;min_overlap=16" '
+
+# STAGE2_AD_FWD="GTCAGAAGGTGGTGGCTGGTGTGG"
+# STAGE2_AD_REV="CCACACCAGCCACCACCT"
+
+PREFIX = config['prefix'] if 'prefix' in config  else ''
+OUT_DIR = config['outdir']
+
+CUTADAPT_STAGE1_OPTS = config['cutadapt_stage1_opts'] if 'cutadapt_stage1_opts' in config else " -e 0.1 -q 10 "
+CUTADAPT_STAGE2_OPTS = config['cutadapt_stage2_opts'] if 'cutadapt_stage2_opts' in config else " -e 0.1 -q 10 --minimum-length 20:10"
+
+STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
+
+if 'starcode_options' not in config:
+    config['starcode_options'] = ' -d 1 '
+
+########
+# load and check sample table.
+
+l_reqd_cols = [ 'libname', 'fastq_fwd', 'fastq_rev' ]
+tbl_lib = pd.read_table( config['lib_table'] )
+assert all( [ col in tbl_lib.columns for col in l_reqd_cols ] ), 'lib table must have columns: '+','.join(l_reqd_cols)
+assert len(set(tbl_lib['libname'])) == tbl_lib.shape[0], 'all libname entries must be unique'
+    
+tbl_lib = tbl_lib.set_index( 'libname',drop=False )
+
+lLibs = tbl_lib['libname'].unique()
+
+########
+# expected output files
+
+assert 'outdir' in config, 'must specify output directory'
+
+# final output fastqs
+l_out_tagged_r1 =  expand('{}/trim2/{}{{libname}}.fwd.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+l_out_tagged_r2 =  expand('{}/trim2/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+l_out_histo = expand('{}/histo/{}{{libname}}.bcclusters.txt.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+    
+outRpt = OUT_DIR+'/'+PREFIX+'clip_report.txt'
+
+lOutFiles = [outRpt] + l_out_tagged_r1 + l_out_tagged_r2  + l_out_histo
+
+########
+
+rule all:
+    input:
+        lOutFiles
+
+rule countinputs:
+    # just count the inputs
+    input:
+        fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
+    output:
+        counts_input = op.join(OUT_DIR,'fastq/'+PREFIX+'{libname}.input.linects.txt')
+    #log: op.join(OUT_DIR,'fastq/'+PREFIX+'{libname}.countinputs.log')
+    threads: 8
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="8", 
+        time="0:30:00"
+    run:
+        if 'stop_after_nreads' in config:
+            nlines = 4 * int(config['stop_after_nreads'])
+            shell("""
+                set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
+                pigz -d -c -p8 {input.fq_fwd} | head -n {nlines} | wc -l > {output.counts_input}
+            """)
+        else:
+            shell("""
+                pigz -d -c -p8 {input.fq_fwd} | wc -l > {output.counts_input}
+            """)
+    
+
+rule clip_stage1:
+    input:
+        fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
+        fq_rev = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_rev' ]
+    output:
+        temp_head_fq_fwd = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.fwd.head.fq' )),
+        temp_head_fq_rev = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.rev.head.fq' )),
+        fq_fwd = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.fwd.fq.gz' )),
+        fq_rev = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.rev.fq.gz' )),
+        cutad_log = op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.trim1.json' ),
+        fq_fwd_untrimmed = op.join( OUT_DIR, 'trim1_fail/'+PREFIX+'{libname}.fwd.fq.gz' ),
+        fq_rev_untrimmed = op.join( OUT_DIR, 'trim1_fail/'+PREFIX+'{libname}.rev.fq.gz' ),
+    # params:
+    #     stuffseq = lambda wc: STUFFER_STAGE1[tbl_lib.loc[ wc.libname, 'stuffer'] ]
+    threads: 16
+    resources:
+        mem_per_cpu="2gb", 
+        cpus="16", 
+        time="3:00:00"
+    # log: op.join(OUT_DIR,'trim1/'+PREFIX+'{libname}.trim1.err')
+    run:
+        clipcmd_first_part = 'cutadapt -g %s --untrimmed-output {output.fq_rev_untrimmed} --untrimmed-paired-output {output.fq_fwd_untrimmed} --action=lowercase --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} '%( AD_1, CUTADAPT_STAGE1_OPTS )
+    
+        if STOP_AFTER_NREADS:
+            clipcmd = clipcmd_first_part + '{output.temp_head_fq_rev} {output.temp_head_fq_fwd} '
+        else:
+            clipcmd = clipcmd_first_part + '{input.fq_rev} {input.fq_fwd} '
+
+        if STOP_AFTER_NREADS:
+            nlines = 4 * STOP_AFTER_NREADS
+            shell("""   
+                set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
+                pigz -d -c -p8 {input.fq_fwd} | head -n {nlines} > {output.temp_head_fq_fwd}
+                pigz -d -c -p8 {input.fq_rev} | head -n {nlines} > {output.temp_head_fq_rev}
+                %s 
+            """%(
+                clipcmd
+            ))
+        else:
+            shell("""
+                touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev} ;
+                %s
+            """%(clipcmd))  
+
+
+rule tag_stage1:
+    input:
+        fq_fwd = rules.clip_stage1.output.fq_fwd, 
+        fq_rev = rules.clip_stage1.output.fq_rev,
+    output:
+        fq_fwd = temp( op.join( OUT_DIR, 'tag1/'+PREFIX+'{libname}.fwd.fq.gz' )),
+        fq_rev = temp( op.join( OUT_DIR, 'tag1/'+PREFIX+'{libname}.rev.fq.gz' )),
+    threads: 1
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="1", 
+        time="6:00:00"
+    shell:
+        """
+        bc_tag_paired_fq \
+            --dont_rc_bc \
+            --in_bc_fq {input.fq_rev} \
+            --in_splice_fq {input.fq_fwd} \
+            --out_bc_fq {output.fq_rev} \
+            --out_splice_fq {output.fq_fwd} 
+        """
+
+# l_out_tagged_r1 =  expand('{}/trim2/{}{{libname}}.fwd.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+# l_out_tagged_r2 =  expand('{}/trim2/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+
+rule clip_stage2:
+    input:
+        fq_fwd = rules.tag_stage1.output.fq_fwd, 
+        fq_rev = rules.tag_stage1.output.fq_rev,
+    output:
+        fq_fwd = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' ),
+        fq_rev = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' ),
+        cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
+    threads: 16
+    resources:
+        mem_per_cpu="2gb", 
+        cpus="16", 
+        time="3:00:00"
+    run:
+        clip_opts1 = " -A %s"% STAGE2_AD_FWDOPTIONAL 
+        clip_opts2 = " -g %s"% STAGE2_AD_REV
+
+        # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+        clipcmd = 'cutadapt %s %s --action=trim --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, clip_opts2, CUTADAPT_STAGE2_OPTS )
+    
+        shell(clipcmd) 
+
+rule starcode:
+    input:
+        bc_read = rules.clip_stage2.output.fq_rev
+    output:
+        bc_clust_histo_gz = op.join( OUT_DIR, 'histo/'+PREFIX+'{libname}.bcclusters.txt.gz' ),
+        wfall_plot = op.join( OUT_DIR, 'bcseq/plots/waterfall_persamp/'+PREFIX+'{libname}.png' )
+    params:
+        starcode_options = config['starcode_options'],
+        bc_clust_histo = op.join( OUT_DIR, 'histo/'+PREFIX+'{libname}.bcclusters.txt' )
+    threads: 24
+    resources:
+        mem_per_cpu="5gb", 
+        cpus="24", 
+        time="1:00:00"
+    run:
+        if input.bc_read.endswith('gz'):
+            unc_bc_read = '<( echo -e "NNNNNNNNNNNNNNNN"; pigz -d -c -p {resources.cpus} {input.bc_read} | grep \'BC=\' | perl -lane \'$_ =~ /BC=([ACTGN]+)/; print $1 \' )'.format(**locals())
+        else:
+            unc_bc_read = '<( echo -e "NNNNNNNNNNNNNNNN"; cat {input.bc_read} | grep \'BC=\' | perl -lane \'$_ =~ /BC=([ACTGN]+)/; print $1 \' ) '
+
+        shell("""
+            starcode \
+                -t {resources.cpus} \
+                --print-clusters \
+                {params.starcode_options} \
+                -i {unc_bc_read} \
+                -o {params.bc_clust_histo}
+
+            cat {params.bc_clust_histo} | pigz -c -p {resources.cpus} > {output.bc_clust_histo_gz}
+
+            rm {params.bc_clust_histo}
+
+            plot_tag_count_histos \
+                --linCountHisto {output.bc_clust_histo_gz} \
+                --lNames {wildcards.libname} \
+                --annotMaxY \
+                --outPlot {output.wfall_plot}
+        """)
+
+
+# gather up read counts and put in a summary table 
+rule outtbl:
+    input:
+        fwd_read = expand(rules.clip_stage2.output.fq_fwd, libname=lLibs),
+        rev_read = expand(rules.clip_stage2.output.fq_rev, libname=lLibs),
+        bcclust_histo=expand(rules.starcode.output.bc_clust_histo_gz, libname=lLibs),
+    output:
+        table_out=outRpt
+    run:
+        shell( 'touch {output.table_out} ')
+
+        tbl_out = tbl_lib.copy()
+
+        tbl_out['fastq_fwd_input'] = tbl_out['fastq_fwd']
+        tbl_out['fastq_rev_input'] = tbl_out['fastq_rev']
+
+        tbl_out['fastq_fwd'] = list(input.fwd_read)
+        tbl_out['fastq_rev'] = list(input.rev_read)
+        tbl_out['bc_histo'] = list(input.bcclust_histo)
+
+        tbl_out.to_csv(output.table_out,sep='\t',index=False)
+
+
+        # tbl_out['nreads_input'] = [int(open(fn,'r').readline().strip().split()[0]) for fn in input.counts_input ]
+        # assert (all(tbl_out['nreads_input']%4)==0), '#lines in input one of the input fqs not div by 4!'
+        # tbl_out['nreads_input']=(tbl_out['nreads_input']/4).astype(int)
+        
+
+        # tbl_out['nreads_postoverlap'] = [int(open(fn,'r').readline().strip().split()[0]) for fn in input.counts_postovl ]
+        # assert (all(tbl_out['nreads_postoverlap']%4)==0), '#lines in input one of the input fqs not div by 4!'
+        # tbl_out['nreads_postoverlap']=(tbl_out['nreads_postoverlap']/4).astype(int)
+        
+        # tbl_out['nreads_poststufferrmv'] = [ findline_cutadapt_log(fn) for fn in input.counts_postdestuff ]
+        # tbl_out['nreads_postprimerrmv'] = [ findline_cutadapt_log(fn) for fn in input.counts_postpritrim ]
+
+        # tbl_out = tbl_out.set_index(KEYCOL,drop=False)
+
+        # # gather alignment stats
+        # align_stats = [ pd.read_csv(fn,index_col=0) for fn in input.counts_align ]
+        # align_stats = pd.concat( align_stats, axis=1 ).transpose()
+        # tbl_out = pd.concat( [tbl_out, align_stats], axis=1 )
+
+        # #           'aligns_pass':n_pass,
+        # #   'aligns_fail_multiparts':n_filt_multiparts,
+        # #   'aligns_fail_longdel':n_filt_longdel,
+        # #   'aligns_fail_longins':n_filt_longins,
+        # #   'aligns_fail_longclip':n_filt_longclip,
+        # #   'aligns_fail_unaligned':n_filt_unaligned
+
+
+        # tbl_out['frac_fail_overlap'] = 1 - tbl_out['nreads_postoverlap'] / tbl_out['nreads_input']
+        # tbl_out['frac_fail_stuffer'] = 1 - tbl_out['nreads_poststufferrmv'] / tbl_out['nreads_postoverlap']
+        # tbl_out['frac_fail_primerrmv'] = 1 - tbl_out['nreads_postprimerrmv'] / tbl_out['nreads_poststufferrmv']
+
+        # tbl_out.to_csv(output['table_out'],sep='\t',index=False)
+        
+        

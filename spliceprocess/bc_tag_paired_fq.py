@@ -24,6 +24,8 @@ def main():
     opts.add_argument('--out_bc_fq', dest='out_bc_fq')
     opts.add_argument('--out_splice_fq', dest='out_splice_fq')
 
+    opts.add_argument('--min_bc_len',type=int,default=10,dest='min_bc_len')
+
     opts.add_argument('--splice_umi_len',type=int,default=0,dest='splice_umi_len')
 
     opts.add_argument('--dont_rc_bc', default=True, action='store_false', dest='revcomp_bc')
@@ -41,6 +43,7 @@ def main():
 
     doumi = o.splice_umi_len>0
     umil = o.splice_umi_len
+    minl = o.min_bc_len
 
     i=0
 
@@ -66,22 +69,23 @@ def main():
         if m_ucb:
             bc = m_ucb.groups()[0]
 
-            if dorcbc:
-                bc = str(Bio.Seq.Seq(bc).reverse_complement())
+            if len(bc) >= minl:
+                if dorcbc:
+                    bc = str(Bio.Seq.Seq(bc).reverse_complement())
 
-            fout_bc.write(bcl1.strip()+' BC='+bc)
-            if doumi:
-                fout_bc.write('_UMI='+umi)
-            fout_bc.write('\n'+bcl2)
-            fout_bc.write('+\n')
-            fout_bc.write(bcl4)
+                fout_bc.write(bcl1.strip()+' BC='+bc)
+                if doumi:
+                    fout_bc.write('_UMI='+umi)
+                fout_bc.write('\n'+bcl2)
+                fout_bc.write('+\n')
+                fout_bc.write(bcl4)
 
-            fout_splice.write(insl1.strip()+' BC='+bc)
-            if doumi:
-                fout_splice.write('_UMI='+umi)
-            fout_splice.write('\n'+insl2)
-            fout_splice.write('+\n')
-            fout_splice.write(insl4)
+                fout_splice.write(insl1.strip()+' BC='+bc)
+                if doumi:
+                    fout_splice.write('_UMI='+umi)
+                fout_splice.write('\n'+insl2)
+                fout_splice.write('+\n')
+                fout_splice.write(insl4)
 
 
 

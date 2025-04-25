@@ -18,7 +18,9 @@ setup(
 
     entry_points = {
         'console_scripts': [   
-         'index_tagsorted_bam = spliceprocess.index_tagsorted_bam:main', 
+         'index_tagsorted_bam = spliceprocess.index_tagsorted_bam:main',
+            'bc_tag_paired_fq = spliceprocess.bc_tag_paired_fq:main',
+            'kmer_match = spliceprocess.kmer_match:main'
        ]
     }
 )
