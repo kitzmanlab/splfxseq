@@ -5,7 +5,7 @@
 # > lib_table  
 #   one row per sequencing library to be processed
 #   required columns
-#   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to 
+#   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to )
 #   - fastq_fwd  (path to forward read fastq file)
 #   - fastq_rev  (path to reverse read fastq file)
 #   - stuffer  = one of: bsmbi, paqci, spry1
@@ -20,6 +20,8 @@
 #   cutadapt_stage1_opts  - options passed to cutadapt 
 #   cutadapt_stage2_opts  - options passed to cutadapt 
 #   
+#   col_const_prefix - column name in library table containing a per-library constant prefix to trim from the read1 (insert) read
+#
 #   starcode_options
 #
 #   stop_after_nreads - for debugging purposes, stop after this number of reads per library
@@ -56,6 +58,8 @@ OUT_DIR = config['outdir']
 CUTADAPT_STAGE1_OPTS = config['cutadapt_stage1_opts'] if 'cutadapt_stage1_opts' in config else "-e 0.1 -O 30 --minimum-length 10 -q 10 "
 
 CUTADAPT_STAGE2_OPTS = config['cutadapt_stage2_opts'] if 'cutadapt_stage2_opts' in config else "-e 0.1 -O 20 --minimum-length 25 -q 10 "
+
+CUTADAPT_STAGE2_CONSTPREFIX_OPTS = config['cutadapt_stage2_constprefix_opts'] if 'cutadapt_stage2_constprefix_opts' in config else "-e 0.1 -O 10 --minimum-length 25 -q 10 "
 
 STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
 
@@ -169,7 +173,13 @@ rule clip_stage2:
     output:
         fq_ins = temp( op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.ins.fq.gz' )),
         fq_bc = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.bc.fq.gz' ),
+
+        temp_pretrim_const_fq_ins = temp( op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.temp2a.ins.fq.gz' )),
+        temp_pretrim_const_fq_bc = temp( op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.temp2a.bc.fq.gz' )),
+
         cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
+    #params:
+    #    libname = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
     threads: 16
     resources:
         mem_per_cpu="2gb", 
@@ -179,7 +189,26 @@ rule clip_stage2:
     run:
         clip_opts = " ".join( [ "-a '%s'"%seq for seq in LAD_STAGE2 ] )
 
-        clipcmd = 'cutadapt %s --pair-filter=first -j {threads} %s -o {output.fq_ins} -p {output.fq_bc} --json {output.cutad_log} {input.fq_ins} {input.fq_bc}  '%( clip_opts, CUTADAPT_STAGE2_OPTS )
+        prefix_to_clip = False
+        
+        if 'col_const_prefix' in config:
+            # first, trim constant prefix, and require it 
+            prefix = tbl_lib.loc[ wildcards.libname, config['col_const_prefix'] ].strip()
+            if len(prefix)>0:
+                prefix_to_clip = True
+                clip_opts_prefix = f" -g '{prefix}'"
+        
+        if prefix_to_clip:
+            clipcmd_prefix = 'cutadapt %s --pair-filter=first --discard-untrimmed -j {threads} %s -o {output.temp_pretrim_const_fq_ins} -p {output.temp_pretrim_const_fq_bc} --json {output.cutad_log} {input.fq_ins} {input.fq_bc}  '%( clip_opts_prefix, CUTADAPT_STAGE2_CONSTPREFIX_OPTS )
+
+            shell(clipcmd_prefix)
+
+            clipcmd = 'cutadapt %s --pair-filter=first -j {threads} %s -o {output.fq_ins} -p {output.fq_bc} --json {output.cutad_log} {output.temp_pretrim_const_fq_ins} {output.temp_pretrim_const_fq_bc}  '%( clip_opts, CUTADAPT_STAGE2_OPTS )
+
+        else:
+            shell( 'touch {output.temp_pretrim_const_fq_bc} {output.temp_pretrim_const_fq_ins}' )
+
+            clipcmd = 'cutadapt %s --pair-filter=first -j {threads} %s -o {output.fq_ins} -p {output.fq_bc} --json {output.cutad_log} {input.fq_ins} {input.fq_bc}  '%( clip_opts, CUTADAPT_STAGE2_OPTS )
     
         shell(clipcmd) 
 
