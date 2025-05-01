@@ -50,14 +50,14 @@ STUFFER_STAGE1 = {
 }
 
 
-LAD_STAGE2 = ['cgatgcaggtgactgagcatcggtgcacctgc', 'gatccaagatggcactccagatc']
+LAD_STAGE2 = ['cgatgcaggtgactgagcatcggtgcacctgc', 'gatccaagatggcactccagatc', 'TGAGCATCGGTGCGTCTCTGTGG' ]
 
 PREFIX = config['prefix'] if 'prefix' in config  else ''
 OUT_DIR = config['outdir']
 
 CUTADAPT_STAGE1_OPTS = config['cutadapt_stage1_opts'] if 'cutadapt_stage1_opts' in config else "-e 0.1 -O 30 --minimum-length 10 -q 10 "
 
-CUTADAPT_STAGE2_OPTS = config['cutadapt_stage2_opts'] if 'cutadapt_stage2_opts' in config else "-e 0.1 -O 20 --minimum-length 25 -q 10 "
+CUTADAPT_STAGE2_OPTS = config['cutadapt_stage2_opts'] if 'cutadapt_stage2_opts' in config else "-e 0.1 -O 20 --minimum-length 25 -q 10 --times 2 "
 
 CUTADAPT_STAGE2_CONSTPREFIX_OPTS = config['cutadapt_stage2_constprefix_opts'] if 'cutadapt_stage2_constprefix_opts' in config else "-e 0.1 -O 10 --minimum-length 25 -q 10 "
 
