@@ -12,15 +12,16 @@ import os.path as op
 setup(
     name="splfxseq",
 
-    packages=['spliceprocess','splanl'],
+    packages=['spliceprocess','splshared'],
 
     include_dirs = [numpy.get_include()]+pysam.get_include(),
 
     entry_points = {
         'console_scripts': [   
-         'index_tagsorted_bam = spliceprocess.index_tagsorted_bam:main',
+            'index_tagsorted_bam = spliceprocess.index_tagsorted_bam:main',
             'bc_tag_paired_fq = spliceprocess.bc_tag_paired_fq:main',
-            'kmer_match = spliceprocess.kmer_match:main'
+            'kmer_match = spliceprocess.kmer_match:main',
+            'annot_pairingtbl_genomic = pairing.annot_pairingtbl_genomic:main',
        ]
     }
 )
