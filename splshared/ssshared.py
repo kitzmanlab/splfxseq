@@ -2,6 +2,22 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 
+def zopen(fn,mode,encoding='utf-8'):
+    # return gzip.GzipFile(fn,mode=mode) if fn.endswith('gz') else open(fn,mode=mode)
+    return gzip.open(fn,mode=mode,encoding=encoding) if fn.endswith('gz') else open(fn,mode=mode,encoding=encoding)
+
+rcMapRNA = {'A':'U', 'C': 'G', 'G': 'C', 'U': 'A', 'T': 'A', 'N': 'N', '-': '-', ' ': ' ',
+            'a':'u', 'c': 'g', 'g': 'c', 'u': 'a', 't': 'a', 'n': 'n'}
+rcMapDNA = {'A':'T', 'C': 'G', 'G': 'C', 'U': 'A', 'T': 'A', 'N': 'N', '-': '-', ' ': ' ',
+            'a':'t', 'c': 'g', 'g': 'c', 'u': 'a', 't': 'a', 'n': 'n'}
+
+rcMapDNAAmbigs = { 'A':'T', 'C':'G', 'G':'C', 'T':'A',
+                   'M':'K', 'R':'Y', 'W':'W', 'S':'S',
+                   'Y':'R', 'K':'M', 'V':'B', 'H':'D',
+                   'D':'H', 'B':'V', 'N':'N' }
+
+def revComp(seq, useRNA=False):
+    return ''.join( [useRNA and rcMapRNA[b] or rcMapDNA[b] for b in reversed(seq)])
 
 def isWithin(cooCoord, cooRange, fIsInclusive=True):
     if fIsInclusive: return (cooCoord <= max(cooRange) and cooCoord >= min(cooRange))
