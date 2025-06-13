@@ -22,6 +22,7 @@ setup(
             'bc_tag_paired_fq = spliceprocess.bc_tag_paired_fq:main',
             'kmer_match = spliceprocess.kmer_match:main',
             'annot_pairingtbl_genomic = pairing.annot_pairingtbl_genomic:main',
+            'mut_coverage_single_target = pairing.mut_coverage_single_target:main',
        ]
     }
 )
