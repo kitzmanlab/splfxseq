@@ -46,10 +46,21 @@ def main():
     parser.add_argument('--chunksize', type=int, default=10000,
                       help='Number of rows to process at a time (default: 10000)')
     
+    parser.add_argument('--ref_fasta', required=True,
+                      help='Reference fasta file')
+    
+    parser.add_argument('--plas_fasta', required=True,
+                      help='Plasmid fasta file')
+
     args = parser.parse_args()
     
     # Load mapping table and create mapper
     mapper = GenomePlasmidMapper.from_file(args.mapping_table)
+
+    ref_fasta = pysam.FastaFile(args.ref_fasta)
+    plas_fasta = pysam.FastaFile(args.plas_fasta)
+
+    mapper.check_sequences(ref_fasta, plas_fasta)
     
     # Process input table in chunks
     first_chunk = True

@@ -3,6 +3,8 @@ import argparse
 import pandas as pd
 import numpy as np
 
+import pysam
+import Bio.Seq
 
 from splshared.ssshared import *
 
@@ -74,6 +76,23 @@ class GenomePlasmidMapper:
         invalid_strands = set(self.mapping_table['genome_strand']) - valid_strands
         if invalid_strands:
             raise ValueError(f"Invalid strand values: {invalid_strands}. Must be '+' or '-'")
+
+    def check_sequences(self, 
+                        ref_fasta: pysam.FastaFile,
+                        plas_fasta: pysam.FastaFile, ):
+        """
+        check that the sequences in the mapping table are consistent with the sequences in the reference fasta files
+        """
+
+        for _, row in self.mapping_table.iterrows():
+            ref_seq = plas_fasta.fetch(row['vector_chrom'],row['vector_start']-1, row['vector_end'])
+            if row['genome_strand'] == '-' :
+                ref_seq = str(Bio.Seq.Seq(ref_seq).reverse_complement())
+            plas_seq = ref_fasta.fetch(row['genome_chrom'],row['genome_start']-1, row['genome_end'])
+            ref_seq = ref_seq.upper()
+            plas_seq = plas_seq.upper()
+            if ref_seq != plas_seq:
+                raise ValueError(f"Sequence mismatch at {row['vector_chrom']}:{row['vector_start']}-{row['vector_end']}")
 
     def genomic_to_vector(self, chrom, position, strand=None):
         """
