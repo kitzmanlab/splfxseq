@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import pysam
 import os.path as op
 import argparse
 import pandas as pd
