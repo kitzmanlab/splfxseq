@@ -9,6 +9,10 @@
 #   - fastq_fwd  (path to forward read fastq file)
 #   - fastq_rev  (path to reverse read fastq file)
 #
+#   optional columns
+#   - stuffer (paqci)
+# 
+#
 # > outdir
 # 
 #######################################################
@@ -41,16 +45,28 @@ localrules: outtbl
 
 assert 'lib_table' in config, 'must specify sample table'
 
-AD_1=' "GTGCCATCTTGGATCTCCA;min_overlap=16...CCACACCAGCCACCACCTC;min_overlap=16" '
-STAGE2_AD_FWDOPTIONAL = ' "ACCTGGAGATCTCCCGAGGGGACCCGACAGTCAGAAGGTGGTGGCTGGTGTGG;min_overlap=16" '
-STAGE2_AD_REV = ' "CCACACCAGCCACCACCTTC;min_overlap=16" '
+# adaptor trim sequences for intended sequence (with stuffer removed) and for residual stuffer-containing reads 
+STAGE1_AD_INTENDED = 'trim="GTGCCATCTTGGATCTCCA;min_overlap=16...CCACACCAGCCACCACCTTC;min_overlap=16"'
+STAGE2_AD_INTENDED_FWDOPTIONAL = ' "ACCTGGAGATCTCCCGAGGGGACCCGACAGTCAGAAGGTGGTGGCTGGTGTGG;min_overlap=16" '
+STAGE2_AD_INTENDED_REV = ' "CCACACCAGCCACCACCTTC;min_overlap=16" '
 
-AD_1_PAQCISTUFF = ' "GTGCCATCTTGGATCTCCA;min_overlap=16...CCACAGATGCAGGTGCACC;min_overlap=16" '
-STAGE2_AD_FWDOPTIONAL_PAQCISTUFF = ' "GTGACTGAGCATCGGTGCACCTGCATCTGTGG;min_overlap=16" '
-STAGE2_AD_REV_PAQCISTUFF = ' "CCACAGATGCAGGTGCACCG;min_overlap=16" '
+STAGE1_AD_PAQCISTUFF = 'stuff="GTGCCATCTTGGATCTCCA;min_overlap=16...CCACAGATGCAGGTGCACC;min_overlap=16"'
+STAGE2_AD_PAQCISTUFF_FWDOPTIONAL = ' "GTGACTGAGCATCGGTGCACCTGCATCTGTGG;min_overlap=16" '
+STAGE2_AD_PAQCISTUFF_REV = ' "CCACAGATGCAGGTGCACCG;min_overlap=16" '
 
-# STAGE2_AD_FWD="GTCAGAAGGTGGTGGCTGGTGTGG"
-# STAGE2_AD_REV="CCACACCAGCCACCACCT"
+m_stuffer_adset = {
+    'intended': 
+        {'stage1': STAGE1_AD_INTENDED,
+         'stage2fwd': STAGE2_AD_INTENDED_FWDOPTIONAL,
+         'stage2rev': STAGE2_AD_INTENDED_REV},
+    'paqci':
+        {'stage1': STAGE1_AD_PAQCISTUFF,
+         'stage2fwd': STAGE2_AD_PAQCISTUFF_FWDOPTIONAL,
+         'stage2rev': STAGE2_AD_PAQCISTUFF_REV }
+
+}
+
+## 
 
 PREFIX = config['prefix'] if 'prefix' in config  else ''
 OUT_DIR = config['outdir']
@@ -71,6 +87,9 @@ tbl_lib = pd.read_table( config['lib_table'] )
 assert all( [ col in tbl_lib.columns for col in l_reqd_cols ] ), 'lib table must have columns: '+','.join(l_reqd_cols)
 assert len(set(tbl_lib['libname'])) == tbl_lib.shape[0], 'all libname entries must be unique'
     
+if 'stuffer' not in tbl_lib.columns:
+    tbl_lib['stuffer']='paqci'
+
 tbl_lib = tbl_lib.set_index( 'libname',drop=False )
 
 lLibs = tbl_lib['libname'].unique()
@@ -83,11 +102,17 @@ assert 'outdir' in config, 'must specify output directory'
 # final output fastqs
 l_out_tagged_r1 =  expand('{}/trim2/{}{{libname}}.fwd.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
 l_out_tagged_r2 =  expand('{}/trim2/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+
+l_out_tagged_r1_stuffer =  expand('{}/trim2_stuffer/{}{{libname}}.fwd.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+l_out_tagged_r2_stuffer =  expand('{}/trim2_stuffer/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+
 l_out_histo = expand('{}/histo/{}{{libname}}.bcclusters.txt.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
-    
+l_out_histo_stuffer = expand('{}/histo_stufferreads/{}{{libname}}.bcclusters.txt.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
+
 outRpt = OUT_DIR+'/'+PREFIX+'clip_report.txt'
 
-lOutFiles = [outRpt] + l_out_tagged_r1 + l_out_tagged_r2  + l_out_histo
+lOutFiles = [outRpt] + l_out_tagged_r1 + l_out_tagged_r2  + l_out_histo + \
+    l_out_tagged_r1_stuffer + l_out_tagged_r2_stuffer + l_out_histo_stuffer
 
 ########
 
@@ -127,13 +152,16 @@ rule clip_stage1:
     output:
         temp_head_fq_fwd = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.fwd.head.fq' )),
         temp_head_fq_rev = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.rev.head.fq' )),
-        fq_fwd = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.fwd.fq.gz' )),
-        fq_rev = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.rev.fq.gz' )),
+        fq_fwd = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.trim.fwd.fq.gz' )),
+        fq_rev = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.trim.rev.fq.gz' )),
+        fq_fwd_wstuffer = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.stuff.fwd.fq.gz' )),
+        fq_rev_wstuffer = temp( op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.stuff.rev.fq.gz' )),
         cutad_log = op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.trim1.json' ),
         fq_fwd_untrimmed = op.join( OUT_DIR, 'trim1_fail/'+PREFIX+'{libname}.fwd.fq.gz' ),
         fq_rev_untrimmed = op.join( OUT_DIR, 'trim1_fail/'+PREFIX+'{libname}.rev.fq.gz' ),
-    # params:
-    #     stuffseq = lambda wc: STUFFER_STAGE1[tbl_lib.loc[ wc.libname, 'stuffer'] ]
+    params:
+        stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
+        fake_fqbase_out=op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}' )
     threads: 16
     resources:
         mem_per_cpu="2gb", 
@@ -141,8 +169,14 @@ rule clip_stage1:
         time="3:00:00"
     # log: op.join(OUT_DIR,'trim1/'+PREFIX+'{libname}.trim1.err')
     run:
-        clipcmd_first_part = 'cutadapt -g %s --untrimmed-output {output.fq_rev_untrimmed} --untrimmed-paired-output {output.fq_fwd_untrimmed} --action=lowercase --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} '%( AD_1, CUTADAPT_STAGE1_OPTS )
-    
+        ad_stage1=m_stuffer_adset['intended']['stage1']
+        ad_stage1_stuff=m_stuffer_adset[params.stuffer]['stage1']
+
+        clipcmd_first_part = 'cutadapt -g %s -g %s --untrimmed-output {output.fq_rev_untrimmed} --untrimmed-paired-output {output.fq_fwd_untrimmed} --action=lowercase --pair-filter=first -j {threads} %s -o {params.fake_fqbase_out}.{{name}}.rev.fq.gz -p {params.fake_fqbase_out}.{{name}}.fwd.fq.gz --json {output.cutad_log} '%( 
+            ad_stage1,
+            ad_stage1_stuff,
+            CUTADAPT_STAGE1_OPTS )
+
         if STOP_AFTER_NREADS:
             clipcmd = clipcmd_first_part + '{output.temp_head_fq_rev} {output.temp_head_fq_fwd} '
         else:
@@ -150,6 +184,9 @@ rule clip_stage1:
 
         if STOP_AFTER_NREADS:
             nlines = 4 * STOP_AFTER_NREADS
+
+            print(clipcmd)
+
             shell("""   
                 set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
                 pigz -d -c -p8 {input.fq_fwd} | head -n {nlines} > {output.temp_head_fq_fwd}
@@ -187,6 +224,28 @@ rule tag_stage1:
             --out_splice_fq {output.fq_fwd} 
         """
 
+rule tag_stage1_stuffer:
+    input:
+        fq_fwd = rules.clip_stage1.output.fq_fwd_wstuffer, 
+        fq_rev = rules.clip_stage1.output.fq_rev_wstuffer,
+    output:
+        fq_fwd = temp( op.join( OUT_DIR, 'tag1_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
+        fq_rev = temp( op.join( OUT_DIR, 'tag1_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
+    threads: 1
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="1", 
+        time="6:00:00"
+    shell:
+        """
+        bc_tag_paired_fq \
+            --dont_rc_bc \
+            --in_bc_fq {input.fq_rev} \
+            --in_splice_fq {input.fq_fwd} \
+            --out_bc_fq {output.fq_rev} \
+            --out_splice_fq {output.fq_fwd} 
+        """
+
 # l_out_tagged_r1 =  expand('{}/trim2/{}{{libname}}.fwd.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
 # l_out_tagged_r2 =  expand('{}/trim2/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
 
@@ -204,13 +263,39 @@ rule clip_stage2:
         cpus="16", 
         time="3:00:00"
     run:
-        clip_opts1 = " -A %s"% STAGE2_AD_FWDOPTIONAL 
-        clip_opts2 = " -g %s"% STAGE2_AD_REV
+        clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
+        clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
 
         # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-        clipcmd = 'cutadapt %s %s --action=trim --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, clip_opts2, CUTADAPT_STAGE2_OPTS )
+        clipcmd = 'cutadapt %s %s --action=trim --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
     
         shell(clipcmd) 
+
+
+rule clip_stage2_stuffer:
+    input:
+        fq_fwd = rules.tag_stage1_stuffer.output.fq_fwd, 
+        fq_rev = rules.tag_stage1_stuffer.output.fq_rev,
+    output:
+        fq_fwd = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' ),
+        fq_rev = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' ),
+        cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
+    threads: 16
+    params:
+        stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
+    resources:
+        mem_per_cpu="2gb", 
+        cpus="16", 
+        time="3:00:00"
+    run:
+        clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
+        clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
+
+        # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+        clipcmd = 'cutadapt %s %s --action=trim --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
+    
+        shell(clipcmd) 
+
 
 rule starcode:
     input:
@@ -251,13 +336,63 @@ rule starcode:
                 --outPlot {output.wfall_plot}
         """)
 
+rule starcode_stuffer:
+    input:
+        bc_read = rules.clip_stage2_stuffer.output.fq_rev
+    output:
+        bc_clust_histo_gz = op.join( OUT_DIR, 'histo_stufferreads/'+PREFIX+'{libname}.bcclusters.txt.gz' ),
+        wfall_plot = op.join( OUT_DIR, 'bcseq/plots/waterfall_persamp_stufferreads/'+PREFIX+'{libname}.png' )
+    params:
+        starcode_options = config['starcode_options'],
+        bc_clust_histo = op.join( OUT_DIR, 'histo_stufferreads/'+PREFIX+'{libname}.bcclusters.txt' )
+    threads: 24
+    resources:
+        mem_per_cpu="5gb", 
+        cpus="24", 
+        time="1:00:00"
+    run:
+        if input.bc_read.endswith('gz'):
+            unc_bc_read = '<( echo -e "NNNNNNNNNNNNNNNN"; pigz -d -c -p {resources.cpus} {input.bc_read} | grep \'BC=\' | perl -lane \'$_ =~ /BC=([ACTGN]+)/; print $1 \' )'.format(**locals())
+        else:
+            unc_bc_read = '<( echo -e "NNNNNNNNNNNNNNNN"; cat {input.bc_read} | grep \'BC=\' | perl -lane \'$_ =~ /BC=([ACTGN]+)/; print $1 \' ) '
 
+        shell("""
+            starcode \
+                -t {resources.cpus} \
+                --print-clusters \
+                {params.starcode_options} \
+                -i {unc_bc_read} \
+                -o {params.bc_clust_histo}
+
+            cat {params.bc_clust_histo} | pigz -c -p {resources.cpus} > {output.bc_clust_histo_gz}
+
+            rm {params.bc_clust_histo}
+
+            plot_tag_count_histos \
+                --linCountHisto {output.bc_clust_histo_gz} \
+                --lNames {wildcards.libname} \
+                --annotMaxY \
+                --outPlot {output.wfall_plot}
+        """)
+
+
+
+# def findline_cutadapt_log(fn):
+#     ll=[l.rstrip() for l in open(fn,'r').readlines()]
+#     lnwritten = [ x.group(1).replace(',','') for x in [re.search('.*Reads written \(passing filters\):.*?([0-9,]+)',l) for l in ll ] if x]
+#     assert len(lnwritten)==1, 'not exactly one line with num of reads written in cutadpat log '+fn
+#     return int(lnwritten[0])
+    
 # gather up read counts and put in a summary table 
 rule outtbl:
     input:
         fwd_read = expand(rules.clip_stage2.output.fq_fwd, libname=lLibs),
         rev_read = expand(rules.clip_stage2.output.fq_rev, libname=lLibs),
         bcclust_histo=expand(rules.starcode.output.bc_clust_histo_gz, libname=lLibs),
+
+        fwd_read_stuffer = expand(rules.clip_stage2_stuffer.output.fq_fwd, libname=lLibs),
+        rev_read_stuffer = expand(rules.clip_stage2_stuffer.output.fq_rev, libname=lLibs),
+        bcclust_histo_stuffer=expand(rules.starcode.output.bc_clust_histo_gz, libname=lLibs),
     output:
         table_out=outRpt
     run:
@@ -271,6 +406,10 @@ rule outtbl:
         tbl_out['fastq_fwd'] = list(input.fwd_read)
         tbl_out['fastq_rev'] = list(input.rev_read)
         tbl_out['bc_histo'] = list(input.bcclust_histo)
+
+        tbl_out['fastq_fwd_stuffer'] = list(input.fwd_read_stuffer)
+        tbl_out['fastq_rev_stuffer'] = list(input.rev_read_stuffer)
+        tbl_out['bc_histo_stuffer'] = list(input.bcclust_histo_stuffer)
 
         tbl_out.to_csv(output.table_out,sep='\t',index=False)
 
