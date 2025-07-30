@@ -392,7 +392,7 @@ rule outtbl:
 
         fwd_read_stuffer = expand(rules.clip_stage2_stuffer.output.fq_fwd, libname=lLibs),
         rev_read_stuffer = expand(rules.clip_stage2_stuffer.output.fq_rev, libname=lLibs),
-        bcclust_histo_stuffer=expand(rules.starcode.output.bc_clust_histo_gz, libname=lLibs),
+        bcclust_histo_stuffer=expand(rules.starcode_stuffer.output.bc_clust_histo_gz, libname=lLibs),
     output:
         table_out=outRpt
     run:

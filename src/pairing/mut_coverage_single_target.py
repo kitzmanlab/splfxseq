@@ -162,7 +162,7 @@ def plot_variant_counts_base_stacked(df: pd.DataFrame,
         ).properties(
             width=1200,
             height=250,
-            title='All SNVs, #unique barcodes per position'
+            title=f'#unique barcodes per position, {count_type}'
         )
     
         if gene_model_mapper:
