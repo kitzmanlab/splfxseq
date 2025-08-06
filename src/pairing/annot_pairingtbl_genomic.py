@@ -4,6 +4,7 @@ import pysam
 import os.path as op
 import argparse
 import pandas as pd
+from splshared.ssshared import revComp
 from splshared.var_mapping import GenomePlasmidMapper
 
 def parse_variant(variant_str):
@@ -31,7 +32,12 @@ def convert_variant_list(variant_list_str, mapper):
             genomic_variants.append(f"")
         else:
             chrom, pos, strand = genomic
-            genomic_variants.append(f"{chrom}:{pos}:{ref}:{mut}:{strand}")
+            if strand == '-':
+                ref, mut = revComp(ref), revComp(mut)
+            else:
+                assert strand =='+'
+
+            genomic_variants.append(f"{chrom}:{pos}:{ref}:{mut}")
             
     return ','.join(genomic_variants)
 
