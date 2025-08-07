@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas as pd
-# import altair as alt
+import altair as alt
 from typing import List, Tuple, Dict, Set, Callable
 from itertools import product
 import argparse
@@ -154,6 +154,60 @@ def plot_indivsamp_waterfall_overlaps(
 
     return plt.gcf()
 
+def plot_overlap_summary_charts(df: pd.DataFrame) -> list:
+    """Create bar charts showing barcode overlap statistics across samples
+    
+    Args:
+        df: DataFrame with columns:
+            - libname: Sample name
+            - n_bc_overlap: Number of overlapping barcodes
+            - n_bc_sample: Total barcodes in sample
+            - min_read: Minimum read count threshold
+            - pairing_tbl_name: Name of pairing table used
+            
+    Returns:
+        List of Altair charts showing:
+        1. Raw overlap counts
+        2. Overlap fractions
+    """
+    
+    # Calculate fraction overlap
+    df = df.copy()
+    df['overlap_fraction'] = df['n_bc_overlap'] / df['n_bc_sample']
+    
+    # Base chart settings
+    base = alt.Chart(df).encode(
+        alt.Y('libname:N', title='Sample'),
+        alt.Fill('min_read:N', title='Minimum read count threshold'),
+        alt.Tooltip(['libname', 'min_read', 'n_bc_overlap', 'n_bc_sample', 'overlap_fraction'])
+    ).properties(
+        width=300,
+        height=alt.Step(20)  # Controls bar height
+    )
+    
+    loc=list(df.columns)
+
+    # Raw counts chart
+    count_chart = base.mark_bar().encode(
+        x=alt.X('n_bc_overlap:Q', title='Number of overlapping barcodes'),
+        tooltip=alt.Tooltip(loc)
+    ).facet(row='pairing_tbl_name', column='min_read', title='Pairing table'
+    ).resolve_scale(
+        y='independent'
+    )
+    
+    # Fraction chart  
+    frac_chart = base.mark_bar().encode(
+        x=alt.X('overlap_fraction:Q', title='Fraction of overlapping barcodes'),
+        tooltip=alt.Tooltip(loc)
+    ).facet(row='pairing_tbl_name', column='min_read', title='Pairing table'
+    ).resolve_scale(
+        y='independent'
+    )
+    
+    return [count_chart, frac_chart]
+
+
 def main():
     parser = argparse.ArgumentParser(description='Compute overlap of barcodes between a barcode pairing table and a set of MPSA RNA-seq barcode histograms')
 
@@ -178,9 +232,18 @@ def main():
 
     opts_1samp.add_argument('--lqile', type=str, default='0.75,0.90',
                     help='barcode cumulative quantile thresholds, e.g., "0.75,0.90"')
+    
+    opts_mutlisampsumy = opts_sps.add_parser('summarize_samps')
+
+    opts_mutlisampsumy.add_argument('--overlap_table', type=str, default='overlap_table')
+    opts_mutlisampsumy.add_argument('--overlap_qile_table', type=str, default='overlap_qile_table')                      
+   
+    opts_mutlisampsumy.add_argument('--out_base', type=str, default=None,
+                      help='Output file path base')
 
     args = parser.parse_args()
-    
+
+
     if args.cmd == 'singlesamp':
         cts = read_starcode_histo(args.bc_histo)
         pairtbl = pd.read_table(args.pairing_tbl).set_index( 'readgroupid' )
@@ -191,6 +254,14 @@ def main():
         tbl_out_atqiles.to_csv( f'{args.out_base}_indivsamp_overlap_knownbc_qiles.tsv', sep='\t', index=False )
         plot_indivsamp_waterfall_overlaps( cts, args.samp_name, pairtbl, figsize=(10,4) )
         plt.savefig( f'{args.out_base}_knownbc_wfall_{args.samp_name}.png' )
+
+    elif args.cmd == 'summarize_samps':
+        tbl_overlap = pd.read_table(args.overlap_table)
+        tbl_overlap_qile = pd.read_table(args.overlap_qile_table)
+        lcharts = plot_overlap_summary_charts(tbl_overlap)
+        lcharts[0].save(f'{args.out_base}_overlap_counts.html')
+        lcharts[1].save(f'{args.out_base}_overlap_fractions.html')
+        
 
     # Read input data
     # pairtbl = pd.read_table(args.pairing_tbl).set_index( 'readgroupid' )
