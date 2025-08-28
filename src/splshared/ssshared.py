@@ -91,7 +91,7 @@ class DframeFormatChecker(object):
                                              for col in formatstr.split(',')] )
         self.addl_cols_ok = addl_cols_ok
 
-    def check( self, dframe, convert=True ):
+    def check( self, dframe, convert=True, int_fill_val=-99999999999 ):
 
         df_colnames = set([ str(cn) for cn in dframe.columns] )
         check_colnames = set( [ cdef for cdef in self.mcolname_type ] )
@@ -113,6 +113,8 @@ class DframeFormatChecker(object):
                 if self.mcolname_type[ cn ] is not None:
                     if dframe[cn].dtype != self.mcolname_type[ cn ]:
                         if convert:
+                            if self.mcolname_type[ cn ] == 'int':
+                                dframe[cn] = dframe[cn].fillna(int_fill_val)    
                             dframe[cn] = dframe[cn].astype(self.mcolname_type[ cn ])
                         else:
                             wrong_dt.append( '{}: found {}, expected {}'.format(cn, dframe[cn].dtype, self.mcolname_type[ cn ] ))
@@ -151,4 +153,28 @@ gene model table:  table with annotations of cloned exons within genome coodinat
     - cdna_start           cdna start coordinate of the exon, hgvs formatted, e.g., 1234
 """
 gene_model_tbl_checker = DframeFormatChecker( 'gene_model_id:str,exon_name:str,genome_chrom:str,genome_start:int,genome_end:int,genome_strand:None,cdna_start:int', True )
+
+"""
+vector exon table : lists coodinates of cloned and constand exons within final plasmid contex, including genomic coordinates
+    - vector_chrom      construct chromosome name of the fragment
+    - vector_start       construct start coordinate of the fragment
+    - vector_end         construct end coordinate of the fragment
+    - gene_model_id      gene model id, a unique identifier for the gene model
+    - exon_name          exon name, a unique identifier for the exon
+    - genome_chrom       genomic chromosome name of the fragment
+    - genome_start       genome start coordinate of the fragment
+    - genome_end         genome end coordinate of the fragment
+    - genome_strand      genome strand of the fragment
+"""
+vector_exon_tbl_checker = DframeFormatChecker( 'vector_chrom:str,vector_start:int,vector_end:int,gene_model_id:str,exon_name:str,genome_chrom:str,genome_start:int,genome_end:int,genome_strand:None', True )
+
+
+"""
+isoform group table:  table with isoform group names and isoform names
+    - seq_name           name of reference sequence
+    - isogrp_name        isoform group name
+    - isoform            isoform name, seq_name:start_end,start_end,... 
+"""
+isoform_group_tbl_checker = DframeFormatChecker( 'seq_name:str,isogrp_name:str,isoform:str', True )
+
 

@@ -1,7 +1,9 @@
+import cmd
 import os.path as op
 import argparse
 import pandas as pd
 import numpy as np
+from typing import Tuple, Dict
 
 import pysam
 import Bio.Seq
@@ -15,11 +17,68 @@ class GeneModelMapper:
         gene_model = pd.read_csv(gene_model_file, sep='\t')
         return GeneModelMapper(gene_model)
 
-    def __init__(self, gene_model):
-        gene_model_tbl_checker.check(gene_model)
-        self.gene_model = gene_model
+    def __init__(self, tbl=None):
+        if tbl is None:
+            self.tbl = gene_model_tbl_checker.new_odict_of_lists()
+        else:
+            self.tbl = tbl
+            gene_model_tbl_checker.check(tbl)       
 
+        
     # to implement - convert frmo c.XXX to genomic coordinates 
+
+class VectorExonTable:
+    @staticmethod
+    def from_file(vector_exon_file):
+        vector_exon_tbl = pd.read_csv(vector_exon_file, sep='\t')
+        return VectorExonTable(vector_exon_tbl)
+
+    def __init__(self, tbl=None):
+        if tbl is None:
+            self.tbl = vector_exon_tbl_checker.new_odict_of_lists()
+        else:
+            self.tbl = tbl
+            vector_exon_tbl_checker.check(tbl)
+
+    def get_const_exon_positions(
+        self, 
+    ) -> Dict[str,Tuple[Tuple[int,int],Tuple[int,int]]]:
+
+        mvec_constupdn = {}
+
+        for vecname in self.tbl['vector_chrom'].unique():
+            li_up = (self.tbl['vector_chrom'] == vecname) & (self.tbl['exon_name'] == 'constup') 
+            li_dn = (self.tbl['vector_chrom'] == vecname) & (self.tbl['exon_name'] == 'constdn') 
+
+            if li_up.sum()!=1: raise ValueError(f"Expected 1 constup exon for {vecname}, found {li_up.sum()}")
+            if li_dn.sum()!=1: raise ValueError(f"Expected 1 constdn exon for {vecname}, found {li_dn.sum()}")
+
+            mvec_constupdn[ vecname ] = ( 
+                            ( self.tbl.loc[ li_up ].iloc[0][ 'vector_start'], self.tbl.loc[ li_up ].iloc[0][ 'vector_end'] ),
+                            ( self.tbl.loc[ li_dn ].iloc[0][ 'vector_start'], self.tbl.loc[ li_dn ].iloc[0][ 'vector_end'] ),
+            )
+
+        return mvec_constupdn
+    
+    def check_known_exon(self, vecname, exon_start, exon_end):
+        """
+        Check if a given exon is known in the vector exon table.
+        
+        Args:
+            vecname (str): Vector chromosome name
+            exon_start (int): Start position of the exon (1-based)
+            exon_end (int): End position of the exon (1-based)
+            
+        Returns:
+            bool: True if exon is known, False otherwise
+        """
+        li_ex = (self.tbl['vector_chrom'] == vecname) & (self.tbl['vector_start'] == exon_start) & (self.tbl['vector_end'] == exon_end)
+        if li_ex.sum() == 0:
+            return None
+        elif li_ex.sum() == 1:
+            return self.tbl.loc[ li_ex ].iloc[0]
+        else:
+            raise ValueError(f"Multiple exons found for {vecname}:{exon_start}-{exon_end}")
 
 class GenomePlasmidMapper:
     """
@@ -181,110 +240,4 @@ class GenomePlasmidMapper:
             genomic_pos = region['genome_end'] - relative_pos
             
         return (region['genome_chrom'], genomic_pos, region['genome_strand'])
-
-
-# def main():
-
-#     opts = argparse.ArgumentParser()
-
-#     opts.add_argument('--in_align_tbl', dest='in_align_tbl',
-#         help='table of subassembly reads aligned to reference', required=True)
-
-#     # opts.add_argument('--ref_fasta', dest='ref_fasta',
-#     #     required=True)
-
-#     # opts.add_argument('--col_libname', dest='col_libname',
-#     #     help='column with library/sample name', required=True)
-
-#     # opts.add_argument('--col_bam', dest='col_bam',
-#     #     help='column with bam path', required=True)
-
-#     # opts.add_argument('--region', dest='region',
-#     #     help='chrom:start-stop to report over', required=True)
-
-#     # opts.add_argument('--out_tbl', dest='out_tbl',
-#     #     help='output table here', required=True)
-
-#     o = opts.parse_args()
-
-#     chrom, corng = o.region.split(':')[0], (int(o.region.split(':')[1].split('-')[0]),int(o.region.split(':')[1].split('-')[1]))
-
-
-#     ref_fasta = pysam.Fastafile(o.ref_fasta)
-
-#     samptbl = pd.read_csv(o.in_align_tbl,sep='\t')
-
-#     hdrout = [
-#         'chrom','pos', 'ref',
-#         'sample',
-#         'reads_all','reads_fwd','reads_rev',
-#         'matches','matches_fwd','matches_rev',
-#         'mismatches','mismatches_fwd','mismatches_rev',
-#         'deletions','deletions_fwd','deletions_rev',
-#         'insertions','insertions_fwd','insertions_rev',
-#         'A','C','G','T',
-#         'A_fwd','A_rev',
-#         'C_fwd','C_rev',
-#         'G_fwd','G_rev',
-#         'T_fwd','T_rev',
-#         'N_fwd','N_rev' ]
-
-#     hdr_copydirectly = [
-#         'chrom', 'pos', 
-#         'reads_all','reads_fwd','reads_rev',
-#         'matches','matches_fwd','matches_rev',
-#         'mismatches','mismatches_fwd','mismatches_rev',
-#         'deletions','deletions_fwd','deletions_rev',
-#         'insertions','insertions_fwd','insertions_rev',
-#         'A','C','G','T',
-#         'A_fwd','A_rev',
-#         'C_fwd','C_rev',
-#         'G_fwd','G_rev',
-#         'T_fwd','T_rev',
-#         'N_fwd','N_rev' ]
-
-#     tbl_out = { c:[] for c in hdrout }
-
-
-#     for _, r in samptbl.iterrows():
-
-#         bam = pysam.AlignmentFile( r[o.col_bam] )
-#         libname = r[o.col_libname]
-
-#         cvgcur=pss.load_variation_strand(
-#               bam,
-#               fafile=ref_fasta,
-#               chrom=chrom,
-#               start=corng[0]-1,
-#               end=corng[1],
-#               pad=True,
-#               truncate=True,
-#               max_depth=100000)
-            
-#         tbl_out['sample'].extend( [libname]*len(cvgcur['chrom']) )
-
-#         reflist = cvgcur['ref']
-#         for i in range(len(reflist)):
-#             reflist[i] = reflist[i].decode()
-
-#         for col in hdr_copydirectly:
-#             tbl_out[col].extend( cvgcur[col].tolist() )
-
-#         tbl_out['ref'].extend( reflist )
-
-#     tbl_out = pd.DataFrame( tbl_out )
-
-#     # make it 1 based
-#     tbl_out['pos']+=1
-#     # fix encoding
-#     for col in ['chrom','ref']:
-#         tbl_out[col]=tbl_out[col].str.decode('ascii')
-
-#     tbl_out.to_csv(o.out_tbl,sep='\t',index=False)
-
-
-
-
-# if __name__ == '__main__':
-#     main()
 
