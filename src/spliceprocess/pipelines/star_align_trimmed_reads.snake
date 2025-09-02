@@ -117,8 +117,16 @@ rule star_align:
     output:
         temp_head_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.head.fq.gz' )),
         temp_head_fq_rev = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.rev.head.fq.gz' )),
+
+        fixrn_fq_rev = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.rev.fixrn.fq.gz' )),
+        fixrn_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.fixrn.fq.gz' )),
+
+        temp2_head_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.step2.fq.gz' )),
+        temp2_head_fq_rev = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.rev.step2.fq.gz' )),
+
         temp_align_dir = temp( directory( op.join( OUT_DIR, 'temp_align/'+PREFIX+'{libname}' )  )),
-        bam =  op.join(OUT_DIR,'align/'+PREFIX+'{libname}.s.bam'),
+        
+        bam =  temp(op.join(OUT_DIR,'align/'+PREFIX+'{libname}.bam')),
     threads: 4
     params:
         star_path = lambda wc: tbl_lib.loc[ wc.libname, 'ref_star_path'] 
@@ -127,8 +135,7 @@ rule star_align:
         cpus="4", 
         time="1:00:00"
     run:
-        # sometimes STAR gets screwed up if we dont clean the read names... 
-        # if so then we need to pipe thru  
+        # STAR gets screwed up if we dont clean the read names - need to pipe thru  
         #   perl -pi -e 's/ /_/g' 
         
         if STOP_AFTER_NREADS:
@@ -142,15 +149,17 @@ rule star_align:
                         -o {output.temp_head_fq_fwd} \
                         -p {output.temp_head_fq_rev} \
                         <(pigz -d -c -p8 {input.fq_fwd} | head -n {nlines}) <(pigz -d -c -p8 {input.fq_rev}|head -n {nlines})
+
+                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
+                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
                 """)
-                fns=(output.temp_head_fq_fwd, output.temp_head_fq_rev)
             else:
                 shell("""   
                     set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
-                    pigz -d -c -p8 {input.fq_fwd} | head -n {nlines}  | pigz -c -p 8 > {output.temp_head_fq_fwd}
-                    pigz -d -c -p8 {input.fq_rev} | head -n {nlines}  | pigz -c -p 8 > {output.temp_head_fq_rev}
+                    touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev}
+                    pigz -d -c -p8 {input.fq_fwd} | head -n {nlines} | perl -pi -e 's/ /_/g' | pigz -c -p 8 > {output.fixrn_fq_fwd}
+                    pigz -d -c -p8 {input.fq_rev} | head -n {nlines} | perl -pi -e 's/ /_/g' | pigz -c -p 8 > {output.fixrn_fq_rev}
                 """)
-                fns=(output.temp_head_fq_fwd, output.temp_head_fq_rev)
         else:
             if TRIM_DOWNSTREAM:
                 shell("""   
@@ -160,23 +169,28 @@ rule star_align:
                         -o {output.temp_head_fq_fwd} \
                         -p {output.temp_head_fq_rev} \
                         {input.fq_fwd} {input.fq_rev}
-                """)
-                fns=(output.temp_head_fq_fwd, output.temp_head_fq_rev)
-            else:
-                shell('touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev}')
-                fns=(input.fq_fwd,input.fq_rev)
 
+                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
+                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
+                """)
+            else:
+                shell("""
+                touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev}
+                pigz -d -c -p{resources.cpus} {input.fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
+                pigz -d -c -p{resources.cpus} {input.fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
+                """)
+                
         # additional cutadapt step to remove bits of the fwd seq adapt that the reverse read may extend into
         #  in the case of a SKIP 
         shell("""
             cutadapt -j {threads} {TRIM2_REV_SEQAD} --action=trim  -e 0.2 -O 15 --minimum-length 25:25 \
                 -o {output.temp2_head_fq_fwd} -p {output.temp2_head_fq_rev} \
-                {fns[0]} {fns[1]}
+                {output.fixrn_fq_fwd} {output.fixrn_fq_rev}
         """)
 
         shell("""
-            mkdir {output.temp_align_dir};
-            STAR \
+        mkdir {output.temp_align_dir};
+        STAR \
             --outSAMattributes All \
             --outSAMtype BAM Unsorted \
             --runThreadN {threads} \
@@ -186,16 +200,34 @@ rule star_align:
             --outMultimapperOrder Random \
             --genomeDir {params.star_path} \
             --readFilesIn {output.temp2_head_fq_fwd} {output.temp2_head_fq_rev} \
-            --outFileNamePrefix  {output.temp_align_dir}/{PREFIX}{wildcards.libname};
-            
-            samtools sort -m2G -@{threads} -o {output.bam} {output.temp_align_dir}/{PREFIX}{wildcards.libname}Aligned.out.bam ;
-            
-            samtools index {output.bam}""")
+            --outFileNamePrefix  {output.temp_align_dir}/{PREFIX}{wildcards.libname}
+        
+        annot_bam_plasbc_and_umi \
+            --in_bam {output.temp_align_dir}/{PREFIX}{wildcards.libname}Aligned.out.bam \
+            --out_bam {output.bam}
+        """)
+
+
+
+rule filter_bcsort_bam:
+    input:
+        bam = rules.star_align.output.bam
+    output:
+        bam = temp( op.join( OUT_DIR, 'align/'+PREFIX+'{libname}.s.bam' ))
+    threads: 4
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="4", 
+        time="1:00:00"
+    run:
+        shell("""
+            samtools view -b --exclude-flags 0x900 {input.bam} | samtools sort -m4G -@{resources.cpus} -t BC -n -o {output.bam}
+        """)
 
 
 rule outtbl:
     input:
-        bam = expand(rules.star_align.output.bam, libname=lLibs)
+        bam = expand(rules.filter_bcsort_bam.output.bam, libname=lLibs)
     output:
         table_out=outRpt
     run:
