@@ -13,9 +13,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def parse_variant(variant_str: str) -> Tuple[str, int, str, str, str]:
-    """Parse a variant string in the format 'chrom:pos:ref:alt:strand'."""
-    chrom, pos, ref, alt, strand = variant_str.split(':')
-    return chrom, int(pos), ref, alt, strand
+    """Parse a variant string in the format 'chrom:pos:ref."""
+    chrom, pos, ref, alt = variant_str.split(':')
+    return chrom, int(pos), ref, alt
 
 def get_variants_from_list(variant_list: str) -> List[Tuple[str, int, str, str, str]]:
     """Parse a comma-separated list of variants."""
@@ -84,9 +84,7 @@ def count_variants(df: pd.DataFrame,
     # Initialize count dictionaries
     single_counts = {(c, p, r, a): 0 for c, p, r, a in all_variants}
     any_counts = single_counts.copy()
-
-    strand = None
-    
+  
     # Count variants in the data
     for i,r in df.iterrows():
         variant_list = r[variant_col]
@@ -99,13 +97,7 @@ def count_variants(df: pd.DataFrame,
         l_nonignored = [ v for v in variants if not any(
             [ fxn(v[0],v[1],v[2],v[3]) for fxn in fxn_allow_2ndvar])]
 
-        for v in variants:
-            if not strand:
-                strand = v[4]
-            else:
-                if v[4] != strand:
-                    raise ValueError(f"Variant {v} has different strand than previous variants")
-            
+        for v in variants:           
             key = (v[0], v[1], v[2], v[3])
             if key in any_counts:
                 any_counts[key] += 1
@@ -126,8 +118,6 @@ def count_variants(df: pd.DataFrame,
         })
 
     results = pd.DataFrame(results)
-
-    results['strand'] = strand
     
     return results
 
@@ -135,12 +125,13 @@ def plot_variant_counts_base_stacked(df: pd.DataFrame,
                                     chrom: str,
                                     start_pos: int,
                                     end_pos: int,
+                                    strand: str="+",
                                     gene_model_mapper: GeneModelMapper = None) -> alt.Chart:
     
     """Create a bar plot of variant counts by position using Altair."""
     # Melt the DataFrame to get counts in a single column
     melted = df.melt(
-        id_vars=['chrom', 'position', 'ref', 'alt', 'strand'],
+        id_vars=['chrom', 'position', 'ref', 'alt'],
         value_vars=['single_variant_count', 'any_context_count'],
         var_name='count_type',
         value_name='count'
@@ -155,10 +146,10 @@ def plot_variant_counts_base_stacked(df: pd.DataFrame,
             width=1,
             binSpacing=0,
         ).encode(
-            x=alt.X('position:Q', title='Position').scale( reverse=melted.iloc[0]['strand'] == '-' ).scale(zero=False),
+            x=alt.X('position:Q', title='Position').scale( reverse=strand == '-' ).scale(zero=False),
             y=alt.Y('count:Q', title='# barcodes'),
             color=alt.Color('alt:N', title='Alternate Base'),
-            tooltip=['chrom', 'position', 'ref', 'alt', 'count_type', 'count', 'strand']
+            tooltip=['chrom', 'position', 'ref', 'alt', 'count_type', 'count']
         ).properties(
             width=1200,
             height=250,
@@ -166,10 +157,10 @@ def plot_variant_counts_base_stacked(df: pd.DataFrame,
         )
     
         if gene_model_mapper:
-            models_of_interest = gene_model_mapper.gene_model.loc[
-                (gene_model_mapper.gene_model['genome_chrom'] == chrom) &
-                (gene_model_mapper.gene_model['genome_start'] <= end_pos) &
-                (gene_model_mapper.gene_model['genome_end'] >= start_pos)
+            models_of_interest = gene_model_mapper.tbl.loc[
+                (gene_model_mapper.tbl['genome_chrom'] == chrom) &
+                (gene_model_mapper.tbl['genome_start'] <= end_pos) &
+                (gene_model_mapper.tbl['genome_end'] >= start_pos)
             ]
 
             exonbox = alt.Chart(models_of_interest).mark_rect(
@@ -193,12 +184,13 @@ def plot_variant_counts_base_row(df: pd.DataFrame,
                                     chrom: str,
                                     start_pos: int,
                                     end_pos: int,
+                                    strand: str="+",
                                     gene_model_mapper: GeneModelMapper = None) -> alt.Chart:
     
     """Create a bar plot of variant counts by position using Altair."""
     # Melt the DataFrame to get counts in a single column
     melted = df.melt(
-        id_vars=['chrom', 'position', 'ref', 'alt', 'strand'],
+        id_vars=['chrom', 'position', 'ref', 'alt'],
         value_vars=['single_variant_count', 'any_context_count'],
         var_name='count_type',
         value_name='count'
@@ -213,10 +205,10 @@ def plot_variant_counts_base_row(df: pd.DataFrame,
             width=1,
             binSpacing=0,
         ).encode(
-            x=alt.X('position:Q', title='Position').scale( reverse=melted.iloc[0]['strand'] == '-' ).scale(zero=False),
+            x=alt.X('position:Q', title='Position').scale( reverse=strand == '-' ).scale(zero=False),
             y=alt.Y('count:Q', title='# barcodes'),
             color=alt.Color('count_type:N', title='Count Type'),
-            tooltip=['chrom', 'position', 'ref', 'alt', 'count_type', 'count', 'strand']
+            tooltip=['chrom', 'position', 'ref', 'alt', 'count_type', 'count']
         ).properties(
             width=1200,
             height=250,
@@ -224,10 +216,10 @@ def plot_variant_counts_base_row(df: pd.DataFrame,
         )
     
         if gene_model_mapper:
-            models_of_interest = gene_model_mapper.gene_model.loc[
-                (gene_model_mapper.gene_model['genome_chrom'] == chrom) &
-                (gene_model_mapper.gene_model['genome_start'] <= end_pos) &
-                (gene_model_mapper.gene_model['genome_end'] >= start_pos)
+            models_of_interest = gene_model_mapper.tbl.loc[
+                (gene_model_mapper.tbl['genome_chrom'] == chrom) &
+                (gene_model_mapper.tbl['genome_start'] <= end_pos) &
+                (gene_model_mapper.tbl['genome_end'] >= start_pos)
             ]
 
             exonbox = alt.Chart(models_of_interest).mark_rect(
@@ -298,6 +290,8 @@ def main():
                       help='Start position of interval')
     parser.add_argument('--cloned_end_pos', type=int, required=True,
                       help='End position of interval')
+    parser.add_argument('--strand', type=str, default='+',
+                      help='Strand of interval')
 
     parser.add_argument('--mut_targ_start_pos', type=int, required=True,
                       help='Start position of interval')
@@ -347,10 +341,10 @@ def main():
     
     # Create and save plot
     if args.output_plot_base:
-        chart = plot_variant_counts_base_stacked(result_df, args.chrom, args.cloned_start_pos, args.cloned_end_pos, gene_model_mapper)
+        chart = plot_variant_counts_base_stacked(result_df, args.chrom, args.cloned_start_pos, args.cloned_end_pos, args.strand, gene_model_mapper)
         chart.save(f'{args.output_plot_base}.single_any.html')
     
-        chart = plot_variant_counts_base_row(result_df, args.chrom, args.cloned_start_pos, args.cloned_end_pos, gene_model_mapper)
+        chart = plot_variant_counts_base_row(result_df, args.chrom, args.cloned_start_pos, args.cloned_end_pos, args.strand, gene_model_mapper)
         chart.save(f'{args.output_plot_base}.bybase.html')
 
         wfall = plot_mutfreq_waterfall(result_df, args.chrom, args.mut_targ_start_pos, args.mut_targ_end_pos, figsize=(8,4))
