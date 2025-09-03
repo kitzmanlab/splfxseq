@@ -1,10 +1,9 @@
-######################################################
-# Configuration values you must specify:
+## Configuration values you must specify:
 #
 #
 # > lib_table  
 #   one row per sequencing library to be processed
-#   required columns
+#   columns
 #   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to 
 #   - fastq_fwd  (path to forward read fastq file)
 #   - fastq_rev  (path to reverse read fastq file)
@@ -48,21 +47,26 @@ assert 'lib_table' in config, 'must specify sample table'
 # adaptor trim sequences for intended sequence (with stuffer removed) and for residual stuffer-containing reads 
 STAGE1_AD_INTENDED = 'trim="GTGCCATCTTGGATCTCCA;min_overlap=16...CCACACCAGCCACCACCTTC;min_overlap=16"'
 STAGE2_AD_INTENDED_FWDOPTIONAL = ' "ACCTGGAGATCTCCCGAGGGGACCCGACAGTCAGAAGGTGGTGGCTGGTGTGG;min_overlap=16" '
-STAGE2_AD_INTENDED_REV = ' "CCACACCAGCCACCACCTTC;min_overlap=16" '
+STAGE2_AD_INTENDED_REV_DOWNSTREAM = ' "CCACACCAGCCACCACCTTC;min_overlap=16" '
+
+# to trim rev read passing up through the upstream exon
+STAGE3_AD_INTENDED_REV_UPSTREAM = ' "TGCTGGGTCGACTCTAGAGCGTGCAGCTTG;min_overlap=16" '
 
 STAGE1_AD_PAQCISTUFF = 'stuff="GTGCCATCTTGGATCTCCA;min_overlap=16...CCACAGATGCAGGTGCACC;min_overlap=16"'
 STAGE2_AD_PAQCISTUFF_FWDOPTIONAL = ' "GTGACTGAGCATCGGTGCACCTGCATCTGTGG;min_overlap=16" '
-STAGE2_AD_PAQCISTUFF_REV = ' "CCACAGATGCAGGTGCACCG;min_overlap=16" '
+STAGE2_AD_PAQCISTUFF_REV_DOWNSTREAM = ' "CCACAGATGCAGGTGCACCG;min_overlap=16" '
 
 m_stuffer_adset = {
     'intended': 
         {'stage1': STAGE1_AD_INTENDED,
          'stage2fwd': STAGE2_AD_INTENDED_FWDOPTIONAL,
-         'stage2rev': STAGE2_AD_INTENDED_REV},
+         'stage2rev': STAGE2_AD_INTENDED_REV_DOWNSTREAM,
+         'stage3revup': STAGE3_AD_INTENDED_REV_UPSTREAM},
     'paqci':
         {'stage1': STAGE1_AD_PAQCISTUFF,
          'stage2fwd': STAGE2_AD_PAQCISTUFF_FWDOPTIONAL,
-         'stage2rev': STAGE2_AD_PAQCISTUFF_REV }
+         'stage2rev': STAGE2_AD_PAQCISTUFF_REV_DOWNSTREAM,
+         'stage3revup': STAGE3_AD_INTENDED_REV_UPSTREAM }
 
 }
 
@@ -73,6 +77,7 @@ OUT_DIR = config['outdir']
 
 CUTADAPT_STAGE1_OPTS = config['cutadapt_stage1_opts'] if 'cutadapt_stage1_opts' in config else " -e 0.1 -q 10 "
 CUTADAPT_STAGE2_OPTS = config['cutadapt_stage2_opts'] if 'cutadapt_stage2_opts' in config else " -e 0.1 -q 10 --minimum-length 20:10"
+CUTADAPT_STAGE3_OPTS = config['cutadapt_stage3_opts'] if 'cutadapt_stage3_opts' in config else " -e 0.1 -q 10 --minimum-length 16"
 
 STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
 
@@ -254,8 +259,8 @@ rule clip_stage2:
         fq_fwd = rules.tag_stage1.output.fq_fwd, 
         fq_rev = rules.tag_stage1.output.fq_rev,
     output:
-        fq_fwd = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' ),
-        fq_rev = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' ),
+        fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' )),
+        fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' )),
         cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
     threads: 16
     resources:
@@ -267,7 +272,7 @@ rule clip_stage2:
         clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
 
         # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-        clipcmd = 'cutadapt %s %s --action=trim --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
+        clipcmd = 'cutadapt %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
     
         shell(clipcmd) 
 
@@ -277,8 +282,8 @@ rule clip_stage2_stuffer:
         fq_fwd = rules.tag_stage1_stuffer.output.fq_fwd, 
         fq_rev = rules.tag_stage1_stuffer.output.fq_rev,
     output:
-        fq_fwd = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' ),
-        fq_rev = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' ),
+        fq_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
+        fq_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
         cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
     threads: 16
     params:
@@ -292,14 +297,60 @@ rule clip_stage2_stuffer:
         clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
 
         # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-        clipcmd = 'cutadapt %s %s --action=trim --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
+        clipcmd = 'cutadapt %s %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
     
+        shell(clipcmd) 
+
+
+rule clip_stage3:
+    input:
+        fq_fwd = rules.clip_stage2.output.fq_fwd, 
+        fq_rev = rules.clip_stage2.output.fq_rev,
+    output:
+        fq_fwd = op.join( OUT_DIR, 'trim3/'+PREFIX+'{libname}.fwd.fq.gz' ),
+        fq_rev = op.join( OUT_DIR, 'trim3/'+PREFIX+'{libname}.rev.fq.gz' ),
+        cutad_log = op.join( OUT_DIR, 'trim3/'+PREFIX+'{libname}.trim3.json' )
+    threads: 16
+    resources:
+        mem_per_cpu="2gb", 
+        cpus="16", 
+        time="3:00:00"
+    run:
+        clip_opts3 = " -a %s"% m_stuffer_adset['intended']['stage3revup']
+
+        # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+        clipcmd = 'cutadapt %s --action=retain -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts3, CUTADAPT_STAGE3_OPTS )
+    
+        shell(clipcmd) 
+
+
+rule clip_stage3_stuffer:
+    input:
+        fq_fwd = rules.clip_stage2_stuffer.output.fq_fwd, 
+        fq_rev = rules.clip_stage2_stuffer.output.fq_rev,
+    output:
+        fq_fwd = op.join( OUT_DIR, 'trim3_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' ),
+        fq_rev = op.join( OUT_DIR, 'trim3_stuffer/'+PREFIX+'{libname}.rev.fq.gz' ),
+        cutad_log = op.join( OUT_DIR, 'trim3_stuffer/'+PREFIX+'{libname}.trim3.json' )
+    threads: 16
+    params:
+        stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
+    resources:
+        mem_per_cpu="2gb", 
+        cpus="16", 
+        time="3:00:00"
+    run:
+        clip_opts3 = " -a %s"% m_stuffer_adset[params.stuffer]['stage3revup']
+
+        # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+        clipcmd = 'cutadapt %s --action=retain -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts3, CUTADAPT_STAGE3_OPTS )
+
         shell(clipcmd) 
 
 
 rule starcode:
     input:
-        bc_read = rules.clip_stage2.output.fq_rev
+        bc_read = rules.clip_stage3.output.fq_rev
     output:
         bc_clust_histo_gz = op.join( OUT_DIR, 'histo/'+PREFIX+'{libname}.bcclusters.txt.gz' ),
         wfall_plot = op.join( OUT_DIR, 'bcseq/plots/waterfall_persamp/'+PREFIX+'{libname}.png' )
@@ -338,7 +389,7 @@ rule starcode:
 
 rule starcode_stuffer:
     input:
-        bc_read = rules.clip_stage2_stuffer.output.fq_rev
+        bc_read = rules.clip_stage3_stuffer.output.fq_rev
     output:
         bc_clust_histo_gz = op.join( OUT_DIR, 'histo_stufferreads/'+PREFIX+'{libname}.bcclusters.txt.gz' ),
         wfall_plot = op.join( OUT_DIR, 'bcseq/plots/waterfall_persamp_stufferreads/'+PREFIX+'{libname}.png' )
@@ -386,12 +437,12 @@ rule starcode_stuffer:
 # gather up read counts and put in a summary table 
 rule outtbl:
     input:
-        fwd_read = expand(rules.clip_stage2.output.fq_fwd, libname=lLibs),
-        rev_read = expand(rules.clip_stage2.output.fq_rev, libname=lLibs),
+        fwd_read = expand(rules.clip_stage3.output.fq_fwd, libname=lLibs),
+        rev_read = expand(rules.clip_stage3.output.fq_rev, libname=lLibs),
         bcclust_histo=expand(rules.starcode.output.bc_clust_histo_gz, libname=lLibs),
 
-        fwd_read_stuffer = expand(rules.clip_stage2_stuffer.output.fq_fwd, libname=lLibs),
-        rev_read_stuffer = expand(rules.clip_stage2_stuffer.output.fq_rev, libname=lLibs),
+        fwd_read_stuffer = expand(rules.clip_stage3_stuffer.output.fq_fwd, libname=lLibs),
+        rev_read_stuffer = expand(rules.clip_stage3_stuffer.output.fq_rev, libname=lLibs),
         bcclust_histo_stuffer=expand(rules.starcode_stuffer.output.bc_clust_histo_gz, libname=lLibs),
     output:
         table_out=outRpt

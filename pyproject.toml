@@ -17,4 +17,7 @@ dependencies = [
 'index_tagsorted_bam' = 'spliceprocess.index_tagsorted_bam:main'
 'bc_tag_paired_fq' = 'spliceprocess.bc_tag_paired_fq:main'
 'kmer_match' = 'spliceprocess.kmer_match:main'
+'process_rna_aligns' = 'spliceprocess.process_rna_aligns:main'
+'combine_rna_counts' = 'spliceprocess.combine_rna_counts:main'
 'annot_bam_plasbc_and_umi' = 'spliceprocess.annot_bam_plasbc_and_umi:main'
+'map_final_plasmid_exons' = 'refsetup.map_final_plasmid_exons:main'

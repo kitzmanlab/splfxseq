@@ -103,13 +103,18 @@ def categorize_isoforms(
 
     return miso_known, siso_otheraccepted, siso_otherother
 
+
 def agg_persamp_isogrp_counts(
     libname: str,
     ref_seq_name: str,
-    fn_bcstatus: str,
+    fn_in_bcstatus: str,
+    fn_out_bcstatus: str,
     misogrp_to_isos: Dict[str, List[str]],
     siso_otheraccepted: Set[str],
 ):
+    # read in input bcstatus table
+    # aggregate by isogrp
+    # annotate bcstatus table with isogrp name and write back out
 
     miso_to_grp = {}
     for ig in misogrp_to_isos:
@@ -136,7 +141,11 @@ def agg_persamp_isogrp_counts(
     misogrp_nrd_ok, misogrp_nbc_ok = defaultdict(int), defaultdict(int)
     misogrp_nrd_counted, misogrp_nbc_counted = defaultdict(int), defaultdict(int)
 
-    for bcstat_chunk in pd.read_csv( fn_bcstatus, sep='\t', chunksize=100000, compression='gzip' ):
+    isfirst = True
+
+    for bcstat_chunk in pd.read_csv( fn_in_bcstatus, sep='\t', chunksize=100000, compression='gzip' ):
+
+        lout = []
 
         for iso, isotbl in bcstat_chunk.groupby( 'isoform' ):
             
@@ -170,6 +179,21 @@ def agg_persamp_isogrp_counts(
             misogrp_nrd_counted[isogrp] += cur_nread_counted
             misogrp_nbc_counted[isogrp] += cur_nbc_counted
 
+            if isogrp is not None:
+                isotbl2=isotbl.copy()
+                isotbl2['isogrp_name'] = isogrp
+                lout.append( isotbl2 )
+
+        if len(lout)>0:
+            lout=pd.concat( lout )
+            lout=lout.sort_values(by='bc')
+            if isfirst:
+                lout.to_csv( fn_out_bcstatus, sep='\t', index=False, compression='gzip' )
+                isfirst = False
+            else:
+                lout.to_csv( fn_out_bcstatus, sep='\t', index=False, mode='a', header=False, compression='gzip' )
+
+            
     for isogrp in list(misogrp_to_isos.keys())+['OTHER']:
         out_rpt['libname'].append( libname )
         out_rpt['overall_nrd'].append( nread )

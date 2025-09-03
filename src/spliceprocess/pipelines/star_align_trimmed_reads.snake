@@ -55,16 +55,6 @@ STAR_OPTIONS = config['star_options'] if 'star_options' in config else " --align
 
 STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
 
-TRIM2_REV_SEQAD = '-A CTGTCTCTTATACACATCTGACGCTGCCGACGA'
-
-TRIM_DOWNSTREAM = ('trim_downstream_const' in config)
-
-if TRIM_DOWNSTREAM:
-    if 'trim_downstream_cutadapt_opts' in config:
-        TRIM_DNST_OPTS = config['trim_downstream_cutadapt_opts']
-    else:
-        TRIM_DNST_OPTS = ' -e 0.2 -O 20 --minimum-length 30:30'
-
 ########
 # load and check sample table.
 
@@ -131,15 +121,10 @@ rule star_align:
         fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
         fq_rev = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_rev' ],
     output:
-        temp_head_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.head.fq.gz' )),
-        temp_head_fq_rev = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.rev.head.fq.gz' )),
-
         fixrn_fq_rev = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.rev.fixrn.fq.gz' )),
         fixrn_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.fixrn.fq.gz' )),
-
         temp_align_dir = temp( directory( op.join( OUT_DIR, 'temp_align/'+PREFIX+'{libname}' )  )),
-        
-        bam =  temp(op.join(OUT_DIR,'align/'+PREFIX+'{libname}.bam')),
+        bam =  temp(op.join(OUT_DIR,'align/'+PREFIX+'{libname}.temp.bam')),
     threads: 4
     params:
         star_path = lambda wc: tbl_lib.loc[ wc.libname, 'ref_star_path'] 
@@ -154,44 +139,16 @@ rule star_align:
         if STOP_AFTER_NREADS > 0:
             nlines = 4 * STOP_AFTER_NREADS
                 
-            if TRIM_DOWNSTREAM:
-                shell("""   
-                    set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
-
-                    # additional cutadapt step to remove bits of the fwd seq adapt that the reverse read may extend into
-                    #  in the case of a SKIP 
-                    cutadapt -j {threads} {TRIM2_REV_SEQAD} --action=trim  {TRIM_DNST_OPTS} \
-                        -o {output.temp_head_fq_fwd} -p {output.temp_head_fq_rev} \
-                         <(pigz -d -c -p8 {input.fq_fwd} | head -n {nlines}) <(pigz -d -c -p8 {input.fq_rev}|head -n {nlines})
-
-                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
-                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
-                """)
-            else:
-                shell("""   
-                    set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
-                    touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev}
-                    pigz -d -c -p8 {input.fq_fwd} | head -n {nlines} | perl -pi -e 's/ /_/g' | pigz -c -p 8 > {output.fixrn_fq_fwd}
-                    pigz -d -c -p8 {input.fq_rev} | head -n {nlines} | perl -pi -e 's/ /_/g' | pigz -c -p 8 > {output.fixrn_fq_rev}
-                """)
+            shell("""   
+            set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
+            pigz -d -c -p8 {input.fq_fwd} | head -n {nlines} | perl -pi -e 's/ /_/g' | pigz -c -p 8 > {output.fixrn_fq_fwd}
+            pigz -d -c -p8 {input.fq_rev} | head -n {nlines} | perl -pi -e 's/ /_/g' | pigz -c -p 8 > {output.fixrn_fq_rev}
+            """)
         else:
-            if TRIM_DOWNSTREAM:
-                shell("""   
-                    set +o pipefail;  #fun fact, when head breaks the pipe is returns nonzero exit code
-
-                    cutadapt -j {threads} {TRIM2_REV_SEQAD} --action=trim  {TRIM_DNST_OPTS} \
-                        -o {output.temp_head_fq_fwd} -p {output.temp_head_fq_rev} \
-                        {input.fq_fwd} {input.fq_rev}
-
-                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
-                    pigz -d -c -p{resources.cpus} {output.temp_head_fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
-                """)
-            else:
-                shell("""
-                touch {output.temp_head_fq_fwd} {output.temp_head_fq_rev}
-                pigz -d -c -p{resources.cpus} {input.fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
-                pigz -d -c -p{resources.cpus} {input.fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
-                """)
+            shell("""
+            pigz -d -c -p{resources.cpus} {input.fq_fwd} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_fwd}
+            pigz -d -c -p{resources.cpus} {input.fq_rev} | perl -pi -e 's/ /_/g' | pigz -c -p {resources.cpus} > {output.fixrn_fq_rev}
+            """)
 
         shell("""
         mkdir {output.temp_align_dir};
@@ -236,4 +193,7 @@ rule outtbl:
     output:
         table_out=outRpt
     run:
-        table_out.to_csv( output.table_out, sep='\t', index=False )
+        tbl_out = tbl_lib.copy()
+
+        tbl_out['bam'] = list(input.bam)
+        tbl_out.to_csv(output.table_out,sep='\t',index=False)
