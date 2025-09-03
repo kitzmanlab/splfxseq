@@ -151,7 +151,7 @@ class GenomePlasmidMapper:
             ref_seq = ref_seq.upper()
             plas_seq = plas_seq.upper()
             if ref_seq != plas_seq:
-                raise ValueError(f"Sequence mismatch at {row['vector_chrom']}:{row['vector_start']}-{row['vector_end']}")
+                raise ValueError(f"Sequence mismatch at {row['vector_chrom']}:{row['vector_start']}-{row['vector_end']}, REF:{ref_seq}, PLAS:{plas_seq}")
 
     def genomic_to_vector(self, chrom, position, strand=None):
         """
