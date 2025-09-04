@@ -51,7 +51,7 @@ def plot_varfx(
 
     for isogrp in isogrptbl['isogrp_name'].unique():
         p4 = base.mark_circle().encode(
-            alt.Y(f'psi_{isogrp}_singleton_wmean:Q', title=[f'PSI {isogrp}','(singleton bc, Wmean']),
+            alt.Y(f'psi_{isogrp}_singleton_wmean:Q', title=[f'PSI {isogrp}','(singleton bc, Wmean']).scale(domain=[0,1]),
             alt.Color('alt:N', title='Alternate Base'),
             alt.Tooltip(loc)
         )
@@ -64,7 +64,6 @@ def plot_varfx(
         alt.Y('pairing_nbc_varany:Q', title='#pairing bcs' ),
         alt.Color('alt:N', title='Alternate Base'),
         alt.Tooltip(['genomic_pos','ref','alt','pairing_nbc_varany']),
-        # size=alt.when(hover).then(alt.SizeValue(100)).otherwise(alt.SizeValue(10))
     )
 
     p2 = base.mark_circle(
@@ -108,7 +107,7 @@ def main():
     opts_mkplot.add_argument('--ref_seq_name',  dest='ref_seq_name' )
     opts_mkplot.add_argument('--out_plot',  dest='out_plot' )
 
-    opts_mkplot.add_argument('--min_rna_bc',  dest='min_rna_bc', type=int, default=100 )
+    opts_mkplot.add_argument('--min_rna_bc',  dest='min_rna_bc', type=int, default=20 )
 
     args = parser.parse_args()
 
