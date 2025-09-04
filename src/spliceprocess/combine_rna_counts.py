@@ -226,7 +226,8 @@ def main():
     
     parser.add_argument('--samplesheet', help='sample sheet with library names and paths to processed rna count tables; expected columns: libname, bc_status_table, per_samp_isogrp_stats\n\
         with bc_status_table giving INPUT path to per-barcode isoform counts table\n\
-        and per_samp_isogrp_stats giving OUTPUT path to per-sample isoform group stats table', 
+        with bc_status_table_withisogrp giving OUTPUT path to per-sample isoform group stats table\n\
+        and per_samp_isogrp_rpt giving OUTPUT path to per-sample isoform group stats table', 
         dest='samplesheet' )
 
     parser.add_argument('--out_isogrps', help='output file name for isoform group table', dest='out_isogrps' )
@@ -288,11 +289,12 @@ def main():
             r['libname'],
             args.seq_name,
             r['bc_status_table'],
+            r['bc_status_table_withisogrp'],
             miso_known,
             siso_otheraccepted
         )
         per_samp_rpt=per_samp_rpt.sort_values( by=['isogrp_psi_bc'], ascending=False )
-        per_samp_rpt.to_csv( r['per_samp_isogrp_stats'], sep='\t', index=False )
+        per_samp_rpt.to_csv( r['per_samp_isogrp_rpt'], sep='\t', index=False )
 
 if __name__ == '__main__':
     main()

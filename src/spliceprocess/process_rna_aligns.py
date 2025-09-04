@@ -1,3 +1,4 @@
+from math import e
 import sys
 import pysam    
 import itertools
@@ -185,35 +186,46 @@ def process_PE_rna_bam(
         lr1 = [ r for r in reads if r.is_read1 ]
         lr2 = [ r for r in reads if r.is_read2 ]
     
+        rej = None
+
+        read1 = None
         if len(lr1) < 1:
-            raise ValueError( f'read {readname} has no read1 alignment' )
+            print( f'WARNING-read {readname} has no read1 alignment' )
+            rej = 'unmapped'
+        else:
+            read1 = lr1[0]
+            bc = read1.get_tag( 'BC' )
+
+        read2 = None
         if len(lr2) < 1:
-            raise ValueError( f'read {readname} has no read2 alignment' )
-        
+            print( f'WARNING-read {readname} has no read2 alignment' )
+            rej = 'unmapped'
+        else:
+            read2 = lr2[0]
+            bc2 = read2.get_tag( 'BC' )
+            if bc is None:
+                bc = bc2 
+            else:
+                if bc != bc2:
+                    raise ValueError( f'read {readname} has different barcodes in read1, read2' )
+
         if len(lr1) > 1:
             raise ValueError( f'read {readname} has too many read1 alignments' )
         if len(lr2) > 1:
             raise ValueError( f'read {readname} has too many read2 alignments' )
 
-        read1 = lr1[0]
-        read2 = lr2[0]
+        if rej is None: 
+            if read1.is_secondary or read2.is_secondary:
+                rej = 'secondary'
+            elif not read1.is_paired or not read2.is_paired:
+                rej = 'unpaired'
+            elif read1.is_unmapped or read2.is_unmapped or read1.mate_is_unmapped:
+                rej = 'unmapped'
 
-        bc = read1.get_tag( 'BC' )
-        if bc!=read2.get_tag( 'BC' ):
-            raise ValueError( f'read {readname} has different barcodes in read1, read2' )
-
-        rej = None
-        if read1.is_secondary or read2.is_secondary:
-            rej = 'secondary'
-        elif not read1.is_paired or not read2.is_paired:
-            rej = 'unpaired'
-        elif read1.is_unmapped or read2.is_unmapped or read1.mate_is_unmapped:
-            rej = 'unmapped'
-
-        chromname = read1.reference_name
-        if read1.reference_name != read2.reference_name:
-            raise ValueError( f'read {readname} has different reference names in read1, read2' )
-        corng_upstream_ex, corng_dnstream_ex = mvec_constupdn[chromname]
+            chromname = read1.reference_name
+            if read1.reference_name != read2.reference_name:
+                raise ValueError( f'read {readname} has different reference names in read1, read2' )
+            corng_upstream_ex, corng_dnstream_ex = mvec_constupdn[chromname]
 
         if rej:
             if rej in rejreason_bam:

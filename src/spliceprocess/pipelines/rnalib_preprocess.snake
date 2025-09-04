@@ -297,7 +297,7 @@ rule clip_stage2_stuffer:
         clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
 
         # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-        clipcmd = 'cutadapt %s %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
+        clipcmd = 'cutadapt %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
     
         shell(clipcmd) 
 
