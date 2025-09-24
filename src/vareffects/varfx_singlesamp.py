@@ -30,9 +30,17 @@ def plot_varfx(
     var_rpt['ref'] = [ x.split(':')[2] for x in var_rpt[col_genomic_var] ]
     var_rpt['alt'] = [ x.split(':')[3] for x in var_rpt[col_genomic_var] ]
 
+    _var_rpt = var_rpt
+
     var_rpt = var_rpt.loc[ var_rpt['rna_nbc_varany'] >= min_rna_bc ].copy()
 
+    if var_rpt.shape[0]==0:
+        print(f'WARNING - {_var_rpt.shape[0]} variants before filtering for >= {min_rna_bc} rna bcs, but none pass filter')
+        ch = alt.Chart(var_rpt,title=f'NO VARIANTS PASS FILTER').mark_circle()
+        return ch
+
     var_rpt['rna_nrd_bad'] = var_rpt[ 'rna_nrd_bad_ends,rna_nrd_bad_starts,rna_nrd_secondary,rna_nrd_unpaired,rna_nrd_unmapped,rna_nrd_soft_clipped'.split(',')].sum(1)
+
 
     libname = var_rpt['libname'].unique()[0]
     if len(set(var_rpt['libname'])) > 1:

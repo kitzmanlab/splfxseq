@@ -68,19 +68,20 @@ def var_effects_single_sample(
     for vid, pairbcs_vid in pairtbl_nnvar.groupby(col_var_annot):
         m_varsingle_sbc[vid] = set(pairbcs_vid['readgroupid'])
     
-    li_withinmax_var = ( pairtbl_nnvar[col_var_annot].isnull() ) | (pairtbl_nnvar[col_var_annot].str.count(',') < max_var_per_bc)
+    li_withinmax_var = (pairtbl_nnvar[col_var_annot].str.count(',') < max_var_per_bc)
 
     m_varmulti_sbc = defaultdict(list)
     for _,r in pairtbl_nnvar[li_withinmax_var &~li_singlevar].iterrows():
         for vid in r[col_var_annot].split(','):
-            m_varmulti_sbc[vid].append( r['readgroupid'] )
+            if len(vid)>0: # filter out blank variants (potentially any that did not lift over to genomic position)
+                m_varmulti_sbc[vid].append( r['readgroupid'] )
+        
     for vid in m_varmulti_sbc:
         m_varmulti_sbc[vid] = set(m_varmulti_sbc[vid])
 
     # find all vars in pairing table    
-    allvars = [ lv.split(',') for lv in pairtbl_nnvar[col_var_annot] ]
-    allvars = list(itertools.chain(*allvars))
-    allvars = list(set(allvars))
+    allvars = list( set(m_varsingle_sbc.keys() | set(m_varmulti_sbc.keys()) ) )
+    
     if var_sort_fn is not None:
         allvars = sorted( allvars, key=var_sort_fn )
     else:
