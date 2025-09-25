@@ -63,9 +63,9 @@ def var_effects_single_sample(
     pairtbl_nnvar = pairtbl_nnvar.set_index('readgroupid', drop=False)
 
     # map variants to barcodes for faster lookup
-    li_singlevar = ~ pairtbl_nnvar[col_var_annot].str.contains(',')
+    li_singlevar = ~(pairtbl_nnvar[col_var_annot].str.contains(','))
     m_varsingle_sbc = {}
-    for vid, pairbcs_vid in pairtbl_nnvar.groupby(col_var_annot):
+    for vid, pairbcs_vid in pairtbl_nnvar.loc[li_singlevar].groupby(col_var_annot):
         m_varsingle_sbc[vid] = set(pairbcs_vid['readgroupid'])
     
     li_withinmax_var = (pairtbl_nnvar[col_var_annot].str.count(',') < max_var_per_bc)
