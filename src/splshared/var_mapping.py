@@ -241,3 +241,55 @@ class GenomePlasmidMapper:
             
         return (region['genome_chrom'], genomic_pos, region['genome_strand'])
 
+
+
+
+def genome_to_hgvs(tbl, genome_pos, exon ):
+    tbl = tbl[tbl['exon']==exon].copy()
+    vg_start = tbl['vector_genome_start'].iloc[0]
+    vg_end = tbl['vector_genome_end'].iloc[0]
+    ex_start = tbl['ex_genome_start'].iloc[0]
+    ex_end = tbl['ex_genome_end'].iloc[0] 
+    cdna_start = tbl['cdna_start'].iloc[0]
+    cdna_end = cdna_start + ex_end - ex_start
+
+    loutpos = []
+    for gpos in genome_pos:
+        if gpos < vg_start or gpos > vg_end:
+            coordstr=None
+        else:
+            # is the location before the exon, after, or inside?
+            if gpos < ex_start:
+                coordstr = f'c.{cdna_start:d}-{ex_start-gpos:d}'
+            elif gpos > ex_end:
+                coordstr = f'c.{cdna_end:d}+{gpos-ex_end:d}'
+            else:
+                coordstr = f'c.{cdna_start + gpos - ex_start:d}'
+
+        loutpos.append(coordstr)
+
+    return loutpos
+
+
+def genome_to_vector(tbl, genome_pos, exon):
+    tbl = tbl[tbl['exon']==exon].copy()
+    vg_start = tbl['vector_genome_start'].iloc[0]
+    vg_end = tbl['vector_genome_end'].iloc[0]
+    v_start = tbl['vector_start'].iloc[0]
+    v_end = tbl['vector_end'].iloc[0] 
+    
+    loutpos = []
+    for gpos in genome_pos:
+        if gpos < vg_start or gpos > vg_end:
+            coord=None
+        else:
+            coord = gpos - vg_start + v_start
+            
+        loutpos.append(coord)
+
+    return loutpos
+
+
+
+
+

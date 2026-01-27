@@ -369,6 +369,12 @@ rule kmer_tbl:
         
         ch.save(output.plot_out)
 
+rule kmer_only:
+    input:
+        rules.kmer_tbl.output.table_out,
+        rules.kmer_tbl.output.plot_out
+
+
 rule outtbl:
     input:
         bam = expand(rules.star_align.output.bam, libname=lLibs)

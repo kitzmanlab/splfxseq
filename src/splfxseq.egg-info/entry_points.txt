@@ -1,0 +1,14 @@
+[console_scripts]
+annot_bam_plasbc_and_umi = spliceprocess.annot_bam_plasbc_and_umi:main
+annot_pairingtbl_genomic = pairing.annot_pairingtbl_genomic:main
+bc_tag_paired_fq = spliceprocess.bc_tag_paired_fq:main
+check_overlap_rnabc_knownbc = pairing.check_overlap_rnabc_knownbc:main
+combine_rna_counts = spliceprocess.combine_rna_counts:main
+index_tagsorted_bam = spliceprocess.index_tagsorted_bam:main
+kmer_match = spliceprocess.kmer_match:main
+map_final_plasmid_exons = refsetup.map_final_plasmid_exons:main
+mut_coverage_single_target = pairing.mut_coverage_single_target:main
+plot_sample_x_isogrp = spliceprocess.plot_sample_x_isogrp:main
+process_rna_aligns = spliceprocess.process_rna_aligns:main
+rna_counts_add_var_info = spliceprocess.rna_counts_add_var_info:main
+varfx_singlesamp = vareffects.varfx_singlesamp:main

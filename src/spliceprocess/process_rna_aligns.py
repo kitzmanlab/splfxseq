@@ -43,7 +43,7 @@ def clean_jns_pe( read1: pysam.AlignedSegment,
     if sum( jn[ 1 ] - jn[ 0 ] + 1 for jn in r12_jns[ 0 ] ) < min_matches_for \
     or sum( jn[ 1 ] - jn[ 0 ] + 1 for jn in r12_jns[ 1 ] ) < min_matches_rev:
         return ('soft_clipped',None)
-
+                                        # looking at cigar string, integer flag, bam file
     if sum( [t[1] for t in r12_cigs[0] if t[0] == 4] ) > max_soft_clip_for \
     or sum( [t[1] for t in r12_cigs[1] if t[0] == 4] ) > max_soft_clip_rev:
         return ('soft_clipped',None)

@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: splfxseq
+Version: 0.0
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pysam
