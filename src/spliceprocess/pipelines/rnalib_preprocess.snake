@@ -136,7 +136,7 @@ rule countinputs:
     resources:
         mem_per_cpu="4gb", 
         cpus="8", 
-        time="0:30:00"
+        runtime="30m"
     run:
         if 'stop_after_nreads' in config:
             nlines = 4 * int(config['stop_after_nreads'])
@@ -171,7 +171,7 @@ rule clip_stage1:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     # log: op.join(OUT_DIR,'trim1/'+PREFIX+'{libname}.trim1.err')
     run:
         ad_stage1=m_stuffer_adset['intended']['stage1']
@@ -218,7 +218,7 @@ rule tag_stage1:
     resources:
         mem_per_cpu="4gb", 
         cpus="1", 
-        time="6:00:00"
+        runtime="6h"
     shell:
         """
         bc_tag_paired_fq \
@@ -240,7 +240,7 @@ rule tag_stage1_stuffer:
     resources:
         mem_per_cpu="4gb", 
         cpus="1", 
-        time="6:00:00"
+        runtime="6h"
     shell:
         """
         bc_tag_paired_fq \
@@ -266,7 +266,7 @@ rule clip_stage2:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     run:
         clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
         clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
@@ -291,7 +291,7 @@ rule clip_stage2_stuffer:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     run:
         clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
         clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
@@ -314,7 +314,7 @@ rule clip_stage3:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     run:
         clip_opts3 = " -a %s"% m_stuffer_adset['intended']['stage3revup']
 
@@ -338,7 +338,7 @@ rule clip_stage3_stuffer:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     run:
         clip_opts3 = " -a %s"% m_stuffer_adset[params.stuffer]['stage3revup']
 
@@ -361,7 +361,7 @@ rule starcode:
     resources:
         mem_per_cpu="5gb", 
         cpus="24", 
-        time="1:00:00"
+        runtime="1h"
     run:
         if input.bc_read.endswith('gz'):
             unc_bc_read = '<( echo -e "NNNNNNNNNNNNNNNN"; pigz -d -c -p {resources.cpus} {input.bc_read} | grep \'BC=\' | perl -lane \'$_ =~ /BC=([ACTGN]+)/; print $1 \' )'.format(**locals())
@@ -400,7 +400,7 @@ rule starcode_stuffer:
     resources:
         mem_per_cpu="5gb", 
         cpus="24", 
-        time="1:00:00"
+        runtime="1h"
     run:
         if input.bc_read.endswith('gz'):
             unc_bc_read = '<( echo -e "NNNNNNNNNNNNNNNN"; pigz -d -c -p {resources.cpus} {input.bc_read} | grep \'BC=\' | perl -lane \'$_ =~ /BC=([ACTGN]+)/; print $1 \' )'.format(**locals())

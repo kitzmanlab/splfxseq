@@ -177,7 +177,7 @@ rule star_align:
     resources:
         mem_per_cpu="4gb", 
         cpus="4", 
-        time="1:00:00"
+        runtime="1h"
     run:
         # sometimes STAR gets screwed up if we dont clean the read names... 
         # if so then we need to pipe thru  
@@ -255,7 +255,7 @@ rule fastqc:
     resources:
         mem_per_cpu="4gb", 
         cpus="4", 
-        time="5:00:00"
+        runtime="5h"
     run:
         if input.fq_fwd.endswith('gz'):
             cmd1 = 'zcat {input.fq_fwd}'
@@ -292,7 +292,7 @@ rule kmercounts:
     resources:
         mem_per_cpu="4gb", 
         cpus="4", 
-        time="1:00:00"
+        runtime="1h"
     run:
         r1 = tbl_iso_kmer.query('whichread=="r1"')
         r1.to_csv(output.check_tbl_r1,sep='\t',index=False)

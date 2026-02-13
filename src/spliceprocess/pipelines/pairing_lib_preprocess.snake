@@ -111,7 +111,7 @@ rule countinputs:
     resources:
         mem_per_cpu="4gb", 
         cpus="8", 
-        time="0:30:00"
+        runtime="30m"
     run:
         if 'stop_after_nreads' in config:
             nlines = 4 * int(config['stop_after_nreads'])
@@ -140,7 +140,7 @@ rule clip_stage1:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     # log: op.join(OUT_DIR,'trim1/'+PREFIX+'{libname}.trim1.err')
     run:
         clipcmd_first_part = 'cutadapt -g {params.stuffseq} --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_bc} -p {output.fq_ins} --json {output.cutad_log} '%( CUTADAPT_STAGE1_OPTS )
@@ -184,7 +184,7 @@ rule clip_stage2:
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
-        time="3:00:00"
+        runtime="3h"
     # log: op.join(OUT_DIR,'trim2/'+PREFIX+'{libname}.trim2.err')
     run:
         clip_opts = " ".join( [ "-a '%s'"%seq for seq in LAD_STAGE2 ] )
@@ -222,7 +222,7 @@ rule tag_ins:
     resources:
         mem_per_cpu="2gb", 
         cpus="4", 
-        time="5:00:00"
+        runtime="5h"
     shell:
         """
         tag_insert_read_name \
@@ -244,7 +244,7 @@ rule starcode:
     resources:
         mem_per_cpu="5gb", 
         cpus="24", 
-        time="1:00:00"
+        runtime="1h"
     run:
         if input.bc_read.endswith('gz'):
             unc_bc_read = '<( echo -e "@emptyread\\nNNNNNNNNNN\\n+\\nIIIIIIIIII"; pigz -d -c -p {resources.cpus} {input.bc_read} )'.format(**locals())

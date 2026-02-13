@@ -131,7 +131,7 @@ rule star_align:
     resources:
         mem_per_cpu="4gb", 
         cpus="4", 
-        time="1:00:00"
+        runtime="1h"
     run:
         # STAR gets screwed up if we dont clean the read names - need to pipe thru  
         #   perl -pi -e 's/ /_/g' 
@@ -180,7 +180,7 @@ rule filter_bcsort_bam:
     resources:
         mem_per_cpu="4gb", 
         cpus="4", 
-        time="1:00:00"
+        runtime="1h"
     run:
         shell("""
             samtools view -b --exclude-flags 0x900 {input.bam} | samtools sort -m4G -@{resources.cpus} -t BC -n -o {output.bam}

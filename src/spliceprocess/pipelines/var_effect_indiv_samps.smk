@@ -129,7 +129,7 @@ rule per_var_process:
     resources:
         mem_per_cpu="10gb", 
         cpus="1", 
-        time="1:00:00"
+        runtime="1h"
     run:
         if MAKE_PERBC_RPT:
             shell("""

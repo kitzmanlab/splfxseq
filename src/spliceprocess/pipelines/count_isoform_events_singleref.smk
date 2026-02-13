@@ -120,7 +120,7 @@ rule count_isoform_events:
     resources:
         mem_per_cpu="4gb", 
         cpus="4", 
-        time="1:00:00"
+        runtime="1h"
     run:
         shell("""
             process_rna_aligns \
