@@ -59,6 +59,9 @@ def main():
     parser.add_argument('--plas_fasta', required=True,
                       help='Plasmid fasta file')
 
+    parser.add_argument('--allow_sequence_mismatch', action='store_true', default=False,
+                      help='Allow sequence mismatch between reference and plasmid fasta files (default: False)')
+
     args = parser.parse_args()
     
     # Load mapping table and create mapper
@@ -66,8 +69,14 @@ def main():
 
     ref_fasta = pysam.FastaFile(args.ref_fasta)
     plas_fasta = pysam.FastaFile(args.plas_fasta)
-
-    mapper.check_sequences(ref_fasta, plas_fasta)
+    
+    try:
+        mapper.check_sequences(ref_fasta, plas_fasta)
+    except ValueError as e:
+        if not args.allow_sequence_mismatch:
+            raise ValueError(f"Error checking sequences: {e}")
+        else:
+            print(f"Warning: Sequence mismatch between reference and plasmid fasta files: {e}")
     
     # Process input table in chunks
     first_chunk = True
