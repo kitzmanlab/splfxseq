@@ -163,7 +163,7 @@ rule per_ref_combine_counts:
         # bcxiso = lambda wc: get_libnames_for_ref(wc)
         bcxiso = lambda wc: expand(rules.count_isoform_events.output.bcxiso, libname=get_libnames_for_ref(wc))
     params:
-        named_isos = config['named_isos']
+        named_isos = NAMED_ISOS
     output:
         per_ref_tbl = op.join( OUT_DIR, 'perref/{ref_seq_name}/samples_to_agg.txt' ),
         isogrp_tbl = op.join( OUT_DIR, 'perref/{ref_seq_name}/isogroups.txt' ),
