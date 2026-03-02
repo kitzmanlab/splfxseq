@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Dict,List,Set
 import pandas as pd
-from splshared.var_mapping import VectorExonTable
+from splshared.var_mapping import VectorExonTable, IsogrpTable
 
 
 def gather_counts_across_samples(
@@ -49,6 +49,7 @@ def categorize_isoforms(
     otherisos_minbc_withinallsamp: int,
     otherisos_minbc_sumacrosssamp: int,
     known_exons_strict: bool = False,
+    preexisting_isogrp_tbl: IsogrpTable = None,
 ):
 
     """
@@ -65,9 +66,18 @@ def categorize_isoforms(
     siso_otheraccepted = set()  # 
     siso_otherother = set()  # 
 
+    if preexisting_isogrp_tbl is not None:
+        siso_preexisting = set(preexisting_isogrp_tbl.tbl['isoform'])
+    else:
+        siso_preexisting = set()
+
     for iso in s_all_isos:
         seqname = ref_seq_name
         assert seqname == iso.split(':')[0]
+
+        if iso in siso_preexisting:
+            continue
+
         lcorng = [ (int(se.split('_')[0]), int(se.split('_')[1])) for se in iso.split(':')[1].split(',') if len(se)>0 ]
 
         # keep track of exons - known (by name), unknown, and both together in sorted order
@@ -194,7 +204,7 @@ def agg_persamp_isogrp_counts(
                 lout.to_csv( fn_out_bcstatus, sep='\t', index=False, mode='a', header=False, compression='gzip' )
 
             
-    for isogrp in list(misogrp_to_isos.keys())+['OTHER']:
+    for isogrp in list(misogrp_to_isos.keys()):
         out_rpt['libname'].append( libname )
         out_rpt['overall_nrd'].append( nread )
         out_rpt['overall_nbc'].append( nbc )
@@ -236,6 +246,8 @@ def main():
 
     parser.add_argument('--vector_exon_tbl', help='vector exon table', dest='vector_exon_tbl' )
 
+    parser.add_argument('--named_isos', help='named isoforms table', default=None, dest='named_isos' )
+
     parser.add_argument('--otherisos_perbc_min_read_count', default=1, type=int, help='min reads for bc to contribute to OTHER isoform', dest='otherisos_perbc_min_read_count' )
     parser.add_argument('--otherisos_perbc_min_psi', default=0.025, type=float, help='min within-bc psi for bc to contribute to OTHER isoform', dest='otherisos_perbc_min_psi' )
     parser.add_argument('--otherisos_minbc_withinallsamp', default=1, type=int, help='to be counted as OTHER isoform group, min #bcs within EVERY sample', dest='otherisos_minbc_withinallsamp' )
@@ -255,42 +267,78 @@ def main():
         args.otherisos_perbc_min_psi
     )
 
+    if args.named_isos is not None:
+        named_isos = IsogrpTable.from_file( args.named_isos )
+        if named_isos.tbl['isogrp_name'].isin( ['OTHER'] ).any():
+            raise ValueError(f"named_isos file contains OTHER isoform group name; use a different name")
+    else:
+        named_isos = None
+    
     miso_known, siso_otheraccepted, siso_otherother = categorize_isoforms(
         lib_iso_cts,
         vec_exons,
         args.seq_name,
         args.otherisos_minbc_withinallsamp,
         args.otherisos_minbc_sumacrosssamp,
-        args.strict
+        args.strict,
+        named_isos
     )
 
-    isotbl = {k:[] for k in ['seq_name', 'isogrp_name', 'isoform']}
+    isotbl = IsogrpTable()
+    if named_isos is not None:
+        isotbl.tbl = named_isos.tbl.copy()
+    
+    isos_add = {k:[] for k in ['seq_name', 'isogrp_name', 'isoform']}
     for isogrp in set(miso_known):
         for iso in miso_known[isogrp]:
-            isotbl['seq_name'].append( args.seq_name )
-            isotbl['isogrp_name'].append( isogrp )
-            isotbl['isoform'].append( iso )
+            isos_add['seq_name'].append( args.seq_name )
+            isos_add['isogrp_name'].append( isogrp )
+            isos_add['isoform'].append( iso )
 
     if 'SKIP' not in miso_known:
-        isotbl['seq_name'].append( args.seq_name )
-        isotbl['isogrp_name'].append( 'SKIP' )
-        isotbl['isoform'].append( f'{args.seq_name}:' )
+        isos_add['seq_name'].append( args.seq_name )
+        isos_add['isogrp_name'].append( 'SKIP' )
+        isos_add['isoform'].append( f'{args.seq_name}:' )
 
     for iso in siso_otheraccepted:
-        isotbl['seq_name'].append( args.seq_name )
-        isotbl['isogrp_name'].append( 'OTHER' )
-        isotbl['isoform'].append( iso )
+        isos_add['seq_name'].append( args.seq_name )
+        isos_add['isogrp_name'].append( 'OTHER' )
+        isos_add['isoform'].append( iso )
 
-    isotbl = pd.DataFrame( isotbl )
-    isotbl.to_csv( args.out_isogrps, sep='\t', index=False )
+    isotbl.tbl = pd.concat(
+        [isotbl.tbl, 
+         pd.DataFrame(isos_add)],
+        ignore_index=True
+    )
 
+    isotbl.tbl = isotbl.tbl.drop_duplicates()
+
+    l_igname_first = [args.seq_name] + (list(named_isos.tbl.isogrp_name) if named_isos is not None else []) + ['SKIP']
+
+    isotbl.tbl = pd.concat(
+        [
+            isotbl.tbl.loc[
+                isotbl.tbl.isogrp_name.isin( l_igname_first )
+            ],
+            isotbl.tbl.loc[
+                ~isotbl.tbl.isogrp_name.isin( l_igname_first )
+            ]
+        ],
+        ignore_index=True
+    )
+
+    isotbl.check_one_to_many()
+    isotbl.tbl.to_csv( args.out_isogrps, sep='\t', index=False )
+
+    miso_known_withnamed = { isogrp:list(igtbl.isoform) for isogrp, igtbl in isotbl.tbl.groupby('isogrp_name') }
+    
     for _, r in samptbl.iterrows():
         per_samp_rpt = agg_persamp_isogrp_counts(
             r['libname'],
             args.seq_name,
             r['bc_status_table'],
             r['bc_status_table_withisogrp'],
-            miso_known,
+            miso_known_withnamed,
             siso_otheraccepted
         )
         per_samp_rpt=per_samp_rpt.sort_values( by=['isogrp_psi_bc'], ascending=False )
