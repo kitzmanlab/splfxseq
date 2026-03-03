@@ -225,7 +225,7 @@ def create_input_seq( refseq,
 
         assert len( ref ) == len( alt ), 'Code is not ready for indels within the reference variants yet'
 
-        assert refseq[ pos: pos + len( ref ) ].upper() == ref, 'Reference base within reference variants does not match given position'
+        assert refseq[ pos: pos + len( ref ) ].upper() == ref.upper(), 'Reference base within reference variants does not match given position'
 
         refseq = refseq[ : pos ] + alt + refseq[ pos + len( ref ): ]
 
@@ -359,8 +359,8 @@ def splai_score_variants( annots_df,
         outtbl[ 'other_var' ].append( ';'.join( [ ':'.join( [ str( p ), '>'.join( [ r, a ] ) ] )
                                       for p,r,a in haplotypes[ idx ] ] ) )
 
-        outtbl[ 'acc_abs_chg' ].append( sum( np.abs( diff_acc ) ) )
-        outtbl[ 'don_abs_chg' ].append( sum( np.abs( diff_don ) ) )
+        outtbl[ 'acc_abs_chg' ].append( np.sum( np.abs( diff_acc ) ) )
+        outtbl[ 'don_abs_chg' ].append( np.sum( np.abs( diff_don ) ) )
 
         outtbl[ 'DS_AG' ].append( np.abs( np.min( [ 0, np.min( diff_acc ) ] ) ) )
         outtbl[ 'DS_AL' ].append( np.max( [ 0, np.max( diff_acc ) ] ) )

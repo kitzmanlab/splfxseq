@@ -220,8 +220,10 @@ rule star_align:
 
         # additional cutadapt step to remove bits of the fwd seq adapt that the reverse read may extend into
         #  in the case of a SKIP 
+   
+        # made the minimum length from 25:25 to 25:10 to accomodate staggered reads post processing
         shell("""
-            cutadapt -j {threads} {TRIM2_REV_SEQAD} --action=trim  -e 0.2 -O 15 --minimum-length 25:25 \
+            cutadapt -j {threads} {TRIM2_REV_SEQAD} --action=trim  -e 0.2 -O 15 --minimum-length 25:10 \
                 -o {output.temp2_head_fq_fwd} -p {output.temp2_head_fq_rev} \
                 {fns[0]} {fns[1]}
         """)

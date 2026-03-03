@@ -235,7 +235,7 @@ def main():
     parser.add_argument('--seq_name', help='name of target reference sequence', dest='seq_name' )
 
     parser.add_argument('--vector_exon_tbl', help='vector exon table', dest='vector_exon_tbl' )
-
+    
     parser.add_argument('--otherisos_perbc_min_read_count', default=1, type=int, help='min reads for bc to contribute to OTHER isoform', dest='otherisos_perbc_min_read_count' )
     parser.add_argument('--otherisos_perbc_min_psi', default=0.025, type=float, help='min within-bc psi for bc to contribute to OTHER isoform', dest='otherisos_perbc_min_psi' )
     parser.add_argument('--otherisos_minbc_withinallsamp', default=1, type=int, help='to be counted as OTHER isoform group, min #bcs within EVERY sample', dest='otherisos_minbc_withinallsamp' )
