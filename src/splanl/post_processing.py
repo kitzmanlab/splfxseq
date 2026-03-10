@@ -882,7 +882,6 @@ def saturate_variants( tbl_by_var,
                        add_missing_introns = False ):
 
     tbv = tbl_by_var.copy()
-
     exons = tbv.loc[ tbv[ exon_col ].notnull() ][ exon_col ].unique()
 
     exon_bds = {  ex : ( int( tbv.loc[ tbv[ exon_col ] == ex ][ pos_col ].min() ) - intron_dist,
@@ -901,11 +900,14 @@ def saturate_variants( tbl_by_var,
         else:
             min_bd, max_bd = by_ex_d[ ex ][ pos_col ].min(), by_ex_d[ ex ][ pos_col ].max(),
 
-        merge_ex = pd.DataFrame( { pos_col: [ p for p in range( min_bd, max_bd + 1 ) for j in range( 3 ) ],
+        merge_ex = pd.DataFrame( {  'chrom': [tbv['chrom'].iloc[0]] * (max_bd - min_bd + 1) * 3,
+                                    pos_col: [ p for p in range( min_bd, max_bd + 1 ) for j in range( 3 ) ],
+                                   'ref': [ refseq[ p - 1 ].upper() for p in range( min_bd, max_bd + 1 )
+                                            for j in range( 3 ) ],
                                    'alt': [ a for p in range( min_bd, max_bd + 1 )
                                               for a in [ 'A', 'C', 'G', 'T' ] if a.upper() != refseq[ p - 1 ].upper() ],
-                                   'ref': [ refseq[ p - 1 ].upper() for p in range( min_bd, max_bd + 1 )
-                                            for j in range( 3 ) ] } )
+                                    exon_col: [ex] * (max_bd - min_bd + 1) * 3
+                                    } )
 
         if rev_strand:
 

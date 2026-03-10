@@ -268,57 +268,142 @@ rule tag_stage1_stuffer:
 # l_out_tagged_r1 =  expand('{}/trim2/{}{{libname}}.fwd.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
 # l_out_tagged_r2 =  expand('{}/trim2/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
 
-rule clip_stage2:
-    input:
-        fq_fwd = rules.tag_stage1.output.fq_fwd, 
-        fq_rev = rules.tag_stage1.output.fq_rev,
-    output:
-        fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' )),
-        fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' )),
-        cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
-    threads: 16
-    resources:
-        mem_per_cpu="2gb", 
-        cpus="16", 
-        time="3:00:00"
-    run:
-        clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
-        clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
+if staggered:
+    
+    rule clip_stage2_filter:
+        input:
+            fq_fwd = rules.tag_stage1.output.fq_fwd,
+            fq_rev = rules.tag_stage1.output.fq_rev,
+        output:
+            # temporary filtered files; Snakemake will auto-remove them
+            tmp_fwd = temp(op.join(OUT_DIR, 'trim2', PREFIX + '{libname}.fwd.stage1.fq.gz')),
+            tmp_rev = temp(op.join(OUT_DIR, 'trim2', PREFIX + '{libname}.rev.stage1.fq.gz')),
+            log = op.join(OUT_DIR, 'trim2', PREFIX + '{libname}.stage1.json')
+        threads: 16
+        resources:
+            mem_per_cpu="2gb", 
+            cpus="16", 
+            time="3:00:00"
+        run:
+            clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
+            clipcmd = 'cutadapt %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.tmp_rev} -p {output.tmp_fwd} --json {output.log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, CUTADAPT_STAGE2_OPTS )
+            shell(clipcmd) 
 
-        # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-        if staggered:
-            clipcmd = 'cutadapt %s %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
-        else:
+
+    rule clip_stage2:
+        input:
+            fq_fwd = rules.clip_stage2_filter.output.tmp_fwd, 
+            fq_rev = rules.clip_stage2_filter.output.tmp_rev,
+        output:
+            fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' )),
+            fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' )),
+            cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
+        threads: 16
+        resources:
+            mem_per_cpu="2gb", 
+            cpus="16", 
+            time="3:00:00"
+        run:
+            clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
+            clipcmd = 'cutadapt %s --action=retain --discard-untrimmed -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
+            shell(clipcmd)
+             
+            
+
+
+    rule clip_stage2_stuffer_filter:
+        input:
+            fq_fwd = rules.tag_stage1_stuffer.output.fq_fwd, 
+            fq_rev = rules.tag_stage1_stuffer.output.fq_rev,
+        output:
+            tmp_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.stage1.fq.gz' )),
+            tmp_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.stage1.fq.gz' )),
+            log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.stage1.json' )
+        threads: 16
+        params:
+            stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
+        resources:
+            mem_per_cpu="2gb", 
+            cpus="16", 
+            time="3:00:00"
+        run:
+            
+            clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
+            clipcmd = 'cutadapt %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.tmp_rev} -p {output.tmp_fwd} --json {output.log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, CUTADAPT_STAGE2_OPTS )
+            shell(clipcmd) 
+                 
+
+    rule clip_stage2_stuffer:
+        input:
+            fq_fwd = rules.clip_stage2_stuffer_filter.output.tmp_fwd, 
+            fq_rev = rules.clip_stage2_stuffer_filter.output.tmp_rev,
+        output:
+            fq_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
+            fq_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
+            cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
+        threads: 16
+        params:
+            stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
+        resources:
+            mem_per_cpu="2gb", 
+            cpus="16", 
+            time="3:00:00"
+        run:
+            clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
+
+            # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+            clipcmd = 'cutadapt %s --action=retain --discard-untrimmed -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
+            shell(clipcmd) 
+       
+
+else: 
+    rule clip_stage2:
+        input:
+            fq_fwd = rules.tag_stage1.output.fq_fwd, 
+            fq_rev = rules.tag_stage1.output.fq_rev,
+        output:
+            fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' )),
+            fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' )),
+            cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
+        threads: 16
+        resources:
+            mem_per_cpu="2gb", 
+            cpus="16", 
+            time="3:00:00"
+        run:
+            clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
+            clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
+
+            # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+            
             clipcmd = 'cutadapt %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
-        shell(clipcmd) 
+            shell(clipcmd)
 
 
-rule clip_stage2_stuffer:
-    input:
-        fq_fwd = rules.tag_stage1_stuffer.output.fq_fwd, 
-        fq_rev = rules.tag_stage1_stuffer.output.fq_rev,
-    output:
-        fq_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
-        fq_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
-        cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
-    threads: 16
-    params:
-        stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
-    resources:
-        mem_per_cpu="2gb", 
-        cpus="16", 
-        time="3:00:00"
-    run:
-        clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
-        clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
+    rule clip_stage2_stuffer:
+        input:
+            fq_fwd = rules.tag_stage1_stuffer.output.fq_fwd, 
+            fq_rev = rules.tag_stage1_stuffer.output.fq_rev,
+        output:
+            fq_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
+            fq_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
+            cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
+        threads: 16
+        params:
+            stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
+        resources:
+            mem_per_cpu="2gb", 
+            cpus="16", 
+            time="3:00:00"
+        run:
+            clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
+            clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
 
-        # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-        if staggered:
+            # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+            
             clipcmd = 'cutadapt %s %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
-        else:
-            clipcmd = 'cutadapt %s %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
-        
-        shell(clipcmd) 
+            
+            shell(clipcmd) 
 
 
 rule clip_stage3:
