@@ -349,7 +349,10 @@ def splai_score_variants( annots_df,
                                               var_don,
                                               allvars_seqpos,
                                              )
-
+        # np.save('ref_acc.npy', ref_acc)
+        # np.save('var_acc.npy', var_acc)
+        # np.save('ref_don.npy', ref_don)
+        # np.save('var_don.npy', var_don)
         diff_acc = ref_acc - var_acc
         diff_don = ref_don - var_don
 
