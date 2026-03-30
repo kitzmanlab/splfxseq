@@ -24,3 +24,4 @@ dependencies = [
 'plot_sample_x_isogrp' = 'spliceprocess.plot_sample_x_isogrp:main'
 'map_final_plasmid_exons' = 'refsetup.map_final_plasmid_exons:main'
 'varfx_singlesamp' = 'vareffects.varfx_singlesamp:main'
+'post_process_stats'='postprocess.post_process_stats:main'

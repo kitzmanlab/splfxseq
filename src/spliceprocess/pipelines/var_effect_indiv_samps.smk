@@ -54,7 +54,7 @@ MAKE_PERBC_RPT = ('suppress_perbc_rpt' not in config)
 #
 # load and check sample table.
 
-l_reqd_cols = [ 'libname', 'bc_status_table_withisogrp', 'ref_seq_name', 'pairing_tbl_name' ]
+l_reqd_cols = [ 'libname', 'isogrp_tbl', 'bc_status_table_withisogrp', 'ref_seq_name', 'pairing_tbl_name' ]
 tbl_lib = pd.read_table( config['lib_table'] )
 assert all( [ col in tbl_lib.columns for col in l_reqd_cols ] ), 'lib table must have columns: '+','.join(l_reqd_cols)
 assert len(set(tbl_lib['libname'])) == tbl_lib.shape[0], 'all libname entries must be unique'
@@ -124,7 +124,7 @@ rule per_var_process:
         seq_name = lambda wc: tbl_lib.loc[ wc.libname ][ 'ref_seq_name' ],
     output:
         var_rpt = op.join(OUT_DIR, 'pervar_rpts/'+PREFIX+'{libname}.var_rpt.txt'),
-        per_bc_rpt = op.join(OUT_DIR, 'pervar_bcrpts/'+PREFIX+'{libname}.bybc.txt.gz') if MAKE_PERBC_RPT else None,
+        per_bc_rpt = op.join(OUT_DIR, 'pervar_bcrpts/'+PREFIX+'{libname}.bybc.txt.gz') if MAKE_PERBC_RPT else [],
     threads: 1
     resources:
         mem_per_cpu="10gb", 
@@ -180,12 +180,15 @@ rule out_rpt:
     input:
         per_var_rpt = expand(rules.per_var_process.output.var_rpt, libname=lLibs),
         per_var_snv_rpt = expand(rules.filt_to_snv.output.var_rpt_snvonly, libname=lLibs),
+        per_bc_rpt = expand(rules.per_var_process.output.per_bc_rpt,libname=lLibs)
     output:
         var_rpt_out = op.join(OUT_DIR,PREFIX+'varfx_rpt.txt')
     run:
-        out_rpt = {k:[] for k in 'libname,var_rpt,var_rpt_snvonly'.split(',')}
+        out_rpt = {k:[] for k in 'libname,var_rpt,var_rpt_snvonly,var_bc_rpt,exon'.split(',')}
         out_rpt['libname'] = lLibs
         out_rpt['var_rpt'] = list(input.per_var_rpt)
         out_rpt['var_rpt_snvonly'] = list(input.per_var_snv_rpt)
+        out_rpt["var_bc_rpt"] = list(input.per_bc_rpt) if input.per_bc_rpt else [None] * len(lLibs)
+        out_rpt['exon'] = tbl_lib.loc[lLibs, 'pairing_tbl_name'].tolist()
         out_rpt = pd.DataFrame(out_rpt)
         out_rpt.to_csv(output.var_rpt_out, sep='\t', index=False)

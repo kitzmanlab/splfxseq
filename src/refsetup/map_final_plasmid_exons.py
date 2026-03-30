@@ -21,12 +21,22 @@ def main():
     opts.add_argument('--custom_up_ex_seq', default=None, help='custom upstream exon sequence', dest='custom_up_ex_seq')
     opts.add_argument('--custom_dn_ex_seq', default=None, help='custom downstream exon sequence', dest='custom_dn_ex_seq')
 
+    opts.add_argument('--allow_sequence_mismatch', action='store_true', default=False,
+                      help='Allow sequence mismatch between reference and plasmid fasta files (default: False)')
+
     o = opts.parse_args()
 
     # create the mapper
     mapper = GenomePlasmidMapper.from_file(o.cloned_frag_tbl)
     plas_fasta=pysam.FastaFile(o.fasta_plasmid)
-    mapper.check_sequences(ref_fasta=pysam.FastaFile(o.fasta_genome), plas_fasta=plas_fasta)
+    
+    try:
+        mapper.check_sequences(ref_fasta=pysam.FastaFile(o.fasta_genome), plas_fasta=plas_fasta)
+    except ValueError as e:
+        if not o.allow_sequence_mismatch:
+            raise ValueError(f"Error checking sequences: {e}")
+        else:
+            print(f"Warning: Sequence mismatch between reference and plasmid fasta files: {e}")
     
     # 
     genomic_exon_tbl = GeneModelMapper.from_file(o.genomic_exon_tbl)
