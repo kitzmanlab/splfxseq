@@ -283,7 +283,7 @@ if staggered:
         resources:
             mem_per_cpu="2gb", 
             cpus="16", 
-            time="3:00:00"
+            runtime="3h"
         run:
             clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
             clipcmd = 'cutadapt %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.tmp_rev} -p {output.tmp_fwd} --json {output.log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, CUTADAPT_STAGE2_OPTS )
@@ -302,7 +302,7 @@ if staggered:
         resources:
             mem_per_cpu="2gb", 
             cpus="16", 
-            time="3:00:00"
+            runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
             clipcmd = 'cutadapt %s --action=retain --discard-untrimmed -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
@@ -325,7 +325,7 @@ if staggered:
         resources:
             mem_per_cpu="2gb", 
             cpus="16", 
-            time="3:00:00"
+            runtime="3h"
         run:
             
             clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
@@ -347,7 +347,7 @@ if staggered:
         resources:
             mem_per_cpu="2gb", 
             cpus="16", 
-            time="3:00:00"
+            runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
 
@@ -369,7 +369,7 @@ else:
         resources:
             mem_per_cpu="2gb", 
             cpus="16", 
-            time="3:00:00"
+            runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
             clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
@@ -394,7 +394,7 @@ else:
         resources:
             mem_per_cpu="2gb", 
             cpus="16", 
-            time="3:00:00"
+            runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
             clip_opts2 = " -g %s"% m_stuffer_adset[params.stuffer]['stage2rev']
