@@ -29,8 +29,9 @@ class GeneModelMapper:
 
 class IsogrpTable:
     @staticmethod
-    def from_file(isogrp_file):
+    def from_file(isogrp_file, seqname):
         isogrp_tbl = pd.read_csv(isogrp_file, sep='\t')
+        isogrp_tbl = isogrp_tbl[isogrp_tbl['seq_name']==seqname].copy()
         return IsogrpTable(isogrp_tbl)
 
     def __init__(self, tbl=None):
