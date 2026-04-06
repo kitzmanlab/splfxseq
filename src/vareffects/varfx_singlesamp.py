@@ -40,11 +40,11 @@ def plot_varfx(
         return ch
 
     var_rpt['rna_nrd_bad'] = var_rpt[ 'rna_nrd_bad_ends,rna_nrd_bad_starts,rna_nrd_secondary,rna_nrd_unpaired,rna_nrd_unmapped,rna_nrd_soft_clipped'.split(',')].sum(1)
-
+    var_rpt['rna_nrd_bad_pct'] = var_rpt['rna_nrd_bad'] / (var_rpt['rna_nrd_ok'] + var_rpt['rna_nrd_bad']) * 100
 
     libname = var_rpt['libname'].unique()[0]
-    if len(set(var_rpt['libname'])) > 1:
-        raise ValueError('Input table must have only one libname')
+    #if len(set(var_rpt['libname'])) > 1:
+    #    raise ValueError('Input table must have only one libname')
     
     lpl= []
 
@@ -87,8 +87,16 @@ def plot_varfx(
         alt.Color('alt:N', title='Alternate Base'),
         alt.Tooltip(['genomic_pos','ref','alt','pairing_nbc_varany'])
     )
+
+    p4 = base.mark_circle(
+    ).encode(   
+        alt.Y('rna_nrd_bad_pct:Q', title='% rna reads bad', scale=alt.Scale(domain=[0, 100])),
+        alt.Color('alt:N', title='Alternate Base'),
+        alt.Tooltip(['genomic_pos','ref','alt','rna_nrd_ok','rna_nrd_bad_ends','rna_nrd_bad_starts','rna_nrd_secondary','rna_nrd_unpaired','rna_nrd_unmapped','rna_nrd_soft_clipped'])
+    )
+
     
-    lpl += [p1,p2,p3]
+    lpl += [p1,p2,p3,p4]
 
 
     ch = alt.vconcat(*lpl).properties(title=f'{libname} / {ref_seq_name}')

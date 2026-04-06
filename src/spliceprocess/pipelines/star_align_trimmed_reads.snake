@@ -125,13 +125,13 @@ rule star_align:
         fixrn_fq_fwd = temp( op.join( OUT_DIR, 'temp_align/fq/'+PREFIX+'{libname}.fwd.fixrn.fq.gz' )),
         temp_align_dir = temp( directory( op.join( OUT_DIR, 'temp_align/'+PREFIX+'{libname}' )  )),
         bam =  temp(op.join(OUT_DIR,'align/'+PREFIX+'{libname}.temp.bam')),
-    threads: 4
+    threads: 8
     params:
         star_path = lambda wc: tbl_lib.loc[ wc.libname, 'ref_star_path'] 
     resources:
         mem_per_cpu="4gb", 
-        cpus="4", 
-        runtime="1h"
+        cpus="8", 
+        runtime="3h"
     run:
         # STAR gets screwed up if we dont clean the read names - need to pipe thru  
         #   perl -pi -e 's/ /_/g' 
@@ -176,14 +176,14 @@ rule filter_bcsort_bam:
         bam = rules.star_align.output.bam
     output:
         bam = op.join( OUT_DIR, 'align/'+PREFIX+'{libname}.bam' )
-    threads: 4
+    threads: 8
     resources:
-        mem_per_cpu="4gb", 
-        cpus="4", 
-        runtime="1h"
+        mem_per_cpu="8gb", 
+        cpus="8", 
+        runtime="2h"
     run:
         shell("""
-            samtools view -b --exclude-flags 0x900 {input.bam} | samtools sort -m4G -@{resources.cpus} -t BC -n -o {output.bam}
+            samtools view -b --exclude-flags 0x900 {input.bam} | samtools sort -m8G -@{resources.cpus} -t BC -n -o {output.bam}
         """)
 
 

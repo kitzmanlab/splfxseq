@@ -122,7 +122,10 @@ def var_effects_single_sample(
         for ig in lisogrp:
             if ig not in cts_bc_x_iso.columns:
                 cts_bc_x_iso[ig] = 0
-
+        
+        # enforce column order to be based on lisogrp (otherwise col order depend on what isogrp are present in that var)
+        cts_bc_x_iso = cts_bc_x_iso.reindex(columns=lisogrp)
+        
         sum_ctd_by_bc = cts_bc_x_iso.sum(axis=1)
 
         cts_bc_x_iso.columns = ['cts_'+cn for cn in cts_bc_x_iso.columns]
