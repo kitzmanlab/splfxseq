@@ -8,22 +8,39 @@
 #   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to 
 #   - bam  (path to barcode-sorted bam file)
 #   - ref_seq_name (name of the reference sequence)
-
-
-# vector_exon_tbl 
 #
-# TODO DOC
+# > vector_exon_tbl 
+#   list of annotations for individual exons, defined on vector and genome, as output by map_final_plasmid_exons
+#   expected columns: 
+#               - vector_chrom, vector_start, vector_end, 
+#               - gene_model_id, exon_name,
+#               - genome_chrom, genome_start, genome_end, genome_strand
 #
 # > outdir
 # 
 #######################################################
 #  optional config values:
 #
-#   prefix 
+#  > prefix 
 #
-#   combine_rna_samp_options, additional options to pass to combine_rna_samp.py
+#  > combine_rna_samp_options, additional options to pass to combine_rna_samp.py
 #
-#   process_rna_aligns_opts, additional options to pass to process_rna_aligns.py
+#  > process_rna_aligns_opts, additional options to pass to process_rna_aligns.py
+#
+#  >  named_isos, a table of custom-defined isoforms, in the same format as isogroups.txt created by combine_rna_counts
+#     one isoform per row with the following columns:
+#     - seq_name : name of the reference vector sequence
+#     - isogrp_name : name of the isoform group.  don't name these OTHER.
+#     - isoform :   ref_name:start0_end0,start1_end1,...  - list of named isoforms
+#
+#     Note that you should provide a single named_isos table across all reference sequences, so if you will process
+#       libraries from multiple references, merge them all into a single table
+#
+#     Named isoforms is considered one-to-many, so one isoform group name may have one or more isoforms associated with it.
+#  
+#     If an isogrp is named SKIP, (exon name), it will be added to the standard isogrps with those names.  Don't name these OTHER. 
+#  
+#     However, a given isoform cannot be in multiple isoform groups.  For isntance, if an isoform is assoicated with a named group, it will not be allowed to be in the OTHER group.
 
 #######################################################
 # For example, to run:
@@ -47,6 +64,11 @@ PREFIX = config['prefix'] if 'prefix' in config  else ''
 OUT_DIR = config['outdir']
 
 VECTOR_EXON_TBL = config['vector_exon_tbl']
+
+if 'named_isos' in config:
+    NAMED_ISOS = config['named_isos']
+else:
+    NAMED_ISOS = None
 
 if 'combine_rna_samp_options' in config:
     COMBINE_RNA_SAMP_OPTIONS = config['combine_rna_samp_options']
@@ -140,6 +162,8 @@ rule per_ref_combine_counts:
     input:
         # bcxiso = lambda wc: get_libnames_for_ref(wc)
         bcxiso = lambda wc: expand(rules.count_isoform_events.output.bcxiso, libname=get_libnames_for_ref(wc))
+    params:
+        named_isos = NAMED_ISOS
     output:
         per_ref_tbl = op.join( OUT_DIR, 'perref/{ref_seq_name}/samples_to_agg.txt' ),
         isogrp_tbl = op.join( OUT_DIR, 'perref/{ref_seq_name}/isogroups.txt' ),
@@ -158,13 +182,24 @@ rule per_ref_combine_counts:
         tbl_per_ref = pd.DataFrame(tbl_per_ref)
         tbl_per_ref.to_csv(output.per_ref_tbl,sep='\t',index=False)
 
-        shell("""
-        combine_rna_counts \
-            --samplesheet {output.per_ref_tbl} \
-            --out_isogrps {output.isogrp_tbl} \
-            --seq_name {wildcards.ref_seq_name} \
-            --vector_exon_tbl {VECTOR_EXON_TBL} \
-            {COMBINE_RNA_SAMP_OPTIONS}
+        if params.named_isos is not None:
+            shell("""
+                combine_rna_counts \
+                --samplesheet {output.per_ref_tbl} \
+                --out_isogrps {output.isogrp_tbl} \
+                --seq_name {wildcards.ref_seq_name} \
+                --vector_exon_tbl {VECTOR_EXON_TBL} \
+                --named_isos {params.named_isos} \
+                {COMBINE_RNA_SAMP_OPTIONS}
+            """)
+        else:   
+            shell("""
+                combine_rna_counts \
+                --samplesheet {output.per_ref_tbl} \
+                --out_isogrps {output.isogrp_tbl} \
+                --seq_name {wildcards.ref_seq_name} \
+                --vector_exon_tbl {VECTOR_EXON_TBL} \
+                {COMBINE_RNA_SAMP_OPTIONS}
             """)
 
 rule outtbl:

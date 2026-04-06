@@ -27,6 +27,28 @@ class GeneModelMapper:
         
     # to implement - convert frmo c.XXX to genomic coordinates 
 
+class IsogrpTable:
+    @staticmethod
+    def from_file(isogrp_file, seqname):
+        isogrp_tbl = pd.read_csv(isogrp_file, sep='\t')
+        isogrp_tbl = isogrp_tbl[isogrp_tbl['seq_name']==seqname].copy()
+        return IsogrpTable(isogrp_tbl)
+
+    def __init__(self, tbl=None):
+        if tbl is None:
+            self.tbl = isoform_group_tbl_checker.new_odict_of_lists()
+            self.tbl = pd.DataFrame(self.tbl)
+        else:
+            self.tbl = tbl
+            isoform_group_tbl_checker.check(tbl)
+            self.check_one_to_many()
+            
+    def check_one_to_many(self):
+        for seqname, tbl_seqname in self.tbl.groupby('seq_name'):
+            for iso,tbl_iso in tbl_seqname.groupby('isoform'):
+                if tbl_iso.shape[0] > 1:
+                    raise ValueError(f"{iso} is found in multiple isoform groups, {str(tbl_iso)}")
+            
 class VectorExonTable:
     @staticmethod
     def from_file(vector_exon_file):
