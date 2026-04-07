@@ -16,7 +16,8 @@ def clean_jns_pe( read1: pysam.AlignedSegment,
                   min_matches_for: int,
                   min_matches_rev: int,
                   max_soft_clip_for: int,
-                  max_soft_clip_rev: int ) -> Tuple[str,str]:
+                  max_soft_clip_rev: int,
+                  staggered=False ) -> Tuple[str,str]:
 
     if read1.get_blocks()[ 0 ][ 0 ] > read2.get_blocks()[ 0 ][ 0 ]:
         temp_r1 = read1
@@ -81,7 +82,8 @@ def clean_jns_pe( read1: pysam.AlignedSegment,
     #this section combines the reads
     #if the reads don't overlap combine them
     #so ( 1267, 1312 ), ( 1480, 1512 ) becomes ( 1267, 1512 )
-    if r12_jns[ 0 ][ -1 ][ 1 ] <= r12_jns[ 1 ][ 0 ][ 0 ]:
+    # but if staggered don't ever want to combine b/c reverse read will never see a junction
+    if r12_jns[ 0 ][ -1 ][ 1 ] <= r12_jns[ 1 ][ 0 ][ 0 ] and not staggered:
         r12_jns[ 0 ][ -1 ] = ( r12_jns[ 0 ][ -1 ][ 0 ], r12_jns[ 1 ][ 0 ][ 1 ] )
         r12_jns = tuple( sorted( r12_jns[ 0 ] + r12_jns[ 1 ][ 1: ] ) )
 
@@ -101,6 +103,13 @@ def clean_jns_pe( read1: pysam.AlignedSegment,
             ds_cnst = True
             continue
 
+        # for staggered reads, the reverse read doesn't get the last 42 bases on the downstream exon if it included the pseudoexon
+        # in this case we want to allow these reads to pass
+        if not ds_cnst and staggered:
+            
+            if _jn[ 0 ] >= corng_dnstream_ex[ 0 ] + 42 - spl_tol and _jn[ 0 ] <= corng_dnstream_ex[ 0 ] + 42 + spl_tol:
+                ds_cnst = True
+                continue
         #changes to 1-based inclusive numbering
         jn = ( _jn[ 0 ] + 1, _jn[ 1 ] )
 
@@ -117,7 +126,6 @@ def clean_jns_pe( read1: pysam.AlignedSegment,
     r12_jn_comb = tuple( r12_jn_comb )
 
     r12_jn_comb = f'{refname}:' + ','.join([f'{jn[0]}_{jn[1]}' for jn in r12_jn_comb])
-
     if not ds_cnst:
         return ('bad_ends',r12_jn_comb)
     elif not us_cnst:
@@ -140,6 +148,7 @@ def process_PE_rna_bam(
     fn_bam_out_reject_secondary:str=None,
     fn_bam_out_reject_softclip:str=None,
     fn_bam_out_reject_unmapped:str=None,
+    staggered=False
     ):
 
     """
@@ -246,7 +255,8 @@ def process_PE_rna_bam(
                                 min_matches_for,
                                 min_matches_rev,
                                 max_soft_clip_for,
-                                max_soft_clip_rev )
+                                max_soft_clip_rev,
+                                staggered )
 
             rej = jns[0]
             if jns[0] != 'ok':
@@ -281,6 +291,7 @@ def process_PE_rna_bam_write_rpt(
     fn_bam_out_reject_softclip:str=None,
     fn_bam_out_reject_unmapped:str=None,
     rpt_extra_kv:dict=None,
+    staggered=False
     ):
 
     res = process_PE_rna_bam(
@@ -297,6 +308,7 @@ def process_PE_rna_bam_write_rpt(
         fn_bam_out_reject_secondary,
         fn_bam_out_reject_softclip,
         fn_bam_out_reject_unmapped,
+        staggered
     )
 
     # write report of read counts by status
@@ -353,6 +365,7 @@ def main():
     parser.add_argument('--reject-softclip', default=None, help='BAM file for rejected soft clipped reads')
     parser.add_argument('--reject-unmapped', default=None, help='BAM file for rejected unmapped reads')
     parser.add_argument('--rpt-extra-kv', default='', help='Extra key-value pairs for reports')
+    parser.add_argument('--staggered', action='store_true', help='are reads to process staggered')
 
     args = parser.parse_args()
 
@@ -360,7 +373,8 @@ def main():
 
     # Convert rpt_extra_kv list to dict if provided
     rpt_extra_kv = dict( [ kv.split(':') for kv in args.rpt_extra_kv.split(',') ] ) if args.rpt_extra_kv and len(args.rpt_extra_kv) > 0 else None
-
+    if args.staggered:
+        print('running staggered specific pipeline')
     process_PE_rna_bam_write_rpt(
         pysam.AlignmentFile( args.bam ),
         args.fn_rpt_base,
@@ -376,7 +390,8 @@ def main():
         args.reject_secondary,
         args.reject_softclip,
         args.reject_unmapped,
-        rpt_extra_kv
+        rpt_extra_kv,
+        args.staggered
     )
 
 
