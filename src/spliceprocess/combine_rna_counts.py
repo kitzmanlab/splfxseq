@@ -77,7 +77,7 @@ def categorize_isoforms(
 
         if iso in siso_preexisting:
             continue
-
+        
         lcorng = [ (int(se.split('_')[0]), int(se.split('_')[1])) for se in iso.split(':')[1].split(',') if len(se)>0 ]
 
         # keep track of exons - known (by name), unknown, and both together in sorted order
@@ -266,7 +266,7 @@ def main():
         args.otherisos_perbc_min_read_count,
         args.otherisos_perbc_min_psi
     )
-
+        
     if args.named_isos is not None:
         named_isos = IsogrpTable.from_file( args.named_isos, args.seq_name)
         if named_isos.tbl['isogrp_name'].isin( ['OTHER'] ).any():

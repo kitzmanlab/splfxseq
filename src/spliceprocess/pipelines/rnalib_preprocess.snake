@@ -269,7 +269,7 @@ rule tag_stage1_stuffer:
 # l_out_tagged_r2 =  expand('{}/trim2/{}{{libname}}.rev.fq.gz'.format(OUT_DIR,PREFIX), libname=lLibs)
 
 if staggered:
-    
+    # filter reverse reads to ensure they contain the barcode (the 10bp sequence directly upstream of BC i.e. [stage2rev]-NNNNNNNNNNNN-[rest of exon to polyA])
     rule clip_stage2_filter:
         input:
             fq_fwd = rules.tag_stage1.output.fq_fwd,
@@ -289,7 +289,7 @@ if staggered:
             clipcmd = 'cutadapt %s --action=none --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.tmp_rev} -p {output.tmp_fwd} --json {output.log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, CUTADAPT_STAGE2_OPTS )
             shell(clipcmd) 
 
-
+    # clip forward reads that extend into the reverse (skip reads, but also potentially others on the staggered reads)
     rule clip_stage2:
         input:
             fq_fwd = rules.clip_stage2_filter.output.tmp_fwd, 
@@ -305,7 +305,7 @@ if staggered:
             runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
-            clipcmd = 'cutadapt %s --action=retain --discard-untrimmed -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
+            clipcmd = 'cutadapt %s --action=retain -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
             shell(clipcmd)
              
             
@@ -352,7 +352,7 @@ if staggered:
             clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
 
             # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
-            clipcmd = 'cutadapt %s --action=retain --discard-untrimmed -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
+            clipcmd = 'cutadapt %s --action=retain -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts1, CUTADAPT_STAGE2_OPTS )
             shell(clipcmd) 
        
 
