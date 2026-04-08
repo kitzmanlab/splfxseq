@@ -266,7 +266,7 @@ def main():
         args.otherisos_perbc_min_read_count,
         args.otherisos_perbc_min_psi
     )
-    print(lib_iso_cts)
+        
     if args.named_isos is not None:
         named_isos = IsogrpTable.from_file( args.named_isos, args.seq_name)
         if named_isos.tbl['isogrp_name'].isin( ['OTHER'] ).any():
