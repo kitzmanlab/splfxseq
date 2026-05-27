@@ -50,7 +50,7 @@ STUFFER_STAGE1 = {
 }
 
 
-LAD_STAGE2 = ['cgatgcaggtgactgagcatcggtgcacctgc', 'gatccaagatggcactccagatc', 'TGAGCATCGGTGCGTCTCTGTGG' ]
+LAD_STAGE2 = ['cgatgcaggtgactgagcatcggtgcacctgc', 'gatccaagatggcactccagatc', 'TGAGCATCGGTGCGTCTCTGTGG', 'GAAGGTGGTGGCTGGTGTGG' ]
 
 PREFIX = config['prefix'] if 'prefix' in config  else ''
 OUT_DIR = config['outdir']
