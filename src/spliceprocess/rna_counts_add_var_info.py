@@ -16,184 +16,139 @@ def var_effects_single_sample(
     fn_out_perbc: str = None,
     col_var_annot: str = 'variant_list_genome',
     max_var_per_bc: int = 3,
-    var_sort_fn: Callable = lambda v:(v.split(':')[0],int(v.split(':')[1])),
+    var_sort_fn = lambda v:(v.split(':')[0], int(v.split(':')[1])),
 ):
+    # iso groups for this reference
+    isogrp_sub = isogrptbl.loc[isogrptbl['seq_name'].eq(ref_seq_name)]
+    lisogrp = isogrp_sub['isogrp_name'].unique().tolist()
 
-    # libname - library name
-    # seq_name - target reference sequence name
-    # isogrptbl - isoform group table
-    # pairtbl - pairing table
-    # fn_bcstatus - per-barcode isoform counts table
+    # ---------- Pairing: explode variants to (bc,var,is_singleton) ----------
+    pair = pairtbl.loc[pairtbl[col_var_annot].notna() & pairtbl[col_var_annot].ne("")].copy()
 
-    isogrptbl = isogrptbl.query( f'seq_name == "{ref_seq_name}"' )
-    lisogrp = list(isogrptbl['isogrp_name'].unique())
+    # count variants per bc
+    pair['nvar'] = pair[col_var_annot].str.count(',') + 1
+    pair['is_singleton'] = pair['nvar'].eq(1)
 
-    out_rpt_isogrp = {k:[] for k in 'libname,var,pairing_nbc_varany,pairing_nbc_varsingleton,rna_nbc_varany,rna_nrd_varany,rna_nbc_varsingleton,rna_nrd_varsingleton'.split(',')+
-        ['rna_nrd_ok','rna_nrd_bad_ends','rna_nrd_bad_starts','rna_nrd_secondary','rna_nrd_unpaired','rna_nrd_unmapped','rna_nrd_soft_clipped']+
-        [f'psi_{isogrp}_singleton_wmean' for isogrp in lisogrp]+
-        [f'psi_{isogrp}_singleton_mean' for isogrp in lisogrp]+
-        [f'psi_{isogrp}_varany_wmean' for isogrp in lisogrp]+
-        [f'psi_{isogrp}_varany_mean' for isogrp in lisogrp] }
+    single = pair.loc[pair['is_singleton'], ['readgroupid', 'is_singleton', col_var_annot]].rename(
+        columns={'readgroupid': 'bc', col_var_annot: 'var'}
+    )
 
+    multi = pair.loc[~pair['is_singleton'] & pair['nvar'].le(max_var_per_bc), ['readgroupid', 'is_singleton', col_var_annot]].copy()
+    multi['var'] = multi[col_var_annot].str.split(',')
+    multi = multi.explode('var').rename(columns={'readgroupid': 'bc'})[['bc', 'is_singleton', 'var']]
+    multi = multi.loc[multi['var'].ne("")]  # drop blanks
 
-    # pairing_nbc_varany - how many barcodes in the pairing table carrying that variant, at all
-    # pairing_nbc_varsingleton - how many barcodes in the pairing table carrying that variant, as a singleton
-    
-    # rna_nbc_varany - how many barcodes in the rna table carrying that variant, at all
-    # rna_nrd_varany - how many accepted* reads in the rna table from those barcodes  (*=from named isoforms or OTHER)
+    pair_long = pd.concat([single[['bc','is_singleton','var']], multi], ignore_index=True)
+    pair_long = pair_long.drop_duplicates(['bc', 'var'])
 
-    # rna_nbc_varsingleton - how many barcodes in the rna table carrying that variant, as a singleton
-    # rna_nrd_varsingleton - how many accepted* reads in the rna table from those barcodes  (*=from named isoforms or OTHER)
+    # pairing-table barcode counts (independent of RNA presence)
+    pairing_any = pair_long.groupby('var', sort=False)['bc'].nunique()
+    pairing_sing = pair_long.loc[pair_long['is_singleton']].groupby('var', sort=False)['bc'].nunique()
 
-    # psi_{isogrp}_varany_wmean - mean psi across barcodes with this variant (allowing other vars), weighted by #reads per barcode
-    # psi_{isogrp}_varany_mean - mean psi across barcodes with this variant (allowing other vars), NOT weighted by #reads per barcode
-    # psi_{isogrp}_singleton_wmean - mean psi across barcodes with this variant (only), weighted by #reads per barcode
-    # psi_{isogrp}_singleton_mean - mean psi across barcodes with this variant (only), NOT weighted by #reads per barcode
-    
+    # ---------- RNA: aggregate once per bc ----------
+    lcol_overall_stats = [
+        'totalrd_ok','totalrd_bad_ends','totalrd_bad_starts','totalrd_secondary',
+        'totalrd_unpaired','totalrd_unmapped','totalrd_soft_clipped'
+    ]
+    usecols = ['bc','isogrp_name','ok_readcount', *lcol_overall_stats]
+    rna = pd.read_table(fn_bcstatus, usecols=usecols)
 
-    lcol_outperbc = ('var,is_singleton,bc,nrd_total_counted'.split(',')+
-        [f'nrd_{isogrp}' for isogrp in lisogrp]+
-        [f'psi_{isogrp}' for isogrp in lisogrp]+
-        [cn for cn in pairtbl.columns])
+    # make grouping faster if isogrp_name repeats a lot
+    rna['isogrp_name'] = pd.Categorical(rna['isogrp_name'], categories=lisogrp)
 
-    if fn_out_perbc:
-        out_perbc = {k:[] for k in lcol_outperbc}
-        
-    pairtbl_nnvar = pairtbl.loc[ (pairtbl[col_var_annot]!="") & ~pd.isnull(pairtbl[col_var_annot]) ]
-    pairtbl_nnvar = pairtbl_nnvar.set_index('readgroupid', drop=False)
+    bc_overall = rna.groupby('bc', sort=False)[lcol_overall_stats].first()
 
-    # map variants to barcodes for faster lookup
-    li_singlevar = ~(pairtbl_nnvar[col_var_annot].str.contains(','))
-    m_varsingle_sbc = {}
-    for vid, pairbcs_vid in pairtbl_nnvar.loc[li_singlevar].groupby(col_var_annot):
-        m_varsingle_sbc[vid] = set(pairbcs_vid['readgroupid'])
-    
-    li_withinmax_var = (pairtbl_nnvar[col_var_annot].str.count(',') < max_var_per_bc)
+    bc_iso = (
+        rna.groupby(['bc','isogrp_name'], sort=False, observed=True)['ok_readcount']
+           .sum()
+           .unstack(fill_value=0)
+           .reindex(columns=lisogrp, fill_value=0)
+    )
+    bc_total = bc_iso.sum(axis=1).rename('rds_counted')
 
-    m_varmulti_sbc = defaultdict(list)
-    for _,r in pairtbl_nnvar[li_withinmax_var &~li_singlevar].iterrows():
-        for vid in r[col_var_annot].split(','):
-            if len(vid)>0: # filter out blank variants (potentially any that did not lift over to genomic position)
-                m_varmulti_sbc[vid].append( r['readgroupid'] )
-        
-    for vid in m_varmulti_sbc:
-        m_varmulti_sbc[vid] = set(m_varmulti_sbc[vid])
+    bc_psi = bc_iso.div(bc_total.replace(0, np.nan), axis=0)  # per-bc psi (NaN when no reads)
 
-    # find all vars in pairing table    
-    allvars = list( set(m_varsingle_sbc.keys() | set(m_varmulti_sbc.keys()) ) )
-    
+    bc_summary = pd.concat(
+        [
+            bc_total,
+            bc_iso.add_prefix('cts_'),
+            bc_psi.add_prefix('psi_'),
+            bc_overall
+        ],
+        axis=1
+    )
+
+    # ---------- Merge pairing edges with per-bc RNA summary ----------
+    pair_rna = pair_long.merge(bc_summary, left_on='bc', right_index=True, how='inner')
+
+    # group “any” and “singleton”
+    grp_any = pair_rna.groupby('var', sort=False)
+    pair_rna_sing = pair_rna.loc[pair_rna['is_singleton']]
+    grp_sing = pair_rna_sing.groupby('var', sort=False)
+
+    # rna_nbc / rna_nrd
+    rna_nbc_any = grp_any['bc'].nunique()
+    rna_nrd_any = grp_any['rds_counted'].sum()
+
+    rna_nbc_sing = grp_sing['bc'].nunique()
+    rna_nrd_sing = grp_sing['rds_counted'].sum()
+
+    # overall read status sums (varany only, matching your current output)
+    overall_any = grp_any[lcol_overall_stats].sum()
+    overall_any.columns = [c.replace('totalrd_', 'rna_nrd_') for c in overall_any.columns]
+
+    # PSI means
+    psi_cols = [f'psi_{ig}' for ig in lisogrp]
+    cts_cols = [f'cts_{ig}' for ig in lisogrp]
+
+    psi_any_mean = grp_any[psi_cols].mean()
+    psi_sing_mean = grp_sing[psi_cols].mean()
+
+    # PSI weighted means: sum(cts_ig)/sum(total)
+    sum_cts_any = grp_any[cts_cols].sum()
+    sum_cts_sing = grp_sing[cts_cols].sum()
+
+    denom_any = rna_nrd_any.replace(0, np.nan)
+    denom_sing = rna_nrd_sing.replace(0, np.nan)
+
+    psi_any_wmean = sum_cts_any.div(denom_any, axis=0)
+    psi_sing_wmean = sum_cts_sing.div(denom_sing, axis=0)
+
+    # ---------- Assemble output ----------
+    allvars = pairing_any.index.union(rna_nbc_any.index)
     if var_sort_fn is not None:
-        allvars = sorted( allvars, key=var_sort_fn )
+        allvars = sorted(allvars, key=var_sort_fn)
     else:
-        allvars = sorted( allvars )
+        allvars = sorted(allvars)
 
-    rna_bc_iso = pd.read_table( fn_bcstatus ).set_index('bc')
+    out = pd.DataFrame(index=pd.Index(allvars, name='var'))
+    out['libname'] = libname
+    out['var'] = out.index
 
-    sys.stderr.write('total %d vars\n'%(len(allvars)))
-    sys.stderr.flush()
+    out['pairing_nbc_varany'] = pairing_any.reindex(out.index).fillna(0).astype(int)
+    out['pairing_nbc_varsingleton'] = pairing_sing.reindex(out.index).fillna(0).astype(int)
 
-    first_out = True
+    out['rna_nbc_varany'] = rna_nbc_any.reindex(out.index).fillna(0).astype(int)
+    out['rna_nrd_varany'] = rna_nrd_any.reindex(out.index).fillna(0).astype(int)
+    out['rna_nbc_varsingleton'] = rna_nbc_sing.reindex(out.index).fillna(0).astype(int)
+    out['rna_nrd_varsingleton'] = rna_nrd_sing.reindex(out.index).fillna(0).astype(int)
 
-    vidctr = 0
-    # loop over all vars in the pairing table
-    for vid in allvars:
+    out = out.join(overall_any.reindex(out.index, fill_value=0))
 
-        vidctr+=1
-        if vidctr%50==0: 
-            sys.stderr.write('%d..'%(vidctr))
-            sys.stderr.flush()
+    for ig in lisogrp:
+        out[f'psi_{ig}_varany_mean'] = psi_any_mean[f'psi_{ig}'].reindex(out.index)
+        out[f'psi_{ig}_singleton_mean'] = psi_sing_mean.get(f'psi_{ig}', pd.Series(dtype=float)).reindex(out.index)
 
-        # find barcodes in the pairing table carrying that variant, at all, or as a singleton
-        sbc_pair_var_sing = m_varsingle_sbc.get(vid,[])
-        sbc_pair_var_multi = m_varmulti_sbc.get(vid,[])
+        out[f'psi_{ig}_varany_wmean'] = psi_any_wmean[f'cts_{ig}'].reindex(out.index)
+        out[f'psi_{ig}_singleton_wmean'] = psi_sing_wmean.get(f'cts_{ig}', pd.Series(dtype=float)).reindex(out.index)
 
-        # find those bcs in the rna table
-        rna_curvar_multi = rna_bc_iso.loc[ rna_bc_iso.index.isin(sbc_pair_var_multi) ].reset_index(drop=False)
-        rna_curvar_sing = rna_bc_iso.loc[ rna_bc_iso.index.isin(sbc_pair_var_sing) ].reset_index(drop=False)
+    # ---------- Optional per-bc output (write once) ----------
+    if fn_out_perbc:
+        # include original pairing columns by joining back to pairtbl on bc/readgroupid
+        perbc = pair_rna.merge(pairtbl, left_on='bc', right_on='readgroupid', how='left', suffixes=('','_pair'))
+        perbc.to_csv(fn_out_perbc, sep='\t', index=False, compression='gzip')
 
-        lbc_pair_var_multi = list(rna_curvar_multi['bc'])
-
-        cts_bc_x_iso_sing = rna_curvar_sing.groupby( ['bc','isogrp_name'] ).agg(  {'ok_readcount':'sum'} )
-        cts_bc_x_iso_multi = rna_curvar_multi.groupby( ['bc','isogrp_name'] ).agg(  {'ok_readcount':'sum'} )
-        cts_bc_x_iso = pd.concat( [cts_bc_x_iso_sing, cts_bc_x_iso_multi] )
-        cts_bc_x_iso = cts_bc_x_iso.reset_index().pivot( index='bc', columns='isogrp_name', values='ok_readcount' )
-        cts_bc_x_iso = cts_bc_x_iso.fillna(0).astype(int)
-
-        for ig in lisogrp:
-            if ig not in cts_bc_x_iso.columns:
-                cts_bc_x_iso[ig] = 0
-        
-        # enforce column order to be based on lisogrp (otherwise col order depend on what isogrp are present in that var)
-        cts_bc_x_iso = cts_bc_x_iso.reindex(columns=lisogrp)
-        
-        sum_ctd_by_bc = cts_bc_x_iso.sum(axis=1)
-
-        cts_bc_x_iso.columns = ['cts_'+cn for cn in cts_bc_x_iso.columns]
-        cts_bc_x_iso['is_singleton'] = True
-        cts_bc_x_iso.loc[ lbc_pair_var_multi, 'is_singleton' ] = False
-        cts_bc_x_iso['varid'] = vid        
-        
-        bybc_tbl = cts_bc_x_iso.copy()
-        bybc_tbl['rds_counted'] = sum_ctd_by_bc
-
-        for ig in lisogrp:
-            bybc_tbl[f'psi_{ig}'] = bybc_tbl[f'cts_{ig}'] / bybc_tbl['rds_counted']
-
-        lcol_overall_stats = 'totalrd_ok,totalrd_bad_ends,totalrd_bad_starts,totalrd_secondary,totalrd_unpaired,totalrd_unmapped,totalrd_soft_clipped'.split(',')
-        bc_overall_stats = pd.concat( [ 
-            rna_curvar_sing.groupby( 'bc' ).agg( 'first' )[lcol_overall_stats],
-            rna_curvar_multi.groupby( 'bc' ).agg( 'first' )[lcol_overall_stats]
-        ])
-
-        bybc_tbl = pd.concat( [ bybc_tbl, bc_overall_stats ], axis=1 )
-
-        if fn_out_perbc:
-            bybc_tbl_withpairinfo = pd.merge( bybc_tbl, pairtbl_nnvar, left_index=True, right_index=True, how='left', suffixes=('','_pair'), indicator='vennpart' )
-
-            if first_out:
-                bybc_tbl_withpairinfo.to_csv( fn_out_perbc, index=True, sep='\t', compression='gzip' )
-                first_out = False
-            else:
-                bybc_tbl_withpairinfo.to_csv( fn_out_perbc, index=True, sep='\t', mode='a', compression='gzip', header=False )
-            
-        bybc_sing = bybc_tbl.query('is_singleton')
-
-        out_rpt_isogrp['libname'] +=  [libname]
-        out_rpt_isogrp['var'] +=  [vid]
-        out_rpt_isogrp['pairing_nbc_varany'] +=  [len(sbc_pair_var_multi)+len(sbc_pair_var_sing)]
-        out_rpt_isogrp['pairing_nbc_varsingleton'] +=  [len(sbc_pair_var_sing)]
-        out_rpt_isogrp['rna_nbc_varany'] +=  [bybc_tbl['rds_counted'].shape[0]]
-        out_rpt_isogrp['rna_nrd_varany'] +=  [bybc_tbl['rds_counted'].sum()]
-        out_rpt_isogrp['rna_nbc_varsingleton'] +=  [bybc_sing.shape[0]]
-        out_rpt_isogrp['rna_nrd_varsingleton'] +=  [bybc_sing['rds_counted'].sum()]
-
-        for cn in lcol_overall_stats:
-            out_rpt_isogrp[cn.replace('totalrd_','rna_nrd_')] += [ bc_overall_stats[cn].sum() ]
-
-        for isogrp in lisogrp:
-            if bybc_tbl[f'psi_{isogrp}'].shape[0]>0:
-                rdsc = bybc_tbl['rds_counted'].sum()
-                if rdsc > 0:
-                    out_rpt_isogrp[f'psi_{isogrp}_varany_wmean'].append( ( bybc_tbl['rds_counted'] * bybc_tbl[f'psi_{isogrp}']).sum() / rdsc )
-                else:
-                    out_rpt_isogrp[f'psi_{isogrp}_varany_wmean'].append( None )
-
-                out_rpt_isogrp[f'psi_{isogrp}_varany_mean'].append( bybc_tbl[f'psi_{isogrp}'].mean() )
-                
-                rdsc = bybc_sing['rds_counted'].sum()
-                if rdsc > 0:
-                    out_rpt_isogrp[f'psi_{isogrp}_singleton_wmean'].append( ( bybc_sing['rds_counted'] * bybc_sing[f'psi_{isogrp}']).sum() / rdsc )
-                else:
-                    out_rpt_isogrp[f'psi_{isogrp}_singleton_wmean'].append( None )
-
-                out_rpt_isogrp[f'psi_{isogrp}_singleton_mean'].append( bybc_sing[f'psi_{isogrp}'].mean() )
-            else:
-                for cn in f'psi_{isogrp}_varany_wmean,psi_{isogrp}_varany_mean,psi_{isogrp}_singleton_wmean,psi_{isogrp}_singleton_mean'.split(','):
-                    out_rpt_isogrp[cn].append( None )
-
-    out_rpt_isogrp = pd.DataFrame( out_rpt_isogrp )
-    return out_rpt_isogrp
-
+    return out.reset_index(drop=True)
 
 def main():
     import argparse

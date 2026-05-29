@@ -61,6 +61,10 @@ if config.get('dms_table'):
     tbl_args += f'--dms_tbl {config["dms_table"]} ' 
 if config.get('gnomad_table'):     
     tbl_args +=  f'--gnomad_tbl {config["gnomad_table"]} '   
+if config.get('p_map_table'):
+    tbl_args += f'--p_map_tbl {config["p_map_table"]} '
+if config.get('mut_window_table'):
+    tbl_args += f'--mut_window_tbl {config["mut_window_table"]}'
 
 ########
 #

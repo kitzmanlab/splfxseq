@@ -76,8 +76,6 @@ def bootstrap_varsp_null_distribution( null_bc_df,
     #tbv = pd.concat( [ tbv.reset_index(), samp_df.reset_index() ],
                       #axis = 1, )
 
-    print( 'done' )
-
     return tbv
 
 def compute_null_zscores( tbl_byvar,
@@ -244,23 +242,34 @@ def compute_bc_weighted_psi( wide_tbl,
     return wide
 
 # t is the transcript accession, nc is chrom number
-def annotate_protein_hgvs(widetbl_, t):
+def annotate_protein_hgvs(widetbl_, t, p_map_path):
     widetbl = widetbl_.copy()
 
     # this means hgvs will use a locally installed seqrepo, much faster and do not run into the connection issues you get with using the web server
     # also allows for jobs to be run into parallel without the server thinking we are a bot
-    os.environ["HGVS_SEQREPO_DIR"] = "/nfs/turbo/umms-kitzmanj/oldvol2/conbward/msh2_splicing/refs/seqrepo/2024-12-20"
-    hp = hgvs.parser.Parser()
-    hdp = hgvs.dataproviders.uta.connect()
-    am = hgvs.assemblymapper.AssemblyMapper( hdp,
-                                            assembly_name = 'GRCh38', 
-                                            alt_aln_method = 'splign',
-                                            replace_reference = True )
+    
+    if p_map_path:
+        p_map = pd.read_table(p_map_path, dtype = { 'chrom': object })
+        widetbl = widetbl.merge(p_map.rename(columns={'chrom':'chr'})[['chr','pos','ref','alt','protein_var']], on=['chr','pos','ref','alt'], how='left')
+        widetbl.protein_var = widetbl.protein_var.fillna( '' )
+    else:
+            os.environ["HGVS_SEQREPO_DIR"] = "/nfs/turbo/umms-kitzmanj/oldvol2/conbward/msh2_splicing/refs/seqrepo/2024-12-20"
+            hp = hgvs.parser.Parser()
+            try:
+                hdp = hgvs.dataproviders.uta.connect()
+            except Exception as e:
+                print(f"WARNING: UTA connection failed: {e} DMS will not be merged, try providing a precomputed p var map table")
+                widetbl['protein_var'] = pd.NA
+                return False, widetbl
+            am = hgvs.assemblymapper.AssemblyMapper( hdp,
+                                                    assembly_name = 'GRCh38', 
+                                                    alt_aln_method = 'splign',
+                                                    replace_reference = True )
 
-    widetbl[ 'protein_var' ] = [ str( am.c_to_p( hp.parse_hgvs_variant( t + ':' + str( p ) + ra[ 0 ] + '>' + ra[ 1 ] ) ).format( conf = { 'p_3_letter': False } ) ).split( ':' )[ 1 ]
-                                    for p, ra in zip ( widetbl.hgvs_pos, zip( widetbl.ref, widetbl.alt ) ) ]
+            widetbl[ 'protein_var' ] = [ str( am.c_to_p( hp.parse_hgvs_variant( t + ':' + str( p ) + ra[ 0 ] + '>' + ra[ 1 ] ) ).format( conf = { 'p_3_letter': False } ) ).split( ':' )[ 1 ]
+                                            for p, ra in zip ( widetbl.hgvs_pos, zip( widetbl.ref, widetbl.alt ) ) ]
 
-    return widetbl
+    return True, widetbl
 
 
 

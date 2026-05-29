@@ -42,21 +42,30 @@ def prep_tbls(
         var_df = pd.read_table(r['var_rpt_snvonly'])
         # filter to only include bc above provided min
         var_df = var_df[var_df['rna_nbc_varsingleton'] > nbc_per_var_min].copy()
-
+        if var_df.empty:
+            print(f'WARNING: {r["libname"]} has no variants passing filter')
+            continue
+        mean_incl = var_df[f'psi_msh2_{exon}_singleton_wmean'].mean()
+        if mean_incl < .6:
+            print(f'WARNING: {r["libname"]} has mean inclusion <.6 and will not be included in summary statistics')
+            continue
         bc_df = pd.read_table(r['var_bc_rpt'])
         bc_df = bc_df[bc_df['is_singleton'] ==True].copy()
         bc_df['libname'] = r['libname']
         
         
-        bc_df = bc_df[bc_df['varid'].isin(var_df['var'])].copy()
+        bc_df = bc_df[bc_df['var'].isin(var_df['var'])].copy()
         var_df = add_cols(var_df, map_tbl, exon)
         bc_df = add_cols(bc_df, map_tbl, exon)
         var_df['rna_nrd_bad'] = var_df['rna_nrd_bad_ends,rna_nrd_bad_starts,rna_nrd_secondary,rna_nrd_unpaired,rna_nrd_unmapped,rna_nrd_soft_clipped'.split(',')].sum(1)
-    
+
+
         var_dfs.append(var_df)
         bc_dfs.append(bc_df)
 
-
+    if len(var_dfs) == 0:
+        print(f'WARNING: {exon} has no replicates passing filters and will be skipped')
+        return None, None
     byvartbl = pd.concat(var_dfs, axis=0, ignore_index=True)
     bybctbl = pd.concat(bc_dfs, axis=0, ignore_index=True)
     
@@ -116,7 +125,7 @@ def get_bs_stats(bctbl_, vartbl_):
 
     return vartbl
 
-def annotate_stat_sig(bsvartbl_, isonames=None, sample_size=None):
+def annotate_stat_sig(bsvartbl_, isonames=None, sample_size=None, eps=1e-304):
     bsvartbl = bsvartbl_.copy()
     if not isonames:
         isonames = [ col[11:] for col in bsvartbl if col.startswith( 'wmean_diff_' ) ]
@@ -124,7 +133,16 @@ def annotate_stat_sig(bsvartbl_, isonames=None, sample_size=None):
         sample_size = bsvartbl.groupby( 'libname' ).size().max()
     bonfer = .05 / sample_size
     for iso in isonames:
-        bsvartbl[ f'stat_sig_{iso}' ] = ( bsvartbl[ f'zwmean_bs_null_{iso}' ] >= ss.norm.ppf( 1 - bonfer ) )
+        # for inclusion we expect a decrease from baseline to be significant
+        if 'exon' in iso:
+            p = np.clip(ss.norm.cdf(bsvartbl[f'zwmean_bs_null_{iso}']), eps, 1)
+            bsvartbl[ f'neglog10pval_{iso}' ] = -np.log10(p)
+            bsvartbl[ f'stat_sig_{iso}' ] = ( bsvartbl[ f'zwmean_bs_null_{iso}' ] <= ss.norm.ppf( bonfer ) )
+        # for all other isos expect a increase from baseline to be significant
+        else: 
+            p = np.clip(ss.norm.cdf(bsvartbl[f'zwmean_bs_null_{iso}']), eps, 1)
+            bsvartbl[ f'neglog10pval_{iso}' ] = -np.log10(p)
+            bsvartbl[ f'stat_sig_{iso}' ] = ( bsvartbl[ f'zwmean_bs_null_{iso}' ] >= ss.norm.ppf( 1 - bonfer ) )
     return bsvartbl
 
 ## make a wide tbl (i.e. replicate data as columns) from a long table, compute bc_weighted psi, get a stouffers z, annotate stat sig
@@ -190,25 +208,26 @@ def add_splai(widetbl_, splai_path):
     return widetbl
 
 
-def add_dms(widetbl_, dms_path):
+def add_dms(widetbl_, dms_path, p_map_path):
     widetbl = widetbl_.copy()
     dms = pd.read_table(dms_path).rename( columns = { 'Variant': 'protein_var',
                              'LOF score': 'dms_lof' } )
     
     widetbl[ 'hgvs_var' ] = [ f"{p}:{ref}>{alt}" for p, ref, alt in zip(widetbl.hgvs_pos, widetbl.ref, widetbl.alt) ]
     
-    widetbl = pp.annotate_protein_hgvs(widetbl, 'NM_000251.2')
-    widetbl[ 'protein_var' ] = widetbl.protein_var.apply( lambda x: x.replace( 'p.?', '' ).replace( 'p.(', '' ).replace( ')', '' ) )
-    widetbl = widetbl.set_index( 'protein_var' ).merge( dms.set_index( 'protein_var' )[ [ 'dms_lof' ] ],  
-                                                                how = 'left',
-                                                                left_index = True,
-                                                                right_index = True ).reset_index().sort_values( by = [ 'pos', 'alt' ] )
-    
-    widetbl.protein_var = widetbl.protein_var.fillna( '' )
-    widetbl[ 'synon' ] = widetbl.protein_var.str.endswith( '=' )
-    widetbl[ 'stop_gain' ] = widetbl.protein_var.str.endswith( '*' )
-    widetbl[ 'var_consequence' ] = [ 'synonymous' if sy else 'stop_gain' if sg else 'intronic' if i else 'missense'
-                                       for sy, sg, i in zip( widetbl.synon, widetbl.stop_gain, widetbl.is_intron)]
+    p_added, widetbl = pp.annotate_protein_hgvs(widetbl, 'NM_000251.2', p_map_path)
+    if p_added:
+        widetbl[ 'protein_var' ] = widetbl.protein_var.apply( lambda x: x.replace( 'p.?', '' ).replace( 'p.(', '' ).replace( ')', '' ) )
+        widetbl = widetbl.set_index( 'protein_var' ).merge( dms.set_index( 'protein_var' )[ [ 'dms_lof' ] ],  
+                                                                    how = 'left',
+                                                                    left_index = True,
+                                                                    right_index = True ).reset_index().sort_values( by = [ 'pos', 'alt' ] )
+        
+        widetbl.protein_var = widetbl.protein_var.fillna( '' )
+        widetbl[ 'synon' ] = widetbl.protein_var.str.endswith( '=' )
+        widetbl[ 'stop_gain' ] = widetbl.protein_var.str.endswith( '*' )
+        widetbl[ 'var_consequence' ] = [ 'synonymous' if sy else 'stop_gain' if sg else 'intronic' if i else 'missense'
+                                        for sy, sg, i in zip( widetbl.synon, widetbl.stop_gain, widetbl.is_intron)]
     return widetbl
 
 
@@ -261,6 +280,8 @@ def main():
     parser.add_argument('--clinvar_tbl',  dest='clinvar_tbl' )
     parser.add_argument('--dms_tbl',  dest='dms_tbl' )
     parser.add_argument('--gnomad_tbl',  dest='gnomad_tbl' )
+    parser.add_argument('--p_map_tbl',  dest='p_map_tbl')
+    parser.add_argument('--mut_window_tbl', dest='mut_window_tbl')
     parser.add_argument('--exon', required=True)
     parser.add_argument('--num_bc_per_var',  dest='nbc_per_var', type=int, default=5)
     parser.add_argument('--cumd_cutoff',  dest='cumd_cut' , type=float, default=0.90)
@@ -273,10 +294,30 @@ def main():
 
     varfx = pd.read_table(args.var_tbl)
     varfx = varfx[varfx['exon'] == args.exon].copy()
+    
     maptbl = pd.read_table(args.map_tbl)
     print('starting')
     vartbl, bctbl = prep_tbls(varfx, maptbl, args.exon, nbc_per_var_min=args.nbc_per_var)
+    if vartbl is None:
+        pd.DataFrame().to_csv(args.out_long, index=False, sep='\t')
+        pd.DataFrame().to_csv(args.out_wide, index=False, sep='\t')
+        pd.DataFrame().to_csv(args.out_summary, index=False, sep='\t')
+        return
     print('tables prepped')
+
+    # subset to mutagenesis windows
+    if args.mut_window_tbl:
+        mut_window_tbl = pd.read_table(args.mut_window_tbl)
+        clip_window = True
+        subset = mut_window_tbl.loc[mut_window_tbl['exon'].eq(args.exon), ['mutagenesis_start_genome', 'mutagenesis_end_genome']]
+        if subset.shape[0] != 1:
+            print(f"Expected exactly 1 row for exon={args.exon}, found {subset.shape[0]}, will not clip to mutagenesis window")
+            clip_window = False
+        if clip_window:
+            mut_start, mut_stop = subset.iloc[0].to_list()
+            vartbl = vartbl[(vartbl['pos'] >= mut_start) & (vartbl['pos'] <= mut_stop)].copy()
+            bctbl = bctbl[(bctbl['pos'] >= mut_start) & (bctbl['pos'] <= mut_stop)].copy()
+            print('clipped to mutagenesis window')
     bctbl_90 = top_cumulative_rows(bctbl, threshold=args.cumd_cut)
     print('cum_rows done')
     bctbl_intronic = get_intronic_bcs(args.exon, maptbl, bctbl_90, args.int_bp)
@@ -299,7 +340,7 @@ def main():
         summ_tbl = add_clinvar(summ_tbl, args.clinvar_tbl)
     if args.dms_tbl:
         print('merging dms')
-        summ_tbl = add_dms(summ_tbl, args.dms_tbl)
+        summ_tbl = add_dms(summ_tbl, args.dms_tbl, args.p_map_tbl)
     if args.gnomad_tbl:
         print('merging gnomad')
         summ_tbl = add_gnomad(summ_tbl, args.gnomad_tbl)
