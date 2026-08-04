@@ -175,7 +175,7 @@ class GenomePlasmidMapper:
             if ref_seq != plas_seq:
                 raise ValueError(f"Sequence mismatch at {row['vector_chrom']}:{row['vector_start']}-{row['vector_end']}, REF:{ref_seq}, PLAS:{plas_seq}")
 
-    def genomic_to_vector(self, chrom, position, strand=None):
+    def genomic_to_vector(self, chrom, position, strand=None, exon_name=None):
         """
         Convert genomic coordinates to vector coordinates.
         
@@ -189,25 +189,36 @@ class GenomePlasmidMapper:
         """
         if self.mapping_table.empty:
             raise ValueError("No mapping table loaded")
+
+        if exon_name:
+            region = self.mapping_table[self.mapping_table['vector_chrom'] == exon_name] 
+            if region.empty:
+                raise ValueError(f'{exon_name} was specified but is not present in mappping table')
+            if len(region) > 1:
+                raise ValueError(f"{exon_name} has multiple entries in mapping table")
+            region = region.iloc[0]
+            if not ((region['genome_start'] <= position) & (region['genome_end'] >= position)):
+                raise ValueError(f"{chrom}:{position} does not fall in {exon_name} range")
+         
+        else:   
+            # Filter for chromosome
+            region = self.mapping_table[self.mapping_table['genome_chrom'] == chrom]
+            if region.empty:
+                return None
+                
+            # Find relevant mapping region
+            region = region[
+                (region['genome_start'] <= position) & 
+                (region['genome_end'] >= position)
+            ]
             
-        # Filter for chromosome
-        region = self.mapping_table[self.mapping_table['genome_chrom'] == chrom]
-        if region.empty:
-            return None
-            
-        # Find relevant mapping region
-        region = region[
-            (region['genome_start'] <= position) & 
-            (region['genome_end'] >= position)
-        ]
-        
-        if region.empty:
-            return None
-            
-        if len(region) > 1:
-            raise ValueError(f"{chrom}:{position} maps to multiple regions")
-            
-        region = region.iloc[0]
+            if region.empty:
+                return None
+                
+            if len(region) > 1:
+                raise ValueError(f"{chrom}:{position} maps to multiple regions")
+                
+            region = region.iloc[0]
         
         # If strand is provided, verify it matches
         if strand and strand != region['genome_strand']:

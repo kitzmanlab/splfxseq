@@ -46,7 +46,8 @@ assert 'lib_table' in config, 'must specify sample table'
 STUFFER_STAGE1 = {
     'paqci':'AGTGCCATCTTGGATCTCCA...CCACAGATGCAGGTGCACCG',
     'bsmbi':'AGTGCCATCTTGGATCTCCA...CCACAGAGACGCACCGATGC',
-    'spry1':'AGTGCCATCTTGGATCTCCA...CCACACCAGCCACCACCTTC', 
+    'spry1':'AGTGCCATCTTGGATCTCCA...CCACACCAGCCACCACCTTC',
+    'spry1_staggered':'AGTGCCATCTTGGATCTCCA...CCACACCAGC'
 }
 
 
@@ -107,7 +108,7 @@ rule countinputs:
     output:
         counts_input = op.join(OUT_DIR,'fastq/'+PREFIX+'{libname}.input.linects.txt')
     #log: op.join(OUT_DIR,'fastq/'+PREFIX+'{libname}.countinputs.log')
-    threads: 8
+    threads: 6
     resources:
         mem_per_cpu="4gb", 
         cpus="8", 
@@ -136,7 +137,7 @@ rule clip_stage1:
         cutad_log = op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}.trim1.json' )
     params:
         stuffseq = lambda wc: STUFFER_STAGE1[tbl_lib.loc[ wc.libname, 'stuffer'] ]
-    threads: 16
+    threads: 6
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
@@ -180,7 +181,7 @@ rule clip_stage2:
         cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
     #params:
     #    libname = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
-    threads: 16
+    threads: 6
     resources:
         mem_per_cpu="2gb", 
         cpus="16", 
@@ -218,10 +219,10 @@ rule tag_ins:
         fq_ins = rules.clip_stage2.output.fq_ins,
     output:
         fq_ins = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.ins_tag.fq.gz' ),
-    threads: 4
+    threads: 1
     resources:
         mem_per_cpu="2gb", 
-        cpus="4", 
+        cpus="1", 
         runtime="5h"
     shell:
         """
@@ -240,10 +241,10 @@ rule starcode:
     params:
         starcode_options = config['starcode_options'],
         bc_clust_histo = op.join( OUT_DIR, 'histo/'+PREFIX+'{libname}.bcclusters.txt' )
-    threads: 24
+    threads: 6
     resources:
         mem_per_cpu="5gb", 
-        cpus="24", 
+        cpus="6", 
         runtime="1h"
     run:
         if input.bc_read.endswith('gz'):

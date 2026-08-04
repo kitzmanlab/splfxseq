@@ -34,6 +34,7 @@ def prep_tbls(
     var_tbl: pd.DataFrame,
     map_tbl: pd.DataFrame,
     exon: str,
+    min_mean_incl: float,
     nbc_per_var_min: int = 5
     ):
 
@@ -45,9 +46,12 @@ def prep_tbls(
         if var_df.empty:
             print(f'WARNING: {r["libname"]} has no variants passing filter')
             continue
-        mean_incl = var_df[f'psi_msh2_{exon}_singleton_wmean'].mean()
-        if mean_incl < .6:
-            print(f'WARNING: {r["libname"]} has mean inclusion <.6 and will not be included in summary statistics')
+        if f'psi_msh2_{exon}_singleton_wmean' in var_df.columns:
+            mean_incl = var_df[f'psi_msh2_{exon}_singleton_wmean'].mean()
+        else:
+            mean_incl = 0
+        if mean_incl < min_mean_incl:
+            print(f'WARNING: {r["libname"]} has mean inclusion <{min_mean_incl} and will not be included in summary statistics')
             continue
         bc_df = pd.read_table(r['var_bc_rpt'])
         bc_df = bc_df[bc_df['is_singleton'] ==True].copy()
@@ -285,6 +289,7 @@ def main():
     parser.add_argument('--exon', required=True)
     parser.add_argument('--num_bc_per_var',  dest='nbc_per_var', type=int, default=5)
     parser.add_argument('--cumd_cutoff',  dest='cumd_cut' , type=float, default=0.90)
+    parser.add_argument('--min_mean_incl',  help= 'min mean psi INCL across a replicate to be included', dest='min_mean_incl' , type=float, default=0.6)
     parser.add_argument('--intronic_bp', help='number of basepair from exon boundary to consider "null"', dest='int_bp', type=int, default=10 )
     parser.add_argument('--out_long', dest='out_long', required=True)
     parser.add_argument('--out_wide', dest='out_wide', required=True)
@@ -296,8 +301,8 @@ def main():
     varfx = varfx[varfx['exon'] == args.exon].copy()
     
     maptbl = pd.read_table(args.map_tbl)
-    print('starting')
-    vartbl, bctbl = prep_tbls(varfx, maptbl, args.exon, nbc_per_var_min=args.nbc_per_var)
+    print('starting') 
+    vartbl, bctbl = prep_tbls(varfx, maptbl, args.exon, min_mean_incl=args.min_mean_incl, nbc_per_var_min=args.nbc_per_var)
     if vartbl is None:
         pd.DataFrame().to_csv(args.out_long, index=False, sep='\t')
         pd.DataFrame().to_csv(args.out_wide, index=False, sep='\t')

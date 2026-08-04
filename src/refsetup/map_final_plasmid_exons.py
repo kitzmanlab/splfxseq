@@ -17,7 +17,7 @@ def main():
     opts.add_argument('--fasta_plasmid', required=True, help='plasmid fasta file', dest='fasta_plasmid')
     opts.add_argument('--fasta_genome', required=True, help='genome fasta file', dest='fasta_genome')
     opts.add_argument('--out_vec_exon_tbl', required=True, help='output table of vector exon locations', dest='out_vec_exon_tbl')
-
+    opts.add_argument('--exon_name_sfx', help='if want to maps specifically by exon (not just region), suffix to convert exon_name in exon_tbl to vector_chrom in cloned_frag_tbl', dest='ex_name_sfx')
     opts.add_argument('--custom_up_ex_seq', default=None, help='custom upstream exon sequence', dest='custom_up_ex_seq')
     opts.add_argument('--custom_dn_ex_seq', default=None, help='custom downstream exon sequence', dest='custom_dn_ex_seq')
 
@@ -43,15 +43,27 @@ def main():
     vector_exon_tbl = VectorExonTable()
 
     for i, r in genomic_exon_tbl.tbl.iterrows():
-        res = mapper.genomic_to_vector(r['genome_chrom'], r['genome_start'], r['genome_strand'])
-        assert res is not None, f"no vector coordinates found for {r['genome_chrom']}:{r['genome_start']}-{r['genome_end']}"
-        vec_chrom, vec_start = res
-        res = mapper.genomic_to_vector(r['genome_chrom'], r['genome_end'], r['genome_strand'])
-        assert res is not None, f"no vector coordinates found for {r['genome_chrom']}:{r['genome_start']}-{r['genome_end']}"
-        _, vec_end = res
+        if o.ex_name_sfx:
+            res = mapper.genomic_to_vector(r['genome_chrom'], r['genome_start'], r['genome_strand'], f'{r["exon_name"]}{o.ex_name_sfx}')
+            assert res is not None, f"no vector coordinates found for {r['genome_chrom']}:{r['genome_start']}-{r['genome_end']}"
+            vec_chrom, vec_start = res
+            res = mapper.genomic_to_vector(r['genome_chrom'], r['genome_end'], r['genome_strand'], f'{r["exon_name"]}{o.ex_name_sfx}')
+            assert res is not None, f"no vector coordinates found for {r['genome_chrom']}:{r['genome_start']}-{r['genome_end']}"
+            _, vec_end = res
+        else:
+            res = mapper.genomic_to_vector(r['genome_chrom'], r['genome_start'], r['genome_strand'])
+            assert res is not None, f"no vector coordinates found for {r['genome_chrom']}:{r['genome_start']}-{r['genome_end']}"
+            vec_chrom, vec_start = res
+            res = mapper.genomic_to_vector(r['genome_chrom'], r['genome_end'], r['genome_strand'])
+            assert res is not None, f"no vector coordinates found for {r['genome_chrom']}:{r['genome_start']}-{r['genome_end']}"
+            _, vec_end = res
         vector_exon_tbl.tbl['vector_chrom'].append(vec_chrom)
-        vector_exon_tbl.tbl['vector_start'].append(vec_start)
-        vector_exon_tbl.tbl['vector_end'].append(vec_end)
+        if r['genome_strand'] == '+':
+            vector_exon_tbl.tbl['vector_start'].append(vec_start)
+            vector_exon_tbl.tbl['vector_end'].append(vec_end)
+        else:
+            vector_exon_tbl.tbl['vector_start'].append(vec_end)
+            vector_exon_tbl.tbl['vector_end'].append(vec_start)
 
         for cn in genomic_exon_tbl.tbl.columns:
             if cn in vector_exon_tbl.tbl:

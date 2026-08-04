@@ -61,7 +61,7 @@ def categorize_isoforms(
     s_all_isos = set()
     for libname in mlib_iso_readcts:
         s_all_isos.update( mlib_iso_readcts[libname].keys() )
-
+    print(s_all_isos)
     miso_known = defaultdict(list)  # known exon name(s) comma sepd -> list of isoform names
     siso_otheraccepted = set()  # 
     siso_otherother = set()  # 
@@ -110,7 +110,7 @@ def categorize_isoforms(
             siso_otheraccepted.add(iso)
         else:
             siso_otherother.add(iso)
-
+    print(miso_known)
     return miso_known, siso_otheraccepted, siso_otherother
 
 

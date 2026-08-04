@@ -49,6 +49,7 @@ staggered = config['staggered'] if 'staggered' in config else False
 # adaptor trim sequences for intended sequence (with stuffer removed) and for residual stuffer-containing reads 
 STAGE1_AD_INTENDED = 'trim="GTGCCATCTTGGATCTCCA;min_overlap=16...CCACACCAGCCACCACCTTC;min_overlap=16"'
 STAGE2_AD_INTENDED_FWDOPTIONAL = ' "ACCTGGAGATCTCCCGAGGGGACCCGACAGTCAGAAGGTGGTGGCTGGTGTGG;min_overlap=16" '
+STAGE2_AD_INTENDED_FWD_NNN = '"AGTGAACTGCACTGTGACAAGCTGC;min_overlap=16"'
 STAGE2_AD_INTENDED_REV_DOWNSTREAM = ' "CCACACCAGCCACCACCTTC;min_overlap=16" '
 
 if staggered:
@@ -74,6 +75,7 @@ m_stuffer_adset = {
     'intended': 
         {'stage1': STAGE1_AD_INTENDED,
          'stage2fwd': STAGE2_AD_INTENDED_FWDOPTIONAL,
+         'stage2fwd_nnn': STAGE2_AD_INTENDED_FWD_NNN,
          'stage2rev': STAGE2_AD_INTENDED_REV_DOWNSTREAM,
          'stage3revup': STAGE3_AD_INTENDED_REV_UPSTREAM},
     'paqci':
@@ -91,9 +93,11 @@ OUT_DIR = config['outdir']
 
 CUTADAPT_STAGE1_OPTS = config['cutadapt_stage1_opts'] if 'cutadapt_stage1_opts' in config else " -e 0.1 -q 10 "
 CUTADAPT_STAGE2_OPTS = config['cutadapt_stage2_opts'] if 'cutadapt_stage2_opts' in config else " -e 0.1 -q 10 --minimum-length 20:10"
+CUTADAPT_STAGE2_NNN_OPTS = config['cutadapt_stage2_nnn_opts'] if 'cutadapt_stage2_nnn_opts' in config else " -e 0.1 -q 10 "
 CUTADAPT_STAGE3_OPTS = config['cutadapt_stage3_opts'] if 'cutadapt_stage3_opts' in config else " -e 0.1 -q 10 --minimum-length 16"
 
 STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
+TRIM_FWD_NNN = bool(config.get('trim_fwd_nnn', False))
 
 if 'starcode_options' not in config:
     config['starcode_options'] = ' -d 1 '
@@ -181,10 +185,10 @@ rule clip_stage1:
     params:
         stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
         fake_fqbase_out=op.join( OUT_DIR, 'trim1/'+PREFIX+'{libname}' )
-    threads: 16
+    threads: 8
     resources:
         mem_per_cpu="2gb", 
-        cpus="16", 
+        cpus="8", 
         runtime="3h"
     # log: op.join(OUT_DIR,'trim1/'+PREFIX+'{libname}.trim1.err')
     run:
@@ -232,7 +236,7 @@ rule tag_stage1:
     resources:
         mem_per_cpu="4gb", 
         cpus="1", 
-        runtime="6h"
+        runtime="9h"
     shell:
         """
         bc_tag_paired_fq \
@@ -279,10 +283,10 @@ if staggered:
             tmp_fwd = temp(op.join(OUT_DIR, 'trim2', PREFIX + '{libname}.fwd.stage1.fq.gz')),
             tmp_rev = temp(op.join(OUT_DIR, 'trim2', PREFIX + '{libname}.rev.stage1.fq.gz')),
             log = op.join(OUT_DIR, 'trim2', PREFIX + '{libname}.stage1.json')
-        threads: 16
+        threads: 8
         resources:
             mem_per_cpu="2gb", 
-            cpus="16", 
+            cpus="8", 
             runtime="3h"
         run:
             clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
@@ -298,10 +302,10 @@ if staggered:
             fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' )),
             fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' )),
             cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
-        threads: 16
+        threads: 8
         resources:
             mem_per_cpu="2gb", 
-            cpus="16", 
+            cpus="8", 
             runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
@@ -319,12 +323,12 @@ if staggered:
             tmp_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.stage1.fq.gz' )),
             tmp_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.stage1.fq.gz' )),
             log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.stage1.json' )
-        threads: 16
+        threads: 8
         params:
             stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
         resources:
             mem_per_cpu="2gb", 
-            cpus="16", 
+            cpus="8", 
             runtime="3h"
         run:
             
@@ -341,12 +345,12 @@ if staggered:
             fq_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
             fq_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
             cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
-        threads: 16
+        threads: 8
         params:
             stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
         resources:
             mem_per_cpu="2gb", 
-            cpus="16", 
+            cpus="8", 
             runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
@@ -362,21 +366,34 @@ else:
             fq_fwd = rules.tag_stage1.output.fq_fwd, 
             fq_rev = rules.tag_stage1.output.fq_rev,
         output:
+            temp_trim_fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim.fwd.fq.gz' )),
+            temp_trim_fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim.rev.fq.gz' )),
             fq_fwd = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.fwd.fq.gz' )),
             fq_rev = temp(op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.rev.fq.gz' )),
+            cutad_nnn_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2_nnn.json' ),
             cutad_log = op.join( OUT_DIR, 'trim2/'+PREFIX+'{libname}.trim2.json' )
-        threads: 16
+        threads: 8
         resources:
             mem_per_cpu="2gb", 
-            cpus="16", 
+            cpus="8", 
             runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset['intended']['stage2fwd']
             clip_opts2 = " -g %s"% m_stuffer_adset['intended']['stage2rev']
 
+            if TRIM_FWD_NNN:
+                clip_opts_fwd_nnn = f' -G {m_stuffer_adset["intended"]["stage2fwd_nnn"]}'
+                clipcmd_nnn = 'cutadapt %s --action=retain -j {threads} %s -o {output.temp_trim_fq_rev} -p {output.temp_trim_fq_fwd} --json {output.cutad_nnn_log} {input.fq_rev} {input.fq_fwd}  '%(clip_opts_fwd_nnn, CUTADAPT_STAGE2_NNN_OPTS )
+                shell(clipcmd_nnn)
+                
+                clipcmd = 'cutadapt %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {output.temp_trim_fq_rev} {output.temp_trim_fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
+           
             # nb - we are passing the rev read as the first read & reqiure it to have STAGE2_AD_REV as 5' ad 
+            else:
+                shell('touch {output.temp_trim_fq_fwd} {output.temp_trim_fq_rev} {output.cutad_nnn_log}')
+                
+                clipcmd = 'cutadapt %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
             
-            clipcmd = 'cutadapt %s %s --action=retain --discard-untrimmed --pair-filter=first -j {threads} %s -o {output.fq_rev} -p {output.fq_fwd} --json {output.cutad_log} {input.fq_rev} {input.fq_fwd}  '%( clip_opts2, clip_opts1, CUTADAPT_STAGE2_OPTS )
             shell(clipcmd)
 
 
@@ -388,12 +405,12 @@ else:
             fq_fwd = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' )),
             fq_rev = temp(op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.rev.fq.gz' )),
             cutad_log = op.join( OUT_DIR, 'trim2_stuffer/'+PREFIX+'{libname}.trim2.json' )
-        threads: 16
+        threads: 8
         params:
             stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
         resources:
             mem_per_cpu="2gb", 
-            cpus="16", 
+            cpus="8", 
             runtime="3h"
         run:
             clip_opts1 = " -A %s"% m_stuffer_adset[params.stuffer]['stage2fwd']
@@ -414,10 +431,10 @@ rule clip_stage3:
         fq_fwd = op.join( OUT_DIR, 'trim3/'+PREFIX+'{libname}.fwd.fq.gz' ),
         fq_rev = op.join( OUT_DIR, 'trim3/'+PREFIX+'{libname}.rev.fq.gz' ),
         cutad_log = op.join( OUT_DIR, 'trim3/'+PREFIX+'{libname}.trim3.json' )
-    threads: 16
+    threads: 8
     resources:
         mem_per_cpu="2gb", 
-        cpus="16", 
+        cpus="8", 
         runtime="3h"
     run:
         clip_opts3 = " -a %s"% m_stuffer_adset['intended']['stage3revup']
@@ -436,12 +453,12 @@ rule clip_stage3_stuffer:
         fq_fwd = op.join( OUT_DIR, 'trim3_stuffer/'+PREFIX+'{libname}.fwd.fq.gz' ),
         fq_rev = op.join( OUT_DIR, 'trim3_stuffer/'+PREFIX+'{libname}.rev.fq.gz' ),
         cutad_log = op.join( OUT_DIR, 'trim3_stuffer/'+PREFIX+'{libname}.trim3.json' )
-    threads: 16
+    threads: 8
     params:
         stuffer = lambda wc:tbl_lib.loc[ wc.libname, 'stuffer'],
     resources:
         mem_per_cpu="2gb", 
-        cpus="16", 
+        cpus="8", 
         runtime="3h"
     run:
         clip_opts3 = " -a %s"% m_stuffer_adset[params.stuffer]['stage3revup']

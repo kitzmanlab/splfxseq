@@ -21,6 +21,7 @@
 #
 #   - num_bc_per_var    (minimum number of singleton only bc required to support each variant, per sample, defaults to 5)
 #   - cumd_cutoff       (cutoff for cumulative distribution i.e. first x amount of reads for a given sample, defaults to 0.90)
+#   - min_mean_incl     (min mean psi INCL across a replicate to be included, defaults to .6)
 #   - intronic_bp       (number of basepair from exon boundary beyond which we define as "null" in test for stat sig, defaults to 10)
 #   - splai_table         (path to a splai table to merge with summary table, must contain a chrom, pos, ref, alt columns)
 #   - clinvar_table       (path to a clinvar table to merge with summary table, must contain chr, pos, ref, alt columns)
@@ -51,6 +52,7 @@ PREFIX = config['prefix'] if 'prefix' in config  else ''
 NUM_BC_PER_VAR = config['num_bc_per_var'] if 'num_bc_per_var' in config else 5
 CUMD_CUTOFF = config['cumd_cutoff'] if 'cumd_cutoff' in config else 0.90
 INTRONIC_BP = config['intronic_bp'] if 'intronic_bp' in config else 10
+MIN_MEAN_INCL = config['min_mean_incl'] if 'min_mean_incl' in config else .6
 
 tbl_args = ''
 if config.get('splai_table'):
@@ -138,6 +140,7 @@ rule per_exon_process:
             --exon {wildcards.exon} \
             --num_bc_per_var {NUM_BC_PER_VAR} \
             --cumd_cutoff {CUMD_CUTOFF} \
+            --min_mean_incl {MIN_MEAN_INCL} \
             --intronic_bp {INTRONIC_BP} \
             --out_long {output.long_rpt} \
             --out_wide {output.wide_rpt} \
