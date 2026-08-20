@@ -46,8 +46,8 @@ def prep_tbls(
         if var_df.empty:
             print(f'WARNING: {r["libname"]} has no variants passing filter')
             continue
-        if f'psi_msh2_{exon}_singleton_wmean' in var_df.columns:
-            mean_incl = var_df[f'psi_msh2_{exon}_singleton_wmean'].mean()
+        if f'psi_{exon}_singleton_wmean' in var_df.columns:
+            mean_incl = var_df[f'psi_{exon}_singleton_wmean'].mean()
         else:
             mean_incl = 0
         if mean_incl < min_mean_incl:
@@ -115,13 +115,13 @@ def get_bs_stats(bctbl_, vartbl_):
     vartbl = pd.concat( [ pp.bootstrap_varsp_null_distribution( bctbl.loc[bctbl[ 'libname' ] == samp ].set_index( 'bc' ),
                                                                       vartbl.loc[ (vartbl[ 'libname' ] == samp ) ],
                                                                       iso_names = isonames)
-                              for samp in vartbl[ 'libname' ].unique().tolist() ],
+                              for samp in bctbl[ 'libname' ].unique().tolist() ],
                               ignore_index = True )
     vartbl = pp.compute_null_zscores( vartbl, 'bs_null', isonames ) 
     vartbl = pd.concat( [ pp.compute_fold_change( vartbl.loc[ vartbl[ 'libname' ] == samp ],
                                                         'wmean_bs_null_',
                                                          'psi_') 
-                                                        for samp in vartbl[ 'libname' ].unique().tolist() ],
+                                                        for samp in bctbl[ 'libname' ].unique().tolist() ],
                                                         ignore_index = True ).sort_values( by = 'pos' ) 
     for iso in isonames:
         
@@ -200,7 +200,6 @@ def add_splai(widetbl_, splai_path):
     splai = pd.read_table(splai_path,
                        dtype = { 'chrom': object } )
     splai.rename(columns={'chrom':'chr'}, inplace=True)
-    
     index_cols = [ 'chr', 'pos', 'ref', 'alt' ]
     widetbl = widetbl.merge(
         splai,
@@ -217,7 +216,7 @@ def add_dms(widetbl_, dms_path, p_map_path):
     dms = pd.read_table(dms_path).rename( columns = { 'Variant': 'protein_var',
                              'LOF score': 'dms_lof' } )
     
-    widetbl[ 'hgvs_var' ] = [ f"{p}:{ref}>{alt}" for p, ref, alt in zip(widetbl.hgvs_pos, widetbl.ref, widetbl.alt) ]
+    widetbl[ 'hgvs_var' ] = [ f"{p}{ref}>{alt}" for p, ref, alt in zip(widetbl.hgvs_pos, widetbl.ref, widetbl.alt) ]
     
     p_added, widetbl = pp.annotate_protein_hgvs(widetbl, 'NM_000251.2', p_map_path)
     if p_added:
@@ -326,6 +325,7 @@ def main():
     bctbl_90 = top_cumulative_rows(bctbl, threshold=args.cumd_cut)
     print('cum_rows done')
     bctbl_intronic = get_intronic_bcs(args.exon, maptbl, bctbl_90, args.int_bp)
+    print(bctbl_intronic.groupby('libname').size())
     print('got intronic bcs')
     vartbl_bs = get_bs_stats(bctbl_intronic, vartbl)
     print('bs_stats done')

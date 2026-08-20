@@ -1,0 +1,159 @@
+######################################################
+# Configuration values you must specify:
+#
+#
+# > lib_table  
+#   one row per sequencing library to be processed
+#   required columns
+#   - libname   (this nust be uniq; if you are running the same lib across multiple batches you need to 
+#   - fastq_fwd  (path to forward read fastq file)
+#   - fastq_rev  (path to reverse read fastq file)
+#
+#   iso_kmer_table    - for quick check of kmer usage, table w/ whichread, event, kmer    
+#
+# > outdir
+# 
+#######################################################
+#  optional config values:
+#
+#   prefix 
+#
+#   stop_after_nreads - for debugging purposes, stop after this number of reads per library
+#
+
+
+#######################################################
+# For example, to run:
+#  
+
+import os.path as op
+import os
+import pandas as pd
+import pysam 
+import Bio.Seq
+
+import altair as alt 
+
+########
+
+localrules: kmer_tbl
+
+assert 'lib_table' in config, 'must specify sample table'
+
+PREFIX = config['prefix'] if 'prefix' in config  else ''
+OUT_DIR = config['outdir']
+
+STOP_AFTER_NREADS = int(config['stop_after_nreads']) if 'stop_after_nreads' in config else -1 
+
+
+########
+# load and check sample table.
+
+l_reqd_cols = [ 'libname', 'fastq_fwd', 'fastq_rev' ]
+tbl_lib = pd.read_table( config['lib_table'] )
+assert all( [ col in tbl_lib.columns for col in l_reqd_cols ] ), 'lib table must have columns: '+','.join(l_reqd_cols)
+assert len(set(tbl_lib['libname'])) == tbl_lib.shape[0], 'all libname entries must be unique'
+    
+tbl_lib = tbl_lib.set_index( 'libname',drop=False )
+
+lLibs = tbl_lib['libname'].unique()
+
+########
+#  load and check kmer table
+
+
+
+tbl_iso_kmer = pd.read_table( config['iso_kmer_table'] )
+l_iso_cols = 'whichread,event,kmer'.split(',')
+assert all( [ col in tbl_iso_kmer.columns for col in l_iso_cols ] ), 'kmer table must have columns: '+','.join(l_iso_cols)
+
+
+########
+# expected output files
+
+assert 'outdir' in config, 'must specify output directory'
+
+kmerRpt = OUT_DIR+'/'+PREFIX+'kmercounts.txt'
+kmerPlot = OUT_DIR+'/'+PREFIX+'kmercounts.html'
+lOutFiles = [kmerRpt,kmerPlot]
+
+########
+
+rule all:
+    input:
+        lOutFiles
+
+rule kmercounts:
+    input:
+        fq_fwd = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_fwd' ],
+        fq_rev = lambda wc: tbl_lib.loc[ wc.libname ][ 'fastq_rev' ]
+    output:
+        counts_tbl = op.join( OUT_DIR, 'kmercounts/'+PREFIX+'{libname}.counts.txt' ),
+    params:
+        tbl_iso_kmer = config['iso_kmer_table']
+    resources:
+        mem_per_cpu="4gb", 
+        cpus="4", 
+        runtime="1h"
+    run:
+        
+        if STOP_AFTER_NREADS:
+            prefix = 'set +o pipefail; '
+            nlines = 4 * STOP_AFTER_NREADS
+            r1cmd = "<( zcat {input.fq_fwd} | head -n {nlines} )"
+            r2cmd = "<( zcat {input.fq_rev} | head -n {nlines} )"
+        else:
+            prefix = ''
+            r1cmd = '{input.fq_fwd}'
+            r2cmd = '{input.fq_rev}'
+
+        shell(
+            '{prefix} kmer_match_paired '
+            '--libname "{wildcards.libname}" '
+            '--in_fwd_fq %s '
+            '--in_rev_fq %s '
+            '--in_checktbl {params.tbl_iso_kmer} '
+            '--out_counts {output.counts_tbl}'
+            %(r1cmd, r2cmd)
+        )
+
+rule kmer_tbl:
+    input:
+        counts_tbl = expand( rules.kmercounts.output.counts_tbl, libname=lLibs ),
+    output:
+        table_out = kmerRpt,
+        plot_out = kmerPlot,
+    run:
+        ltbl = [ pd.read_table(fn) for fn in input.counts_tbl ]
+        ltbl = pd.concat(ltbl)
+       
+        keep_events = ['INCL', 'SKIP', 'OTHER: ALL', 'MISMATCH']
+
+        totalct = (
+            ltbl[ltbl['event'].isin(keep_events)]
+            .groupby('libname')['count']
+            .sum()
+        )
+        
+        ltbl['totalct'] = list(totalct.reindex( ltbl['libname'] ))
+        
+        ltbl['frac_reads'] = ltbl['count'] / ltbl['totalct']
+        
+        ltbl.to_csv( output.table_out, sep='\t', index=False )
+
+        loc = list(ltbl.columns)
+
+        ch = alt.Chart(
+            ltbl
+        ).mark_rect(
+        ).encode(
+            alt.X('event:N'),
+            alt.Y('libname:N').axis(labelLimit=300),
+            alt.Color('frac_reads:Q'),
+            alt.Tooltip(loc)
+        ).resolve_scale(
+            x='independent',
+        )
+        
+        ch.save(output.plot_out)
+

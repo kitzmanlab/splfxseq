@@ -35,9 +35,10 @@ def main():
     mname_ct['other'] = 0
 
     for rd in fq:
+        seq = rd.sequence.upper()
         match = 0
         for nm in mname_re:
-            if mname_re[nm].search( rd.sequence ):
+            if mname_re[nm].search( seq ):
                 mname_ct[nm]+=1
                 match = 1
                 break

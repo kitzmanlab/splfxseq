@@ -211,7 +211,7 @@ def process_PE_rna_bam(
         lr2 = [ r for r in reads if r.is_read2 ]
     
         rej = None
-
+        bc = None
         read1 = None
         if len(lr1) < 1:
             print( f'WARNING-read {readname} has no read1 alignment' )

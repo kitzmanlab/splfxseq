@@ -15,7 +15,7 @@ def gather_counts_across_samples(
     # load files in chunk mode
     # apply min read count and min psi criteria
     # per file, return iso -> [read count] list , for qualifying barcodes
-
+    
     mlib_iso_readcts = {}
 
     for libname, bcstatusfn in zip( samptbl['libname'], samptbl['bc_status_table'] ):
@@ -24,7 +24,8 @@ def gather_counts_across_samples(
 
         miso_bcreadcts = defaultdict( list )
         for bcstat_chunk in pd.read_csv( bcstatusfn, sep='\t', chunksize=100000, compression='gzip' ):
-
+            if bcstat_chunk.empty:
+                continue
             bcstat_chunk['psi'] = bcstat_chunk['ok_readcount'] / bcstat_chunk['totalrd_ok']
 
             li_in_ref = bcstat_chunk['isoform'].str.split(':', expand=True)[0] == ref_seq_name
@@ -61,7 +62,6 @@ def categorize_isoforms(
     s_all_isos = set()
     for libname in mlib_iso_readcts:
         s_all_isos.update( mlib_iso_readcts[libname].keys() )
-    print(s_all_isos)
     miso_known = defaultdict(list)  # known exon name(s) comma sepd -> list of isoform names
     siso_otheraccepted = set()  # 
     siso_otherother = set()  # 
@@ -110,7 +110,6 @@ def categorize_isoforms(
             siso_otheraccepted.add(iso)
         else:
             siso_otherother.add(iso)
-    print(miso_known)
     return miso_known, siso_otheraccepted, siso_otherother
 
 
@@ -203,7 +202,12 @@ def agg_persamp_isogrp_counts(
             else:
                 lout.to_csv( fn_out_bcstatus, sep='\t', index=False, mode='a', header=False, compression='gzip' )
 
-            
+    # make an empty reads_by_bc_x_isogrp.txt.gz file if that input was empty. 
+    if isfirst:
+        cols = list(pd.read_csv(fn_in_bcstatus, sep='\t', nrows=0, compression='gzip').columns)
+        cols.append('isogrp_name')
+        pd.DataFrame(columns=cols).to_csv( fn_out_bcstatus, sep='\t', index=False, compression='gzip' )
+      
     for isogrp in list(misogrp_to_isos.keys()):
         out_rpt['libname'].append( libname )
         out_rpt['overall_nrd'].append( nread )

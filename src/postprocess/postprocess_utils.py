@@ -13,7 +13,6 @@ def bootstrap_varsp_null_distribution( null_bc_df,
 
     null_psi = null_bc_df.copy()
     tbv = byvar_df.copy()
-
     n_bcs = tbv.rna_nbc_varsingleton.tolist()
 
     assert all( n > 0 for n in n_bcs ), 'Inputting a sample with 0 barcodes will lead to division by 0 errors'
