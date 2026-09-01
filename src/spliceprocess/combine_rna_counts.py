@@ -47,7 +47,8 @@ def categorize_isoforms(
     mlib_iso_readcts: Dict[str, Dict[str, List[int]]],
     vec_exons_known: VectorExonTable,
     ref_seq_name: str,
-    otherisos_minbc_withinallsamp: int,
+    otherisos_minbc_withinsamp: int,
+    otherisos_min_propofsamp: float,
     otherisos_minbc_sumacrosssamp: int,
     known_exons_strict: bool = False,
     preexisting_isogrp_tbl: IsogrpTable = None,
@@ -103,10 +104,11 @@ def categorize_isoforms(
             
         # if we get here, check to see if this meets criteria for "OTHER" isoform group
         mlib_nbc = { lib:len(mlib_iso_readcts[lib][iso]) for lib in mlib_iso_readcts }
-        passes_every_indivsamp = all( [mlib_nbc[lib] >= otherisos_minbc_withinallsamp for lib in mlib_nbc ] )
+        #passes_every_indivsamp = all( [mlib_nbc[lib] >= otherisos_minbc_withinallsamp for lib in mlib_nbc ] )
+        passes_prop_ofsamps = sum([mlib_nbc[lib] > otherisos_minbc_withinsamp for lib in mlib_nbc ]) / len(mlib_nbc) >= otherisos_min_propofsamp
         passes_sum_across_samp = sum( mlib_nbc.values() ) >= otherisos_minbc_sumacrosssamp
 
-        if passes_every_indivsamp and passes_sum_across_samp:
+        if passes_sum_across_samp and passes_prop_ofsamps:
             siso_otheraccepted.add(iso)
         else:
             siso_otherother.add(iso)
@@ -254,7 +256,8 @@ def main():
 
     parser.add_argument('--otherisos_perbc_min_read_count', default=1, type=int, help='min reads for bc to contribute to OTHER isoform', dest='otherisos_perbc_min_read_count' )
     parser.add_argument('--otherisos_perbc_min_psi', default=0.025, type=float, help='min within-bc psi for bc to contribute to OTHER isoform', dest='otherisos_perbc_min_psi' )
-    parser.add_argument('--otherisos_minbc_withinallsamp', default=1, type=int, help='to be counted as OTHER isoform group, min #bcs within EVERY sample', dest='otherisos_minbc_withinallsamp' )
+    parser.add_argument('--otherisos_minbc_withinsamp', default=1, type=int, help='to be counted as OTHER isoform group, min #bcs for the isoform to be counted towards the sample', dest='otherisos_minbc_withinsamp' )
+    parser.add_argument('--otherisos_min_propofsamp', default=0.33, type=float, help='to be counted as OTHER isoform group, min proportion of samples which must have the isoform (i.e. >min #bcs defined in otherisos_minbc_withinsamp)', dest='otherisos_min_propofsamp' )
     parser.add_argument('--otherisos_minbc_sumacrosssamp', default=1, type=int, help='to be counted as OTHER isoform group, min #bcs, summed across ALL samples', dest='otherisos_minbc_sumacrosssamp' )
     parser.add_argument('--lenient_named_isoforms', default=True, action='store_false', help='lenient mode for OTHER isoform: require all exons to be known to be named isoform', dest='strict' )
 
@@ -282,7 +285,8 @@ def main():
         lib_iso_cts,
         vec_exons,
         args.seq_name,
-        args.otherisos_minbc_withinallsamp,
+        args.otherisos_minbc_withinsamp,
+        args.otherisos_min_propofsamp,
         args.otherisos_minbc_sumacrosssamp,
         args.strict,
         named_isos

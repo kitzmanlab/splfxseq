@@ -102,7 +102,9 @@ assert 'outdir' in config, 'must specify output directory'
 # outputs
 
 l_out_var_rpt = expand('{}/pervar_rpts/{}{{libname}}.var_rpt.txt'.format(OUT_DIR,PREFIX), libname=lLibs)
+l_out_var_rpt_isos = expand('{}/pervar_rpts/{}{{libname}}.var_rpt_isos.txt'.format(OUT_DIR,PREFIX), libname=lLibs)
 l_out_var_rpt_snvonly = expand('{}/pervar_rpts_snvonly/{}{{libname}}.var_rpt_snvonly.txt'.format(OUT_DIR,PREFIX), libname=lLibs)
+l_out_var_rpt_snvonly_isos = expand('{}/pervar_rpts_snvonly/{}{{libname}}.var_rpt_snvonly_isos.txt'.format(OUT_DIR,PREFIX), libname=lLibs)
 l_out_snv_plot  = expand('{}/pervar_plots_snvonly/{}{{libname}}.var_rpt_snvonly.html'.format(OUT_DIR,PREFIX), libname=lLibs)
 l_out_per_bc_rpt  = expand('{}/pervar_bcrpts/{}{{libname}}.bybc.txt.gz'.format(OUT_DIR,PREFIX), libname=lLibs) if MAKE_PERBC_RPT else []
 
@@ -124,6 +126,7 @@ rule per_var_process:
         seq_name = lambda wc: tbl_lib.loc[ wc.libname ][ 'ref_seq_name' ],
     output:
         var_rpt = op.join(OUT_DIR, 'pervar_rpts/'+PREFIX+'{libname}.var_rpt.txt'),
+        var_rpt_isos = op.join(OUT_DIR, 'pervar_rpts/'+PREFIX+'{libname}.var_rpt_isos.txt'),
         per_bc_rpt = op.join(OUT_DIR, 'pervar_bcrpts/'+PREFIX+'{libname}.bybc.txt.gz') if MAKE_PERBC_RPT else [],
     threads: 1
     resources:
@@ -140,6 +143,7 @@ rule per_var_process:
                 --bc_pairing_tbl {input.bc_pairing_tbl} \
                 --libname {wildcards.libname} \
                 --out_var_rpt {output.var_rpt} \
+                --out_var_rpt_isos {output.var_rpt_isos} \
                 --out_perbc {output.per_bc_rpt}
             """)
         else:
@@ -150,17 +154,21 @@ rule per_var_process:
                 --seq_name {params.seq_name} \
                 --bc_pairing_tbl {input.bc_pairing_tbl} \
                 --libname {wildcards.libname} \
-                --out_var_rpt {output.var_rpt}
+                --out_var_rpt {output.var_rpt} \
+                --out_var_rpt_isos {output.var_rpt_isos}
             """)
 
 rule filt_to_snv:
     input:
-        var_rpt = op.join(OUT_DIR, 'pervar_rpts/'+PREFIX+'{libname}.var_rpt.txt')
+        var_rpt = op.join(OUT_DIR, 'pervar_rpts/'+PREFIX+'{libname}.var_rpt.txt'),
+        var_rpt_isos = op.join(OUT_DIR, 'pervar_rpts/'+PREFIX+'{libname}.var_rpt_isos.txt')
     output:
         var_rpt_snvonly = op.join(OUT_DIR, 'pervar_rpts_snvonly/'+PREFIX+'{libname}.var_rpt_snvonly.txt'),
+        var_rpt_snvonly_isos = op.join(OUT_DIR, 'pervar_rpts_snvonly/'+PREFIX+'{libname}.var_rpt_snvonly_isos.txt'),
     run:
         shell("""
             varfx_singlesamp filt_to_snv --var_tbl_in {input.var_rpt} --var_tbl_out {output.var_rpt_snvonly}
+            varfx_singlesamp filt_to_snv --var_tbl_in {input.var_rpt_isos} --var_tbl_out {output.var_rpt_snvonly_isos}
         """)
 
 rule mk_varfx_plot:
@@ -180,14 +188,16 @@ rule out_rpt:
     input:
         per_var_rpt = expand(rules.per_var_process.output.var_rpt, libname=lLibs),
         per_var_snv_rpt = expand(rules.filt_to_snv.output.var_rpt_snvonly, libname=lLibs),
+        per_var_snv_rpt_isos = expand(rules.filt_to_snv.output.var_rpt_snvonly_isos, libname=lLibs),
         per_bc_rpt = expand(rules.per_var_process.output.per_bc_rpt,libname=lLibs)
     output:
         var_rpt_out = op.join(OUT_DIR,PREFIX+'varfx_rpt.txt')
     run:
-        out_rpt = {k:[] for k in 'libname,var_rpt,var_rpt_snvonly,var_bc_rpt,exon'.split(',')}
+        out_rpt = {k:[] for k in 'libname,var_rpt,var_rpt_snvonly,var_rpt_snvonly_isos,var_bc_rpt,exon'.split(',')}
         out_rpt['libname'] = lLibs
         out_rpt['var_rpt'] = list(input.per_var_rpt)
         out_rpt['var_rpt_snvonly'] = list(input.per_var_snv_rpt)
+        out_rpt['var_rpt_snvonly_isos'] = list(input.per_var_snv_rpt_isos)
         out_rpt["var_bc_rpt"] = list(input.per_bc_rpt) if input.per_bc_rpt else [None] * len(lLibs)
         out_rpt['exon'] = tbl_lib.loc[lLibs, 'pairing_tbl_name'].tolist()
         out_rpt = pd.DataFrame(out_rpt)

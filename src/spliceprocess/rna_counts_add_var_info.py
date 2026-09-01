@@ -21,6 +21,10 @@ def var_effects_single_sample(
     # iso groups for this reference
     isogrp_sub = isogrptbl.loc[isogrptbl['seq_name'].eq(ref_seq_name)]
     lisogrp = isogrp_sub['isogrp_name'].unique().tolist()
+   
+    # isoforms for this reference
+    lisoform = isogrp_sub['isoform'].unique().tolist()
+    lotherisoform = isogrp_sub.loc[isogrp_sub['isogrp_name'].eq('OTHER'),'isoform'].unique().tolist()
 
     # ---------- Pairing: explode variants to (bc,var,is_singleton) ----------
     pair = pairtbl.loc[pairtbl[col_var_annot].notna() & pairtbl[col_var_annot].ne("")].copy()
@@ -50,7 +54,7 @@ def var_effects_single_sample(
         'totalrd_ok','totalrd_bad_ends','totalrd_bad_starts','totalrd_secondary',
         'totalrd_unpaired','totalrd_unmapped','totalrd_soft_clipped'
     ]
-    usecols = ['bc','isogrp_name','ok_readcount', *lcol_overall_stats]
+    usecols = ['bc','isoform', 'isogrp_name','ok_readcount', *lcol_overall_stats]
     try:
         rna = pd.read_table(fn_bcstatus, usecols=usecols)
     except ValueError as exc:
@@ -63,6 +67,7 @@ def var_effects_single_sample(
 
     # make grouping faster if isogrp_name repeats a lot
     rna['isogrp_name'] = pd.Categorical(rna['isogrp_name'], categories=lisogrp)
+    rna['isoform'] = pd.Categorical(rna['isoform'], categories=lisoform)
 
     bc_overall = rna.groupby('bc', sort=False)[lcol_overall_stats].first()
 
@@ -76,11 +81,26 @@ def var_effects_single_sample(
 
     bc_psi = bc_iso.div(bc_total.replace(0, np.nan), axis=0)  # per-bc psi (NaN when no reads)
 
+
+    # get stats for OTHER isoforms
+
+    rna_other = rna.loc[rna['isogrp_name'].eq('OTHER')]
+
+    bc_other_iso = (
+        rna_other.groupby(['bc', 'isoform'], sort=False, observed=True)['ok_readcount']
+            .sum()
+            .unstack(fill_value=0)
+            .reindex(index=bc_total.index, columns=lotherisoform,fill_value=0)
+    )
+    bc_other_psi = bc_other_iso.div(bc_total.replace(0, np.nan), axis=0)
+
     bc_summary = pd.concat(
         [
             bc_total,
             bc_iso.add_prefix('cts_'),
             bc_psi.add_prefix('psi_'),
+            bc_other_iso.add_prefix('cts_'),
+            bc_other_psi.add_prefix('psi_'),
             bc_overall
         ],
         axis=1
@@ -106,8 +126,10 @@ def var_effects_single_sample(
     overall_any.columns = [c.replace('totalrd_', 'rna_nrd_') for c in overall_any.columns]
 
     # PSI means
-    psi_cols = [f'psi_{ig}' for ig in lisogrp]
-    cts_cols = [f'cts_{ig}' for ig in lisogrp]
+    other_psi_cols = [f'psi_{isof}' for isof in lotherisoform]
+    other_cts_cols = [f'cts_{isof}' for isof in lotherisoform]
+    psi_cols = [f'psi_{ig}' for ig in lisogrp] + other_psi_cols
+    cts_cols = [f'cts_{ig}' for ig in lisogrp] + other_cts_cols
 
     psi_any_mean = grp_any[psi_cols].mean()
     psi_sing_mean = grp_sing[psi_cols].mean()
@@ -143,12 +165,17 @@ def var_effects_single_sample(
 
     out = out.join(overall_any.reindex(out.index, fill_value=0))
 
-    for ig in lisogrp:
-        out[f'psi_{ig}_varany_mean'] = psi_any_mean[f'psi_{ig}'].reindex(out.index)
-        out[f'psi_{ig}_singleton_mean'] = psi_sing_mean.get(f'psi_{ig}', pd.Series(dtype=float)).reindex(out.index)
+    def add_psi_columns(out_tbl, names):
+        add_cols = {}
+        for ig in names:
+            add_cols[f'psi_{ig}_varany_mean'] = psi_any_mean[f'psi_{ig}'].reindex(out_tbl.index)
+            add_cols[f'psi_{ig}_singleton_mean'] = psi_sing_mean.get(f'psi_{ig}', pd.Series(dtype=float)).reindex(out_tbl.index)
 
-        out[f'psi_{ig}_varany_wmean'] = psi_any_wmean[f'cts_{ig}'].reindex(out.index)
-        out[f'psi_{ig}_singleton_wmean'] = psi_sing_wmean.get(f'cts_{ig}', pd.Series(dtype=float)).reindex(out.index)
+            add_cols[f'psi_{ig}_varany_wmean'] = psi_any_wmean[f'cts_{ig}'].reindex(out_tbl.index)
+            add_cols[f'psi_{ig}_singleton_wmean'] = psi_sing_wmean.get(f'cts_{ig}', pd.Series(dtype=float)).reindex(out_tbl.index)
+
+        to_add = pd.DataFrame(add_cols, index=out_tbl.index)
+        return pd.concat([out_tbl, to_add], axis=1)
 
     # ---------- Optional per-bc output (write once) ----------
     if fn_out_perbc:
@@ -156,7 +183,10 @@ def var_effects_single_sample(
         perbc = pair_rna.merge(pairtbl, left_on='bc', right_on='readgroupid', how='left', suffixes=('','_pair'))
         perbc.to_csv(fn_out_perbc, sep='\t', index=False, compression='gzip')
 
-    return out.reset_index(drop=True)
+    out_isogrp = add_psi_columns(out.copy(), lisogrp)
+    out_isoform = add_psi_columns(out.copy(), lisogrp+lotherisoform)
+
+    return (out_isogrp.reset_index(drop=True), out_isoform.reset_index(drop=True))
 
 def main():
     import argparse
@@ -169,8 +199,8 @@ def main():
     parser.add_argument('--bc_pairing_tbl', help='input pairing table', dest='bc_pairing_tbl' )
     parser.add_argument('--libname', help='library name', dest='libname' )
     parser.add_argument('--col_var_annot', help='column in pairing table with variant name (genomic or cDNA)', default='variant_list_genome', dest='col_var_annot' )
-
     parser.add_argument('--out_var_rpt', help='output variant report', dest='out_var_rpt' )
+    parser.add_argument('--out_var_rpt_isos', help='output variant report', dest='out_var_rpt_isos' )
     parser.add_argument('--out_perbc', default=None, help='output per-barcode report', dest='out_perbc' )
 
     args = parser.parse_args()
@@ -178,16 +208,19 @@ def main():
     isogrptbl = pd.read_table( args.isogrp_tbl )
     pairtbl = pd.read_table( args.bc_pairing_tbl )
 
-    out_var_rpt =var_effects_single_sample(
+    out_var_rpt, out_var_rpt_isos = var_effects_single_sample(
         libname=args.libname,
         ref_seq_name=args.seq_name,
         isogrptbl=isogrptbl,
         pairtbl=pairtbl,
         fn_out_perbc=args.out_perbc,
         fn_bcstatus=args.bc_x_iso_status_tbl,
+        col_var_annot=args.col_var_annot
     )
 
     out_var_rpt.to_csv( args.out_var_rpt, index=False, sep='\t' )
+    out_var_rpt_isos.to_csv(args.out_var_rpt_isos, index=False, sep='\t')
+    
     
 if __name__ == '__main__':
     main()

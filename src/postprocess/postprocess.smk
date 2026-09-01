@@ -47,6 +47,7 @@ assert 'lib_table' in config, 'must specify sample table'
 
 
 PREFIX = config['prefix'] if 'prefix' in config  else ''
+EXON_PREFIX = config['exon_prefix'] if 'exon_prefix' in config  else ''
 
 
 NUM_BC_PER_VAR = config['num_bc_per_var'] if 'num_bc_per_var' in config else 5
@@ -124,7 +125,8 @@ rule per_exon_process:
         wide_rpt = op.join(OUT_DIR, 'perexon_rpts/wide/'+PREFIX+'{exon}.wide.txt'),
         summary_rpt = op.join(OUT_DIR, 'perexon_rpts/summary/'+PREFIX+'{exon}.summary.txt'),
     threads: 1
-    params: tbl_args=tbl_args
+    params: 
+        tbl_args=tbl_args,
     resources:
         mem_per_cpu="10gb", 
         cpus="1", 
@@ -138,6 +140,7 @@ rule per_exon_process:
             --map_tbl {input.map_tbl} \
             {params.tbl_args} \
             --exon {wildcards.exon} \
+            --exon_prefix {EXON_PREFIX} \
             --num_bc_per_var {NUM_BC_PER_VAR} \
             --cumd_cutoff {CUMD_CUTOFF} \
             --min_mean_incl {MIN_MEAN_INCL} \

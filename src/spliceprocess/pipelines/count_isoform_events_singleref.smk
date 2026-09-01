@@ -73,7 +73,7 @@ else:
 if 'combine_rna_samp_options' in config:
     COMBINE_RNA_SAMP_OPTIONS = config['combine_rna_samp_options']
 else:
-    COMBINE_RNA_SAMP_OPTIONS = "  --otherisos_perbc_min_read_count 1 --otherisos_perbc_min_psi 0.025 --otherisos_minbc_withinallsamp 5 --otherisos_minbc_sumacrosssamp 5 "
+    COMBINE_RNA_SAMP_OPTIONS = "  --otherisos_perbc_min_read_count 1 --otherisos_perbc_min_psi 0.025 --otherisos_minbc_withinsamp 5 --otherisos_minbc_sumacrosssamp 5 --otherisos_minbc_sumacrosssamp 5 --otherisos_min_propofsamp 0.33 "
 
 if 'process_rna_aligns_opts' in config:
     PROCESS_RNA_ALIGNS_OPTS = config['process_rna_aligns_opts']

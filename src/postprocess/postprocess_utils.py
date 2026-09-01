@@ -66,13 +66,17 @@ def bootstrap_varsp_null_distribution( null_bc_df,
             sample_tbl[ 'wstdev_bs_null_' + iso ].append( np.std( mus ) )
 
     #samp_df = pd.DataFrame( sample_tbl )
+    
+    cols_to_add = [f'{prefix}{iso}' for iso in iso_names for prefix in ('wmean_bs_null_','wstdev_bs_null_')]
+    tbv = pd.concat(
+        [tbv, pd.DataFrame(sample_tbl, index=tbv.index).loc[:,cols_to_add].reindex(tbv.index)], axis=1
+    )
+    # for iso in iso_names:
 
-    for iso in iso_names:
+    #     tbv[ 'wmean_bs_null_' + iso ] = sample_tbl[ 'wmean_bs_null_' + iso ]
+    #     tbv[ 'wstdev_bs_null_' + iso ] = sample_tbl[ 'wstdev_bs_null_' + iso ]
 
-        tbv[ 'wmean_bs_null_' + iso ] = sample_tbl[ 'wmean_bs_null_' + iso ]
-        tbv[ 'wstdev_bs_null_' + iso ] = sample_tbl[ 'wstdev_bs_null_' + iso ]
-
-    #tbv = pd.concat( [ tbv.reset_index(), samp_df.reset_index() ],
+    # #tbv = pd.concat( [ tbv.reset_index(), samp_df.reset_index() ],
                       #axis = 1, )
 
     return tbv
@@ -186,36 +190,34 @@ def create_variables_across_samples( wide_tbl,
 
     if median_cols:
 
-        for col in median_cols:
+        median_df = pd.DataFrame(
+            { f"{col}_med": wide[ [f"{samp}_{col}" for samp in lsampnames]].median(axis=1) for col in median_cols}, index=wide.index)
 
-            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
-
-            wide[ col + '_med' ] = wide[ samp_cols ].median( axis = 1 )
+        wide = pd.concat([wide, median_df], axis=1).copy()
 
     if mean_cols:
 
-        for col in mean_cols:
-
-            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
-
-            wide[ col + '_mean' ] = wide[ samp_cols ].mean( axis = 1 )
+        mean_df = pd.DataFrame(
+            { f"{col}_mean": wide[ [f"{samp}_{col}" for samp in lsampnames]].mean(axis=1) for col in mean_cols}, index=wide.index)
+              
+        wide = pd.concat(
+            [wide, mean_df], axis=1).copy()
 
     if sum_cols:
-
-        for col in sum_cols:
-
-            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
-
-            wide[ col + '_sum' ] = wide[ samp_cols ].sum( axis = 1 )
+        sum_df = pd.DataFrame(
+            { f"{col}_sum": wide[ [f"{samp}_{col}" for samp in lsampnames]].sum(axis=1) for col in sum_cols}, index=wide.index)
+                      
+        wide = pd.concat(
+            [wide, sum_df], axis=1).copy()
 
     if max_cols:
-
-        for col in max_cols:
-
-            samp_cols = [ '_'.join( [ samp, col ] ) for samp in lsampnames ]
-
-            wide[ col + '_max' ] = wide[ samp_cols ].max( axis = 1 )
-
+        max_df = pd.DataFrame(
+            { f"{col}_max": wide[ [f"{samp}_{col}" for samp in lsampnames]].max(axis=1) for col in max_cols}, index=wide.index)
+                              
+        wide = pd.concat(
+            [wide, max_df], axis=1).copy()
+        
+        
     return wide
 
 def compute_bc_weighted_psi( wide_tbl,
@@ -238,7 +240,7 @@ def compute_bc_weighted_psi( wide_tbl,
                                                    for samp in lsampnames ) ).T.sum( axis = 1) \
                                              / wide[ samp_bc_cols ].sum( axis = 1 )
 
-    return wide
+    return wide.copy()
 
 # t is the transcript accession, nc is chrom number
 def annotate_protein_hgvs(widetbl_, t, p_map_path):

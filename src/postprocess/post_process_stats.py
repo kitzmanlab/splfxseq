@@ -34,20 +34,22 @@ def prep_tbls(
     var_tbl: pd.DataFrame,
     map_tbl: pd.DataFrame,
     exon: str,
+    exon_prefix: str,
     min_mean_incl: float,
     nbc_per_var_min: int = 5
     ):
 
     var_dfs, bc_dfs = [], []
     for _, r in var_tbl.iterrows():
-        var_df = pd.read_table(r['var_rpt_snvonly'])
+        var_df = pd.read_table(r['var_rpt_snvonly_isos'])
         # filter to only include bc above provided min
         var_df = var_df[var_df['rna_nbc_varsingleton'] > nbc_per_var_min].copy()
         if var_df.empty:
             print(f'WARNING: {r["libname"]} has no variants passing filter')
             continue
-        if f'psi_{exon}_singleton_wmean' in var_df.columns:
-            mean_incl = var_df[f'psi_{exon}_singleton_wmean'].mean()
+
+        if f'psi_{exon_prefix}{exon}_singleton_wmean' in var_df.columns:
+            mean_incl = var_df[f'psi_{exon_prefix}{exon}_singleton_wmean'].mean()
         else:
             mean_incl = 0
         if mean_incl < min_mean_incl:
@@ -112,20 +114,32 @@ def get_bs_stats(bctbl_, vartbl_):
     vartbl = vartbl_.copy()
     bctbl = bctbl_.copy()
     isonames = [ col[4:] for col in bctbl if col.startswith( 'psi_' ) ]
+    var_isos = [ col[4:] for col in vartbl if col.startswith( 'psi_' ) ]
+
     vartbl = pd.concat( [ pp.bootstrap_varsp_null_distribution( bctbl.loc[bctbl[ 'libname' ] == samp ].set_index( 'bc' ),
                                                                       vartbl.loc[ (vartbl[ 'libname' ] == samp ) ],
                                                                       iso_names = isonames)
                               for samp in bctbl[ 'libname' ].unique().tolist() ],
                               ignore_index = True )
+
     vartbl = pp.compute_null_zscores( vartbl, 'bs_null', isonames ) 
     vartbl = pd.concat( [ pp.compute_fold_change( vartbl.loc[ vartbl[ 'libname' ] == samp ],
                                                         'wmean_bs_null_',
                                                          'psi_') 
                                                         for samp in bctbl[ 'libname' ].unique().tolist() ],
                                                         ignore_index = True ).sort_values( by = 'pos' ) 
-    for iso in isonames:
-        
-        vartbl[ 'wmean_diff_' + iso ] = vartbl[ 'psi_' + iso + '_singleton_wmean' ] - vartbl[ 'wmean_bs_null_' + iso ]                                                         
+    diff_df = pd.DataFrame(
+    {
+        f"wmean_diff_{iso}": (
+            vartbl[f"psi_{iso}_singleton_wmean"]
+            - vartbl[f"wmean_bs_null_{iso}"]
+        )
+        for iso in isonames
+    },
+    index=vartbl.index,
+    )
+
+    vartbl = pd.concat([ vartbl.drop(columns=diff_df.columns, errors="ignore"), diff_df], axis=1).copy()
 
     return vartbl
 
@@ -147,7 +161,7 @@ def annotate_stat_sig(bsvartbl_, isonames=None, sample_size=None, eps=1e-304):
             p = np.clip(ss.norm.cdf(bsvartbl[f'zwmean_bs_null_{iso}']), eps, 1)
             bsvartbl[ f'neglog10pval_{iso}' ] = -np.log10(p)
             bsvartbl[ f'stat_sig_{iso}' ] = ( bsvartbl[ f'zwmean_bs_null_{iso}' ] >= ss.norm.ppf( 1 - bonfer ) )
-    return bsvartbl
+    return bsvartbl.copy()
 
 ## make a wide tbl (i.e. replicate data as columns) from a long table, compute bc_weighted psi, get a stouffers z, annotate stat sig
 def make_wide_tbl(bsvartbl_, maptbl_, exon_):
@@ -286,6 +300,7 @@ def main():
     parser.add_argument('--p_map_tbl',  dest='p_map_tbl')
     parser.add_argument('--mut_window_tbl', dest='mut_window_tbl')
     parser.add_argument('--exon', required=True)
+    parser.add_argument('--exon_prefix', default='', dest='exon_prefix')
     parser.add_argument('--num_bc_per_var',  dest='nbc_per_var', type=int, default=5)
     parser.add_argument('--cumd_cutoff',  dest='cumd_cut' , type=float, default=0.90)
     parser.add_argument('--min_mean_incl',  help= 'min mean psi INCL across a replicate to be included', dest='min_mean_incl' , type=float, default=0.6)
@@ -301,7 +316,7 @@ def main():
     
     maptbl = pd.read_table(args.map_tbl)
     print('starting') 
-    vartbl, bctbl = prep_tbls(varfx, maptbl, args.exon, min_mean_incl=args.min_mean_incl, nbc_per_var_min=args.nbc_per_var)
+    vartbl, bctbl = prep_tbls(varfx, maptbl, args.exon, args.exon_prefix, min_mean_incl=args.min_mean_incl, nbc_per_var_min=args.nbc_per_var)
     if vartbl is None:
         pd.DataFrame().to_csv(args.out_long, index=False, sep='\t')
         pd.DataFrame().to_csv(args.out_wide, index=False, sep='\t')
@@ -325,7 +340,6 @@ def main():
     bctbl_90 = top_cumulative_rows(bctbl, threshold=args.cumd_cut)
     print('cum_rows done')
     bctbl_intronic = get_intronic_bcs(args.exon, maptbl, bctbl_90, args.int_bp)
-    print(bctbl_intronic.groupby('libname').size())
     print('got intronic bcs')
     vartbl_bs = get_bs_stats(bctbl_intronic, vartbl)
     print('bs_stats done')
